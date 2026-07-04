@@ -68,6 +68,20 @@ const item = {
   updated_at: now,
 };
 
+const basalamConnection = {
+  id: 501,
+  seller_id: 1,
+  platform: 'basalam',
+  status: 'connected',
+  external_user_id: '42',
+  external_shop_id: '476077',
+  external_shop_slug: 'test-shop',
+  external_shop_name: 'غرفه تست',
+  scopes: 'vendor.product.write',
+  created_at: now,
+  updated_at: now,
+};
+
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -159,6 +173,31 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'این یک محصول جداست' })).not.toBeInTheDocument();
     expect(screen.queryByText('عکس‌های این محصول را چک کن.')).not.toBeInTheDocument();
   });
+  it('publishes reviewed products to connected Basalam booth', async () => {
+    const user = userEvent.setup();
+    const updateBodies: Array<Record<string, unknown>> = [];
+    let publishCalled = false;
+    const { container } = renderWithApi({
+      updateBodies,
+      platformConnections: [basalamConnection],
+      onPublish: () => {
+        publishCalled = true;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+    await screen.findByDisplayValue(item.title);
+    await user.click(container.querySelectorAll('.save-dock button')[1] as HTMLButtonElement);
+
+    await waitFor(() => expect(publishCalled).toBe(true));
+    expect(updateBodies.length).toBeGreaterThan(0);
+    await waitFor(() => expect(container.querySelector('.publish-status')).toBeInTheDocument());
+  });
 });
 
 function renderWithApi({
@@ -166,13 +205,17 @@ function renderWithApi({
   uploadAssetCount = 2,
   updateBodies = [],
   itemOverride = {},
+  platformConnections = [],
   onProcess,
+  onPublish,
 }: {
   failProcessing?: boolean;
   uploadAssetCount?: number;
   updateBodies?: Array<Record<string, unknown>>;
   itemOverride?: Partial<typeof item>;
+  platformConnections?: Array<typeof basalamConnection>;
   onProcess?: () => void;
+  onPublish?: () => void;
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
   vi.stubGlobal(
@@ -183,6 +226,7 @@ function renderWithApi({
 
       if (path === '/sellers' && method === 'POST') return jsonResponse(seller, 201);
       if (path === '/sellers' && method === 'GET') return jsonResponse([]);
+      if (path === '/sellers/1/platform-connections') return jsonResponse(platformConnections);
       if (path === '/sellers/1' && method === 'PATCH') return jsonResponse(seller);
       if (path === '/batches' && method === 'POST') return jsonResponse(batch, 201);
       if (path === '/batches/10/assets' && method === 'POST') return jsonResponse(imageAssets.slice(0, uploadAssetCount), 201);
@@ -200,6 +244,31 @@ function renderWithApi({
       }
       if (path === '/batch-items/split' && method === 'POST') return jsonResponse({ ...responseItem, photos: [responseItem.photos[0]] }, 201);
       if (path === '/batch-items/101/photos/reorder' && method === 'POST') return jsonResponse(responseItem);
+      if (path === '/batches/10/publish/basalam' && method === 'POST') {
+        onPublish?.();
+        return jsonResponse({ job_id: 80 }, 202);
+      }
+      if (path === '/publish-jobs/80') {
+        return jsonResponse({ id: 80, batch_id: 10, connection_id: 501, platform: 'basalam', status: 'succeeded', step: 'ready', error: null });
+      }
+      if (path === '/batches/10/published-products') {
+        return jsonResponse([
+          {
+            id: 1,
+            batch_item_id: 101,
+            publish_job_id: 80,
+            connection_id: 501,
+            platform: 'basalam',
+            external_product_id: '9001',
+            external_url: 'https://basalam.com/p/9001',
+            status: 'published',
+            error: null,
+            response_metadata: {},
+            created_at: now,
+            updated_at: now,
+          },
+        ]);
+      }
 
       return jsonResponse({});
     }),

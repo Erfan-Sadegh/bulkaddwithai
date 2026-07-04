@@ -84,14 +84,14 @@ ghcr.io/<github-owner>/<repo-name>
 تگ پیشنهادی برای دارکوب:
 
 ```text
-<short-commit-sha>
+build-<short-commit-sha>
 ```
 
 مثال:
 
 ```text
 Image: ghcr.io/my-org/bulkaddwithai
-Tag: a1b2c3d
+Tag: build-a1b2c3d
 ```
 
 برای پیدا کردن tag دقیق:
@@ -99,7 +99,7 @@ Tag: a1b2c3d
 1. در GitHub به تب `Actions` برو.
 2. آخرین workflow موفق `Build image` را باز کن.
 3. commit همان run را بردار.
-4. در دارکوب image را با tag `<7 کاراکتر اول commit>` ثبت کن.
+4. در دارکوب image را با tag `build-<7 کاراکتر اول commit>` ثبت کن.
 
 متغیرهای لازم runtime در دارکوب:
 
@@ -113,8 +113,26 @@ AVALAI_STT_MODEL=gpt-4o-mini-transcribe
 DATABASE_URL=sqlite:////data/catalog.db
 UPLOAD_DIR=/data/uploads
 FRONTEND_DIST_DIR=/app/frontend-dist
+FRONTEND_URL=https://your-production-domain
+BASALAM_CLIENT_ID=...
+BASALAM_CLIENT_SECRET=...
+BASALAM_REDIRECT_URI=https://your-production-domain/integrations/basalam/callback
+BASALAM_SCOPES=vendor.profile.read vendor.product.read vendor.product.write customer.profile.read
+BASALAM_AUTH_URL=https://basalam.com/accounts/sso
+BASALAM_TOKEN_URL=https://auth.basalam.com/oauth/token
+BASALAM_API_BASE_URL=https://openapi.basalam.com
+BASALAM_LEGACY_CORE_BASE_URL=https://core.basalam.com
+# BASALAM_DEFAULT_CATEGORY_ID=123
+BASALAM_DEFAULT_STOCK=1
+BASALAM_DEFAULT_PREPARATION_DAYS=1
+BASALAM_DEFAULT_WEIGHT_GRAMS=300
+BASALAM_DEFAULT_PACKAGE_WEIGHT_GRAMS=500
+BASALAM_DEFAULT_UNIT_QUANTITY=1
+BASALAM_DEFAULT_UNIT_TYPE_ID=6304
 ```
 
 برای SQLite و فایل‌های آپلود، مسیر `/data` باید persistent volume باشد؛ وگرنه با restart داده‌ها از بین می‌روند.
+
+برای اتصال باسلام، `BASALAM_REDIRECT_URI` باید در پنل توسعه‌دهنده باسلام دقیقا با همین مقدار ثبت شده باشد و scope `vendor.product.write` لازم است. اگر `BASALAM_DEFAULT_CATEGORY_ID` تنظیم نشود، ممکن است ساخت محصول در باسلام به خاطر اجباری بودن دسته‌بندی رد شود.
 
 اگر package در GHCR private بود، دارکوب باید image pull secret/PAT داشته باشد. ساده‌ترین مسیر برای MVP این است که package را در GitHub Packages عمومی کنی یا برای دارکوب token read-only بسازی.

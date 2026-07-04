@@ -136,3 +136,62 @@ class AiExtraction(BaseModel):
     transcript: str | None = None
     products: list[AiProduct]
     metadata: dict = Field(default_factory=dict)
+
+
+class PlatformConnectionRead(BaseModel):
+    id: int
+    seller_id: int
+    platform: str
+    status: str
+    external_user_id: str | None = None
+    external_shop_id: str
+    external_shop_slug: str | None = None
+    external_shop_name: str
+    scopes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OAuthUrlResponse(BaseModel):
+    configured: bool
+    url: str | None = None
+    state: str | None = None
+    error: str | None = None
+
+
+class PublishStartResponse(BaseModel):
+    job_id: int
+
+
+class PublishJobRead(BaseModel):
+    id: int
+    batch_id: int
+    connection_id: int
+    platform: str
+    status: str
+    step: str
+    error: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublishedProductRead(BaseModel):
+    id: int
+    batch_item_id: int
+    publish_job_id: int
+    connection_id: int
+    platform: str
+    external_product_id: str | None = None
+    external_url: str | None = None
+    status: str
+    error: str | None = None
+    response_metadata: dict | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

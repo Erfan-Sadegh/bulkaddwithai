@@ -1,0 +1,405 @@
+import base64
+import hashlib
+import hmac
+import json
+import time
+from datetime import timedelta
+from urllib.parse import urlencode
+
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload, sessionmaker
+
+from .config import Settings
+from .integrations.basalam import (
+    BasalamClient,
+    BasalamClientError,
+    BasalamProductPayload,
+    BasalamUnauthorized,
+    BasalamUploadedFile,
+)
+from .models import (
+    Asset,
+    Batch,
+    BatchItem,
+    BatchItemAsset,
+    PlatformConnection,
+    PublishedProduct,
+    PublishJob,
+    Seller,
+    utc_now,
+)
+
+BASALAM_PLATFORM = "basalam"
+PUBLISH_STEPS = ("uploading_photos", "creating_products", "ready", "failed")
+
+
+def list_platform_connections(session: Session, seller_id: int) -> list[PlatformConnection]:
+    if not session.get(Seller, seller_id):
+        raise HTTPException(status_code=404, detail="Seller not found")
+    return session.scalars(
+        select(PlatformConnection)
+        .where(PlatformConnection.seller_id == seller_id)
+        .order_by(PlatformConnection.created_at.desc())
+    ).all()
+
+
+def create_basalam_oauth_url(
+    settings: Settings, session: Session, client: BasalamClient, seller_id: int
+) -> tuple[str, str]:
+    if not session.get(Seller, seller_id):
+        raise HTTPException(status_code=404, detail="Seller not found")
+    if not client.is_configured:
+        raise HTTPException(status_code=503, detail="Basalam OAuth is not configured")
+    state = _make_oauth_state(settings, seller_id)
+    return client.get_authorization_url(state), state
+
+
+def handle_basalam_callback(
+    settings: Settings,
+    session: Session,
+    client: BasalamClient,
+    code: str | None,
+    state: str | None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> str:
+    if error:
+        return _frontend_redirect(settings, {"basalam_status": "failed", "error": error_description or error})
+    if not code or not state:
+        return _frontend_redirect(settings, {"basalam_status": "failed", "error": "missing_code_or_state"})
+
+    try:
+        state_payload = _read_oauth_state(settings, state)
+    except Exception:
+        return _frontend_redirect(settings, {"basalam_status": "failed", "error": "invalid_state"})
+
+    seller_id = int(state_payload["seller_id"])
+    seller = session.get(Seller, seller_id)
+    if not seller:
+        return _frontend_redirect(settings, {"basalam_status": "failed", "error": "seller_not_found"})
+
+    try:
+        tokens = client.exchange_code_for_tokens(code)
+        access_token = tokens["access_token"]
+        user = client.get_current_user(access_token)
+        vendor = user.get("vendor")
+        if not vendor or not vendor.get("id"):
+            return _frontend_redirect(settings, {"basalam_status": "failed", "error": "no_vendor_found"})
+        connection = upsert_basalam_connection(session, seller, tokens, user, vendor)
+    except Exception as exc:
+        session.rollback()
+        return _frontend_redirect(settings, {"basalam_status": "failed", "error": str(exc)})
+
+    return _frontend_redirect(
+        settings,
+        {
+            "basalam_status": "success",
+            "seller_id": str(seller.id),
+            "connection_id": str(connection.id),
+            "shop_name": connection.external_shop_name,
+        },
+    )
+
+
+def upsert_basalam_connection(
+    session: Session, seller: Seller, tokens: dict, user: dict, vendor: dict
+) -> PlatformConnection:
+    external_shop_id = str(vendor["id"])
+    connection = session.scalar(
+        select(PlatformConnection).where(
+            PlatformConnection.platform == BASALAM_PLATFORM,
+            PlatformConnection.external_shop_id == external_shop_id,
+        )
+    )
+    if not connection:
+        connection = PlatformConnection(
+            seller_id=seller.id,
+            platform=BASALAM_PLATFORM,
+            external_shop_id=external_shop_id,
+            external_shop_name=str(vendor.get("title") or vendor.get("identifier") or external_shop_id),
+            access_token=tokens["access_token"],
+        )
+        session.add(connection)
+    connection.seller_id = seller.id
+    connection.status = "connected"
+    connection.external_user_id = str(user.get("id")) if user.get("id") is not None else None
+    connection.external_shop_slug = vendor.get("identifier")
+    connection.external_shop_name = str(vendor.get("title") or vendor.get("identifier") or external_shop_id)
+    connection.access_token = tokens["access_token"]
+    connection.refresh_token = tokens.get("refresh_token") or connection.refresh_token
+    connection.token_type = tokens.get("token_type")
+    connection.scopes = tokens.get("scope") or tokens.get("scopes")
+    connection.expires_at = _expires_at(tokens.get("expires_in"))
+    connection.connection_metadata = {"user": _public_user_metadata(user), "vendor": vendor}
+    seller.shop_name = connection.external_shop_name
+    seller.mobile = str(user.get("mobile") or seller.mobile or "-")
+    session.commit()
+    session.refresh(connection)
+    return connection
+
+
+def create_basalam_publish_job(session: Session, batch_id: int) -> PublishJob:
+    batch = session.scalar(
+        select(Batch)
+        .where(Batch.id == batch_id)
+        .options(selectinload(Batch.seller).selectinload(Seller.platform_connections), selectinload(Batch.items))
+    )
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if not batch.items:
+        raise HTTPException(status_code=422, detail="No ready products found")
+    connection = next(
+        (
+            item
+            for item in batch.seller.platform_connections
+            if item.platform == BASALAM_PLATFORM and item.status == "connected"
+        ),
+        None,
+    )
+    if not connection:
+        raise HTTPException(status_code=422, detail="Basalam booth is not connected")
+    job = PublishJob(
+        batch_id=batch.id,
+        connection_id=connection.id,
+        platform=BASALAM_PLATFORM,
+        status="queued",
+        step="uploading_photos",
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
+
+
+def run_basalam_publish_job(
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+    client_factory,
+    job_id: int,
+) -> None:
+    session = session_factory()
+    try:
+        job = session.get(PublishJob, job_id)
+        if not job:
+            return
+        job.status = "running"
+        job.step = "uploading_photos"
+        job.started_at = utc_now()
+        session.commit()
+
+        batch = _batch_for_publish(session, job.batch_id)
+        connection = session.get(PlatformConnection, job.connection_id)
+        if not batch or not connection:
+            raise RuntimeError("Publish job data was not found")
+
+        client = client_factory(settings)
+        uploaded_by_asset_id = _upload_batch_photos(session, client, connection, batch.assets)
+
+        job.step = "creating_products"
+        session.commit()
+
+        success_count = 0
+        failure_count = 0
+        for item in batch.items:
+            published = _publish_item(session, settings, client, connection, job, item, uploaded_by_asset_id)
+            if published.status == "published":
+                success_count += 1
+            else:
+                failure_count += 1
+
+        job.step = "ready"
+        job.status = "succeeded" if failure_count == 0 else "partial_failed"
+        job.error = None if failure_count == 0 else f"{failure_count} product(s) failed"
+        job.finished_at = utc_now()
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        job = session.get(PublishJob, job_id)
+        if job:
+            job.status = "failed"
+            job.step = "failed"
+            job.error = str(exc)
+            job.finished_at = utc_now()
+            session.commit()
+    finally:
+        session.close()
+
+
+def list_published_products(session: Session, batch_id: int) -> list[PublishedProduct]:
+    if not session.get(Batch, batch_id):
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return session.scalars(
+        select(PublishedProduct)
+        .join(BatchItem, PublishedProduct.batch_item_id == BatchItem.id)
+        .where(BatchItem.batch_id == batch_id)
+        .order_by(PublishedProduct.created_at.desc())
+    ).all()
+
+
+def refresh_connection_tokens(
+    session: Session, client: BasalamClient, connection: PlatformConnection
+) -> PlatformConnection:
+    if not connection.refresh_token:
+        raise BasalamClientError("Basalam refresh token is missing")
+    tokens = client.refresh_tokens(connection.refresh_token)
+    connection.access_token = tokens["access_token"]
+    connection.refresh_token = tokens.get("refresh_token") or connection.refresh_token
+    connection.token_type = tokens.get("token_type") or connection.token_type
+    connection.scopes = tokens.get("scope") or tokens.get("scopes") or connection.scopes
+    connection.expires_at = _expires_at(tokens.get("expires_in"))
+    session.commit()
+    session.refresh(connection)
+    return connection
+
+
+def _upload_batch_photos(
+    session: Session, client: BasalamClient, connection: PlatformConnection, assets: list[Asset]
+) -> dict[int, BasalamUploadedFile]:
+    uploaded: dict[int, BasalamUploadedFile] = {}
+    for asset in sorted((asset for asset in assets if asset.type == "image"), key=lambda asset: asset.upload_order):
+        uploaded[asset.id] = _with_refresh(
+            session,
+            client,
+            connection,
+            lambda: client.upload_product_photo(connection, asset.file_path, asset.mime_type),
+        )
+    return uploaded
+
+
+def _publish_item(
+    session: Session,
+    settings: Settings,
+    client: BasalamClient,
+    connection: PlatformConnection,
+    job: PublishJob,
+    item: BatchItem,
+    uploaded_by_asset_id: dict[int, BasalamUploadedFile],
+) -> PublishedProduct:
+    published = PublishedProduct(
+        batch_item_id=item.id,
+        publish_job_id=job.id,
+        connection_id=connection.id,
+        platform=BASALAM_PLATFORM,
+        status="pending",
+    )
+    session.add(published)
+    session.flush()
+    try:
+        payload = _item_to_basalam_payload(settings, item, uploaded_by_asset_id)
+        response = _with_refresh(session, client, connection, lambda: client.create_product(connection, payload))
+        external_id = response.get("id") or response.get("product_id") or response.get("data", {}).get("id")
+        published.external_product_id = str(external_id) if external_id is not None else None
+        published.external_url = response.get("url") or response.get("data", {}).get("url")
+        published.status = "published"
+        published.response_metadata = response
+    except Exception as exc:
+        published.status = "failed"
+        published.error = str(exc)
+    session.commit()
+    session.refresh(published)
+    return published
+
+
+def _item_to_basalam_payload(
+    settings: Settings, item: BatchItem, uploaded_by_asset_id: dict[int, BasalamUploadedFile]
+) -> BasalamProductPayload:
+    if item.price_toman is None:
+        raise ValueError("برای ثبت محصول در باسلام، قیمت لازم است.")
+    photo_ids = [
+        uploaded_by_asset_id[link.asset_id].id
+        for link in sorted(item.asset_links, key=lambda link: link.sort_order)
+        if link.asset_id in uploaded_by_asset_id
+    ]
+    if not photo_ids:
+        raise ValueError("برای ثبت محصول در باسلام، حداقل یک عکس لازم است.")
+    return BasalamProductPayload(
+        name=item.title,
+        description=item.description or item.title,
+        primary_price=item.price_toman,
+        photo_ids=photo_ids,
+        category_id=settings.basalam_default_category_id,
+        stock=settings.basalam_default_stock,
+        status=settings.basalam_default_status,
+        preparation_days=settings.basalam_default_preparation_days,
+        weight=settings.basalam_default_weight_grams,
+        package_weight=settings.basalam_default_package_weight_grams,
+        unit_quantity=settings.basalam_default_unit_quantity,
+        unit_type=settings.basalam_default_unit_type_id,
+    )
+
+
+def _with_refresh(session: Session, client: BasalamClient, connection: PlatformConnection, operation):
+    try:
+        return operation()
+    except BasalamUnauthorized:
+        refresh_connection_tokens(session, client, connection)
+        return operation()
+
+
+def _batch_for_publish(session: Session, batch_id: int) -> Batch | None:
+    return session.scalar(
+        select(Batch)
+        .where(Batch.id == batch_id)
+        .options(
+            selectinload(Batch.assets),
+            selectinload(Batch.items)
+            .selectinload(BatchItem.asset_links)
+            .selectinload(BatchItemAsset.asset),
+        )
+    )
+
+
+def _make_oauth_state(settings: Settings, seller_id: int) -> str:
+    payload = {
+        "seller_id": seller_id,
+        "iat": int(time.time()),
+    }
+    encoded = _urlsafe_b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signature = hmac.new(_state_secret(settings), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def _read_oauth_state(settings: Settings, state: str) -> dict:
+    try:
+        encoded, signature = state.split(".", 1)
+    except ValueError as exc:
+        raise ValueError("Invalid OAuth state") from exc
+    expected = hmac.new(_state_secret(settings), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        raise ValueError("Invalid OAuth state signature")
+    payload = json.loads(_urlsafe_b64_decode(encoded))
+    if int(time.time()) - int(payload.get("iat", 0)) > 1800:
+        raise ValueError("OAuth state expired")
+    return payload
+
+
+def _state_secret(settings: Settings) -> bytes:
+    secret = settings.basalam_client_secret or "local-dev-state-secret"
+    return secret.encode("utf-8")
+
+
+def _urlsafe_b64(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _urlsafe_b64_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _expires_at(expires_in: int | str | None):
+    if not expires_in:
+        return None
+    return utc_now() + timedelta(seconds=int(expires_in))
+
+
+def _frontend_redirect(settings: Settings, params: dict[str, str]) -> str:
+    return f"{settings.frontend_url.rstrip('/')}?{urlencode(params)}"
+
+
+def _public_user_metadata(user: dict) -> dict:
+    return {
+        "id": user.get("id"),
+        "mobile": user.get("mobile"),
+    }

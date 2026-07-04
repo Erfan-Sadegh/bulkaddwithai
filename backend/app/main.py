@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -11,7 +11,16 @@ from sqlalchemy.orm import Session, selectinload
 from .ai import get_ai_provider
 from .config import Settings, get_settings
 from .database import create_tables, make_engine, make_session_factory
-from .models import Asset, Batch, ProcessingJob, Seller
+from .integrations.basalam import BasalamClient
+from .models import Asset, Batch, ProcessingJob, PublishJob, Seller
+from .platform_services import (
+    create_basalam_oauth_url,
+    create_basalam_publish_job,
+    handle_basalam_callback,
+    list_platform_connections,
+    list_published_products,
+    run_basalam_publish_job,
+)
 from .schemas import (
     AssetRead,
     BatchCreate,
@@ -20,6 +29,11 @@ from .schemas import (
     BatchRead,
     JobRead,
     MergeItemsRequest,
+    OAuthUrlResponse,
+    PlatformConnectionRead,
+    PublishedProductRead,
+    PublishJobRead,
+    PublishStartResponse,
     ProcessStartResponse,
     ReorderPhotosRequest,
     SellerCreate,
@@ -54,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Bulk Add With AI", version="0.1.0")
     app.state.settings = settings
     app.state.session_factory = session_factory
+    app.state.basalam_client_factory = lambda app_settings: BasalamClient(app_settings)
 
     app.add_middleware(
         CORSMiddleware,
@@ -73,6 +88,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def provider_factory():
         return get_ai_provider(settings)
+
+    def basalam_client_factory():
+        return app.state.basalam_client_factory(settings)
 
     @app.get("/health")
     def health():
@@ -141,6 +159,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Job not found")
         return job
 
+    @app.get("/sellers/{seller_id}/platform-connections", response_model=list[PlatformConnectionRead])
+    def get_platform_connections(seller_id: int, session: Session = Depends(get_session)):
+        return list_platform_connections(session, seller_id)
+
+    @app.get("/integrations/basalam/oauth-url", response_model=OAuthUrlResponse)
+    def get_basalam_oauth_url(seller_id: int, session: Session = Depends(get_session)):
+        url, state = create_basalam_oauth_url(settings, session, basalam_client_factory(), seller_id)
+        return OAuthUrlResponse(configured=True, url=url, state=state)
+
+    @app.get("/integrations/basalam/callback")
+    def get_basalam_callback(
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+        error_description: str | None = None,
+        session: Session = Depends(get_session),
+    ):
+        redirect_url = handle_basalam_callback(
+            settings,
+            session,
+            basalam_client_factory(),
+            code,
+            state,
+            error,
+            error_description,
+        )
+        return RedirectResponse(redirect_url)
+
+    @app.get("/api/oauth/callback")
+    def get_legacy_basalam_callback(
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+        error_description: str | None = None,
+        session: Session = Depends(get_session),
+    ):
+        redirect_url = handle_basalam_callback(
+            settings,
+            session,
+            basalam_client_factory(),
+            code,
+            state,
+            error,
+            error_description,
+        )
+        return RedirectResponse(redirect_url)
+
     @app.get("/batches/{batch_id}/items", response_model=list[BatchItemRead])
     def get_batch_items(batch_id: int, session: Session = Depends(get_session)):
         if not session.get(Batch, batch_id):
@@ -191,6 +256,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="batch-{batch_id}.csv"'},
         )
+
+    @app.post("/batches/{batch_id}/publish/basalam", response_model=PublishStartResponse, status_code=202)
+    def post_publish_basalam(
+        batch_id: int,
+        background_tasks: BackgroundTasks,
+        session: Session = Depends(get_session),
+    ):
+        job = create_basalam_publish_job(session, batch_id)
+        background_tasks.add_task(
+            run_basalam_publish_job,
+            settings,
+            session_factory,
+            app.state.basalam_client_factory,
+            job.id,
+        )
+        return PublishStartResponse(job_id=job.id)
+
+    @app.get("/publish-jobs/{job_id}", response_model=PublishJobRead)
+    def get_publish_job(job_id: int, session: Session = Depends(get_session)):
+        job = session.get(PublishJob, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Publish job not found")
+        return job
+
+    @app.get("/batches/{batch_id}/published-products", response_model=list[PublishedProductRead])
+    def get_published_products(batch_id: int, session: Session = Depends(get_session)):
+        return list_published_products(session, batch_id)
 
     if settings.frontend_dist_dir and settings.frontend_dist_dir.exists():
         app.mount("/", StaticFiles(directory=Path(settings.frontend_dist_dir), html=True), name="frontend")

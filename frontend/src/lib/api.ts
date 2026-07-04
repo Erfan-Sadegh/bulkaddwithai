@@ -1,4 +1,4 @@
-import type { Asset, Batch, Job, ProductItem, Seller } from './types';
+import type { Asset, Batch, Job, PlatformConnection, ProductItem, PublishedProduct, PublishJob, Seller } from './types';
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '');
 
@@ -20,6 +20,9 @@ export const api = {
     request<Seller>('/sellers', { method: 'POST', body: JSON.stringify(payload) }),
   updateSeller: (sellerId: number, payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) =>
     request<Seller>(`/sellers/${sellerId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  listPlatformConnections: (sellerId: number) => request<PlatformConnection[]>(`/sellers/${sellerId}/platform-connections`),
+  getBasalamOAuthUrl: (sellerId: number) =>
+    request<{ configured: boolean; url: string | null; state: string | null; error: string | null }>(`/integrations/basalam/oauth-url?seller_id=${sellerId}`),
   createBatch: (sellerId: number) => request<Batch>('/batches', { method: 'POST', body: JSON.stringify({ seller_id: sellerId }) }),
   listBatches: (sellerId: number) => request<Batch[]>(`/batches?seller_id=${sellerId}`),
   uploadAssets: (batchId: number, files: File[]) => {
@@ -39,4 +42,8 @@ export const api = {
     request<ProductItem>('/batch-items/split', { method: 'POST', body: JSON.stringify({ item_id: itemId, asset_ids: assetIds }) }),
   reorderPhotos: (itemId: number, assetIds: number[]) =>
     request<ProductItem>(`/batch-items/${itemId}/photos/reorder`, { method: 'POST', body: JSON.stringify({ asset_ids: assetIds }) }),
+  publishToBasalam: (batchId: number) =>
+    request<{ job_id: number }>(`/batches/${batchId}/publish/basalam`, { method: 'POST', body: JSON.stringify({}) }),
+  getPublishJob: (jobId: number) => request<PublishJob>(`/publish-jobs/${jobId}`),
+  listPublishedProducts: (batchId: number) => request<PublishedProduct[]>(`/batches/${batchId}/published-products`),
 };

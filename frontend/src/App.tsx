@@ -7,15 +7,17 @@ import {
   Pause,
   RotateCcw,
   Save,
+  Send,
   Sparkles,
   SplitSquareHorizontal,
+  Store,
   Upload,
 } from 'lucide-react';
 import type { ChangeEvent, MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { API_BASE, api } from './lib/api';
-import type { Asset, Batch, Job, ProductItem, Seller } from './lib/types';
+import type { Asset, Batch, Job, PlatformConnection, ProductItem, PublishedProduct, PublishJob, Seller } from './lib/types';
 
 type ProductDraft = Pick<ProductItem, 'title' | 'description'> & { price_toman: string };
 type DraftMap = Record<number, ProductDraft>;
@@ -29,17 +31,29 @@ const jobLabels: Record<Job['step'], string> = {
   failed: 'ساخت لیست ناموفق بود',
 };
 
+const publishLabels: Record<PublishJob['step'], string> = {
+  uploading_photos: 'در حال فرستادن عکس‌ها به باسلام',
+  creating_products: 'در حال ثبت محصول‌ها در غرفه',
+  ready: 'ثبت در غرفه تمام شد',
+  failed: 'ثبت در غرفه ناموفق بود',
+};
+
 export function App() {
   const [seller, setSeller] = useState<Seller | null>(null);
   const [batch, setBatch] = useState<Batch | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [items, setItems] = useState<ProductItem[]>([]);
   const [drafts, setDrafts] = useState<DraftMap>({});
+  const [connections, setConnections] = useState<PlatformConnection[]>([]);
+  const [publishJob, setPublishJob] = useState<PublishJob | null>(null);
+  const [publishedProducts, setPublishedProducts] = useState<PublishedProduct[]>([]);
   const [job, setJob] = useState<Job | null>(null);
   const [booting, setBooting] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [savingList, setSavingList] = useState(false);
+  const [connectingBasalam, setConnectingBasalam] = useState(false);
+  const [publishingBasalam, setPublishingBasalam] = useState(false);
   const [savingShop, setSavingShop] = useState(false);
   const [splittingPhotoKey, setSplittingPhotoKey] = useState<string | null>(null);
   const [freshConfirmOpen, setFreshConfirmOpen] = useState(false);
@@ -53,6 +67,10 @@ export function App() {
     [assets],
   );
   const audioAssets = useMemo(() => assets.filter((asset) => asset.type === 'audio'), [assets]);
+  const basalamConnection = useMemo(
+    () => connections.find((connection) => connection.platform === 'basalam' && connection.status === 'connected') ?? null,
+    [connections],
+  );
 
   useEffect(() => {
     bootstrapWorkspace();
@@ -81,6 +99,28 @@ export function App() {
   }, [batch, job]);
 
   useEffect(() => {
+    if (!publishJob || ['succeeded', 'partial_failed', 'failed'].includes(publishJob.status)) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const nextJob = await api.getPublishJob(publishJob.id);
+        setPublishJob(nextJob);
+        if (['succeeded', 'partial_failed', 'failed'].includes(nextJob.status)) {
+          setPublishingBasalam(false);
+          if (batch) {
+            setPublishedProducts(await api.listPublishedProducts(batch.id));
+          }
+          if (nextJob.status === 'succeeded') showToast('محصول‌ها در غرفه باسلام ثبت شدند.');
+          if (nextJob.status === 'partial_failed') showToast('بعضی محصول‌ها ثبت نشدند. پایین لیست را چک کن.');
+        }
+      } catch (err) {
+        setPublishingBasalam(false);
+        setError(err instanceof Error ? err.message : 'وضعیت ثبت در باسلام خوانده نشد. دوباره تلاش کن.');
+      }
+    }, 1100);
+    return () => window.clearInterval(timer);
+  }, [batch, publishJob]);
+
+  useEffect(() => {
     if (items.length === 0) return;
     setDrafts(buildDrafts(items));
     window.setTimeout(() => {
@@ -92,14 +132,24 @@ export function App() {
     setBooting(true);
     setError(null);
     try {
+      const oauthResult = readBasalamReturn();
       const sellers = await api.listSellers();
-      const currentSeller = sellers[0] ?? (await api.createSeller({}));
+      const oauthSeller = oauthResult?.sellerId
+        ? sellers.find((candidate) => candidate.id === oauthResult.sellerId)
+        : null;
+      const currentSeller = oauthSeller ?? sellers[0] ?? (await api.createSeller({}));
+      if (oauthResult?.status === 'success') showToast('غرفه باسلام وصل شد.');
+      if (oauthResult?.status === 'failed') setError('اتصال غرفه باسلام انجام نشد. دوباره تلاش کن.');
       const currentBatch = await api.createBatch(currentSeller.id);
+      const currentConnections = await api.listPlatformConnections(currentSeller.id).catch(() => []);
       setSeller(currentSeller);
       setBatch(currentBatch);
+      setConnections(Array.isArray(currentConnections) ? currentConnections : []);
       setAssets([]);
       setItems([]);
       setDrafts({});
+      setPublishedProducts([]);
+      setPublishJob(null);
       setJob(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'صفحه آماده نشد. دوباره تلاش کن.');
@@ -120,6 +170,8 @@ export function App() {
       setAssets([]);
       setItems([]);
       setDrafts({});
+      setPublishedProducts([]);
+      setPublishJob(null);
       setJob(null);
       showToast('صفحه برای محصولات جدید آماده شد.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -179,7 +231,7 @@ export function App() {
     }
   }
 
-  async function saveWholeList() {
+  async function persistDrafts(showSuccess = false) {
     setSavingList(true);
     setError(null);
     try {
@@ -195,11 +247,55 @@ export function App() {
         }),
       );
       setItems(savedItems);
-      setSaveSuccessOpen(true);
+      if (showSuccess) setSaveSuccessOpen(true);
+      return savedItems;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'لیست ذخیره نشد. دوباره تلاش کن.');
+      return null;
     } finally {
       setSavingList(false);
+    }
+  }
+
+  async function saveWholeList() {
+    await persistDrafts(true);
+  }
+
+  async function connectBasalam() {
+    if (!seller) return;
+    setConnectingBasalam(true);
+    setError(null);
+    try {
+      const result = await api.getBasalamOAuthUrl(seller.id);
+      if (!result.url) throw new Error(result.error || 'اتصال باسلام هنوز تنظیم نشده است.');
+      window.location.href = result.url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'لینک اتصال باسلام ساخته نشد.');
+      setConnectingBasalam(false);
+    }
+  }
+
+  async function publishToBasalam() {
+    if (!batch) return;
+    if (!basalamConnection) {
+      await connectBasalam();
+      return;
+    }
+    setPublishingBasalam(true);
+    setError(null);
+    try {
+      const saved = await persistDrafts(false);
+      if (!saved) return;
+      const started = await api.publishToBasalam(batch.id);
+      const firstJob = await api.getPublishJob(started.job_id);
+      setPublishJob(firstJob);
+      if (['succeeded', 'partial_failed', 'failed'].includes(firstJob.status)) {
+        setPublishingBasalam(false);
+        setPublishedProducts(await api.listPublishedProducts(batch.id));
+      }
+    } catch (err) {
+      setPublishingBasalam(false);
+      setError(err instanceof Error ? err.message : 'ثبت محصول‌ها در باسلام انجام نشد.');
     }
   }
 
@@ -262,6 +358,11 @@ export function App() {
 
           {seller && (
             <aside className="side-rail">
+              <BasalamPanel
+                connection={basalamConnection}
+                connecting={connectingBasalam}
+                onConnect={connectBasalam}
+              />
               <ShopInfoPanel seller={seller} saving={savingShop} onSave={saveShopInfo} />
             </aside>
           )}
@@ -290,9 +391,14 @@ export function App() {
             items={items}
             drafts={drafts}
             saving={savingList}
+            publishing={publishingBasalam}
+            basalamConnected={Boolean(basalamConnection)}
+            publishJob={publishJob}
+            publishedProducts={publishedProducts}
             splittingPhotoKey={splittingPhotoKey}
             onDraftChange={updateDraft}
             onSaveList={saveWholeList}
+            onPublishBasalam={publishToBasalam}
             onSplitPhoto={splitPhoto}
             onAskStartFresh={() => setFreshConfirmOpen(true)}
           />
@@ -462,6 +568,39 @@ function VoicePanel({
   );
 }
 
+function BasalamPanel({
+  connection,
+  connecting,
+  onConnect,
+}: {
+  connection: PlatformConnection | null;
+  connecting: boolean;
+  onConnect: () => void;
+}) {
+  return (
+    <section className="panel basalam-panel">
+      <div className="basalam-title">
+        <Store size={18} />
+        <strong>غرفه باسلام</strong>
+      </div>
+      {connection ? (
+        <div className="connection-state connected">
+          <Check size={17} />
+          <span>{connection.external_shop_name} وصل است</span>
+        </div>
+      ) : (
+        <>
+          <p>برای ثبت مستقیم محصول‌ها، غرفه‌ات را وصل کن.</p>
+          <button className="button primary full" type="button" onClick={onConnect} disabled={connecting}>
+            {connecting ? <Loader2 className="spin" size={17} /> : <Store size={17} />}
+            اتصال غرفه
+          </button>
+        </>
+      )}
+    </section>
+  );
+}
+
 function ShopInfoPanel({
   seller,
   saving,
@@ -544,9 +683,14 @@ function PreviewPanel({
   items,
   drafts,
   saving,
+  publishing,
+  basalamConnected,
+  publishJob,
+  publishedProducts,
   splittingPhotoKey,
   onDraftChange,
   onSaveList,
+  onPublishBasalam,
   onSplitPhoto,
   onAskStartFresh,
 }: {
@@ -555,9 +699,14 @@ function PreviewPanel({
   items: ProductItem[];
   drafts: DraftMap;
   saving: boolean;
+  publishing: boolean;
+  basalamConnected: boolean;
+  publishJob: PublishJob | null;
+  publishedProducts: PublishedProduct[];
   splittingPhotoKey: string | null;
   onDraftChange: (itemId: number, patch: Partial<ProductDraft>) => void;
   onSaveList: () => void;
+  onPublishBasalam: () => void;
   onSplitPhoto: (itemId: number, assetId: number) => void;
   onAskStartFresh: () => void;
 }) {
@@ -585,6 +734,8 @@ function PreviewPanel({
         </div>
       </div>
 
+      {publishJob && <PublishStatusPanel job={publishJob} products={publishedProducts} />}
+
       <div className="item-list">
         {items.map((item) => (
           <ProductCard
@@ -599,11 +750,35 @@ function PreviewPanel({
       </div>
 
       <div className="save-dock">
-        <button className="button primary save-list-button" type="button" onClick={onSaveList} disabled={saving}>
+        <button className="button secondary save-list-button" type="button" onClick={onSaveList} disabled={saving || publishing}>
           {saving ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
           ذخیره لیست
         </button>
+        <button className="button primary save-list-button" type="button" onClick={onPublishBasalam} disabled={saving || publishing}>
+          {publishing ? <Loader2 className="spin" size={18} /> : basalamConnected ? <Send size={18} /> : <Store size={18} />}
+          {basalamConnected ? 'ثبت در غرفه باسلام' : 'اتصال غرفه باسلام'}
+        </button>
       </div>
+    </section>
+  );
+}
+
+function PublishStatusPanel({ job, products }: { job: PublishJob; products: PublishedProduct[] }) {
+  const published = products.filter((product) => product.status === 'published').length;
+  const failed = products.filter((product) => product.status === 'failed').length;
+  const isFailed = job.status === 'failed' || job.status === 'partial_failed' || failed > 0;
+  return (
+    <section className={`publish-status ${isFailed ? 'failed' : ''}`} role="status">
+      <div>
+        <strong>{publishLabels[job.step]}</strong>
+        <span>
+          {job.status === 'running' || job.status === 'queued'
+            ? 'چند لحظه صبر کن.'
+            : `${toPersianDigits(published)} محصول ثبت شد${failed ? `، ${toPersianDigits(failed)} محصول نیاز به بررسی دارد` : ''}.`}
+        </span>
+      </div>
+      {job.status === 'running' || job.status === 'queued' ? <Loader2 className="spin" size={20} /> : <Check size={20} />}
+      {job.error && <span className="field-error">{job.error}</span>}
     </section>
   );
 }
@@ -720,6 +895,16 @@ function LoadingPanel({ label }: { label: string }) {
       {label}
     </div>
   );
+}
+
+function readBasalamReturn(): { status: 'success' | 'failed'; sellerId: number | null } | null {
+  const params = new URLSearchParams(window.location.search);
+  const status = params.get('basalam_status');
+  if (!status) return null;
+  const rawSellerId = params.get('seller_id');
+  const sellerId = rawSellerId ? Number(rawSellerId) : null;
+  window.history.replaceState({}, '', window.location.pathname);
+  return { status: status === 'success' ? 'success' : 'failed', sellerId: Number.isFinite(sellerId) ? sellerId : null };
 }
 
 function buildDrafts(items: ProductItem[]): DraftMap {

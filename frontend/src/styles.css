@@ -109,9 +109,42 @@ a {
 
 .compact-panel,
 .optional-panel,
+.basalam-panel,
 .progress-panel,
 .product-card {
   padding: 18px;
+}
+
+.basalam-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.basalam-title,
+.connection-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.basalam-title {
+  color: #263130;
+}
+
+.basalam-panel p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.connection-state {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid #cfe5df;
+  border-radius: 8px;
+  background: #f2faf7;
+  color: var(--primary);
+  line-height: 1.6;
 }
 
 .optional-panel summary {
@@ -570,10 +603,39 @@ a {
   color: #8d554f;
 }
 
+.publish-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #cfe5df;
+  border-radius: 8px;
+  background: #f6fbf9;
+  color: var(--primary);
+}
+
+.publish-status.failed {
+  border-color: #f2c8bd;
+  background: #fff8f6;
+  color: var(--danger);
+}
+
+.publish-status div {
+  display: grid;
+  gap: 3px;
+}
+
+.publish-status span {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .save-dock {
   position: static;
   z-index: 12;
   display: flex;
+  gap: 10px;
   justify-content: flex-start;
   pointer-events: none;
 }
@@ -731,6 +793,8 @@ a {
   .save-dock {
     position: sticky;
     bottom: 0;
+    display: grid;
+    grid-template-columns: 1fr;
     margin: 0 -10px -10px;
     padding: 10px;
     background: rgba(247, 248, 248, 0.96);

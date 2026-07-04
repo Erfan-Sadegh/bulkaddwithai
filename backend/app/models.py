@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -23,6 +23,9 @@ class Seller(Base):
     )
 
     batches: Mapped[list["Batch"]] = relationship(back_populates="seller")
+    platform_connections: Mapped[list["PlatformConnection"]] = relationship(
+        back_populates="seller", cascade="all, delete-orphan"
+    )
 
 
 class Batch(Base):
@@ -43,6 +46,7 @@ class Batch(Base):
         back_populates="batch", cascade="all, delete-orphan", order_by="Asset.upload_order"
     )
     jobs: Mapped[list["ProcessingJob"]] = relationship(back_populates="batch")
+    publish_jobs: Mapped[list["PublishJob"]] = relationship(back_populates="batch")
     items: Mapped[list["BatchItem"]] = relationship(
         back_populates="batch", cascade="all, delete-orphan"
     )
@@ -100,6 +104,7 @@ class BatchItem(Base):
     asset_links: Mapped[list["BatchItemAsset"]] = relationship(
         back_populates="batch_item", cascade="all, delete-orphan", order_by="BatchItemAsset.sort_order"
     )
+    published_products: Mapped[list["PublishedProduct"]] = relationship(back_populates="batch_item")
 
 
 class BatchItemAsset(Base):
@@ -115,3 +120,77 @@ class BatchItemAsset(Base):
 
     batch_item: Mapped[BatchItem] = relationship(back_populates="asset_links")
     asset: Mapped[Asset] = relationship(back_populates="item_links")
+
+
+class PlatformConnection(Base):
+    __tablename__ = "platform_connections"
+    __table_args__ = (
+        UniqueConstraint("platform", "external_shop_id", name="uq_platform_external_shop"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    seller_id: Mapped[int] = mapped_column(ForeignKey("sellers.id"), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="connected", nullable=False)
+    external_user_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    external_shop_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    external_shop_slug: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    external_shop_name: Mapped[str] = mapped_column(String(220), nullable=False)
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    connection_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    seller: Mapped[Seller] = relationship(back_populates="platform_connections")
+    publish_jobs: Mapped[list["PublishJob"]] = relationship(back_populates="connection")
+    published_products: Mapped[list["PublishedProduct"]] = relationship(back_populates="connection")
+
+
+class PublishJob(Base):
+    __tablename__ = "publish_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), nullable=False, index=True)
+    connection_id: Mapped[int] = mapped_column(ForeignKey("platform_connections.id"), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    step: Mapped[str] = mapped_column(String(64), default="uploading_photos", nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    batch: Mapped[Batch] = relationship(back_populates="publish_jobs")
+    connection: Mapped[PlatformConnection] = relationship(back_populates="publish_jobs")
+    products: Mapped[list["PublishedProduct"]] = relationship(
+        back_populates="publish_job", cascade="all, delete-orphan"
+    )
+
+
+class PublishedProduct(Base):
+    __tablename__ = "published_products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_item_id: Mapped[int] = mapped_column(ForeignKey("batch_items.id"), nullable=False, index=True)
+    publish_job_id: Mapped[int] = mapped_column(ForeignKey("publish_jobs.id"), nullable=False, index=True)
+    connection_id: Mapped[int] = mapped_column(ForeignKey("platform_connections.id"), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    external_product_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    external_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    batch_item: Mapped[BatchItem] = relationship(back_populates="published_products")
+    publish_job: Mapped[PublishJob] = relationship(back_populates="products")
+    connection: Mapped[PlatformConnection] = relationship(back_populates="published_products")

@@ -32,6 +32,7 @@ test('photo first flow with mocked API', async ({ page }) => {
     if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
     return route.fulfill({ json: [] });
   });
+  await page.route('**/sellers/1/platform-connections', async (route) => route.fulfill({ json: [] }));
   await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
   await page.route('**/batches', async (route) => route.fulfill({ json: batch, status: 201 }));
   await page.route('**/batches/7/assets', async (route) => {

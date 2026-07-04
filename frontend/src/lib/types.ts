@@ -58,3 +58,42 @@ export type ProductItem = {
   created_at: string;
   updated_at: string;
 };
+
+export type PlatformConnection = {
+  id: number;
+  seller_id: number;
+  platform: 'basalam' | string;
+  status: string;
+  external_user_id: string | null;
+  external_shop_id: string;
+  external_shop_slug: string | null;
+  external_shop_name: string;
+  scopes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PublishJob = {
+  id: number;
+  batch_id: number;
+  connection_id: number;
+  platform: string;
+  status: 'queued' | 'running' | 'succeeded' | 'partial_failed' | 'failed';
+  step: 'uploading_photos' | 'creating_products' | 'ready' | 'failed';
+  error: string | null;
+};
+
+export type PublishedProduct = {
+  id: number;
+  batch_item_id: number;
+  publish_job_id: number;
+  connection_id: number;
+  platform: string;
+  external_product_id: string | null;
+  external_url: string | null;
+  status: 'pending' | 'published' | 'failed';
+  error: string | null;
+  response_metadata: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
