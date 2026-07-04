@@ -64,6 +64,7 @@ const item = {
     { asset_id: 11, upload_order: 1, url: '/files/10/image/0001.jpg', role: 'product_photo', sort_order: 1 },
     { asset_id: 12, upload_order: 2, url: '/files/10/image/0002.jpg', role: 'product_photo', sort_order: 2 },
   ],
+  basalam_category: null,
   created_at: now,
   updated_at: now,
 };
@@ -237,6 +238,51 @@ function renderWithApi({
       if (path === '/jobs/30') return jsonResponse({ id: 30, batch_id: 10, status: 'succeeded', step: 'ready', error: null });
       if (path === '/jobs/31') return jsonResponse({ id: 31, batch_id: 10, status: 'failed', step: 'failed', error: 'پردازش کامل نشد.' });
       if (path === '/batches/10/items') return jsonResponse([responseItem]);
+      if (path === '/batches/10/categories/basalam/suggest' && method === 'POST') {
+        return jsonResponse([
+          {
+            ...responseItem,
+            basalam_category: {
+              category_id: 20,
+              title: 'گروه شده',
+              path: 'کالای دیجیتال > گروه شده',
+              confidence: 0.88,
+              source: 'auto',
+              unit_type_id: 6304,
+              unit_type_title: 'عددی',
+              max_preparation_days: 7,
+            },
+          },
+        ]);
+      }
+      if (path === '/integrations/basalam/categories') {
+        return jsonResponse([
+          {
+            id: 20,
+            title: 'گروه شده',
+            path: 'کالای دیجیتال > گروه شده',
+            confidence: 0.88,
+            unit_type_id: 6304,
+            unit_type_title: 'عددی',
+            max_preparation_days: 7,
+          },
+        ]);
+      }
+      if (path === '/batch-items/101/basalam-category' && method === 'PATCH') {
+        return jsonResponse({
+          ...responseItem,
+          basalam_category: {
+            category_id: 20,
+            title: 'گروه شده',
+            path: 'کالای دیجیتال > گروه شده',
+            confidence: 1,
+            source: 'user',
+            unit_type_id: 6304,
+            unit_type_title: 'عددی',
+            max_preparation_days: 7,
+          },
+        });
+      }
       if (path === '/batch-items/101' && method === 'PATCH') {
         const body = JSON.parse(String(init?.body ?? '{}'));
         updateBodies.push(body);

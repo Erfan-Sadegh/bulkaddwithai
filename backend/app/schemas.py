@@ -78,6 +78,27 @@ class BatchItemAssetRead(BaseModel):
     sort_order: int
 
 
+class BasalamCategoryRead(BaseModel):
+    id: int
+    title: str
+    path: str
+    unit_type_id: int | None = None
+    unit_type_title: str | None = None
+    max_preparation_days: int | None = None
+    confidence: float | None = None
+
+
+class BatchItemBasalamCategoryRead(BaseModel):
+    category_id: int | None = None
+    title: str | None = None
+    path: str | None = None
+    confidence: float | None = None
+    source: str | None = None
+    unit_type_id: int | None = None
+    unit_type_title: str | None = None
+    max_preparation_days: int | None = None
+
+
 class BatchItemRead(BaseModel):
     id: int
     batch_id: int
@@ -87,6 +108,7 @@ class BatchItemRead(BaseModel):
     confidence: float
     edited_by_user: bool
     photos: list[BatchItemAssetRead]
+    basalam_category: BatchItemBasalamCategoryRead | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -95,6 +117,10 @@ class BatchItemPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=220)
     description: str | None = None
     price_toman: int | None = Field(default=None, ge=0)
+
+
+class BasalamCategoryPatch(BaseModel):
+    category_id: int = Field(ge=1)
 
 
 class MergeItemsRequest(BaseModel):

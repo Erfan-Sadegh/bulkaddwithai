@@ -20,9 +20,14 @@ from .platform_services import (
     list_platform_connections,
     list_published_products,
     run_basalam_publish_job,
+    search_basalam_categories,
+    set_basalam_category_for_item,
+    suggest_basalam_categories_for_batch,
 )
 from .schemas import (
     AssetRead,
+    BasalamCategoryPatch,
+    BasalamCategoryRead,
     BatchCreate,
     BatchItemPatch,
     BatchItemRead,
@@ -167,6 +172,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_basalam_oauth_url(seller_id: int, session: Session = Depends(get_session)):
         url, state = create_basalam_oauth_url(settings, session, basalam_client_factory(), seller_id)
         return OAuthUrlResponse(configured=True, url=url, state=state)
+
+    @app.get("/integrations/basalam/categories", response_model=list[BasalamCategoryRead])
+    def get_basalam_categories(query: str = "", limit: int = 20):
+        return search_basalam_categories(settings, basalam_client_factory(), query, min(max(limit, 1), 50))
+
+    @app.post("/batches/{batch_id}/categories/basalam/suggest", response_model=list[BatchItemRead])
+    def post_suggest_basalam_categories(batch_id: int, session: Session = Depends(get_session)):
+        return suggest_basalam_categories_for_batch(session, settings, basalam_client_factory(), batch_id)
+
+    @app.patch("/batch-items/{item_id}/basalam-category", response_model=BatchItemRead)
+    def patch_batch_item_basalam_category(
+        item_id: int, payload: BasalamCategoryPatch, session: Session = Depends(get_session)
+    ):
+        return set_basalam_category_for_item(
+            session, settings, basalam_client_factory(), item_id, payload.category_id
+        )
 
     @app.get("/integrations/basalam/callback")
     def get_basalam_callback(

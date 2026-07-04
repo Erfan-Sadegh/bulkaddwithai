@@ -123,6 +123,8 @@ BASALAM_TOKEN_URL=https://auth.basalam.com/oauth/token
 BASALAM_API_BASE_URL=https://openapi.basalam.com
 BASALAM_LEGACY_CORE_BASE_URL=https://core.basalam.com
 # BASALAM_DEFAULT_CATEGORY_ID=123
+BASALAM_CATEGORY_CACHE_TTL_SECONDS=86400
+BASALAM_CATEGORY_SUGGESTION_THRESHOLD=0.45
 BASALAM_DEFAULT_STOCK=1
 BASALAM_DEFAULT_PREPARATION_DAYS=1
 BASALAM_DEFAULT_WEIGHT_GRAMS=300
@@ -133,6 +135,6 @@ BASALAM_DEFAULT_UNIT_TYPE_ID=6304
 
 برای SQLite و فایل‌های آپلود، مسیر `/data` باید persistent volume باشد؛ وگرنه با restart داده‌ها از بین می‌روند.
 
-برای اتصال باسلام، `BASALAM_REDIRECT_URI` باید در پنل توسعه‌دهنده باسلام دقیقا با همین مقدار ثبت شده باشد و scope `vendor.product.write` لازم است. اگر `BASALAM_DEFAULT_CATEGORY_ID` تنظیم نشود، ممکن است ساخت محصول در باسلام به خاطر اجباری بودن دسته‌بندی رد شود.
+برای اتصال باسلام، `BASALAM_REDIRECT_URI` باید در پنل توسعه‌دهنده باسلام دقیقا با همین مقدار ثبت شده باشد و scope `vendor.product.write` لازم است. دسته‌بندی محصول‌ها از API باسلام پیشنهاد داده می‌شود؛ `BASALAM_DEFAULT_CATEGORY_ID` فقط fallback اختیاری است و برای زمانی است که می‌خواهی همه محصولات بدون انتخاب دسته در یک دسته ثابت ثبت شوند.
 
 اگر package در GHCR private بود، دارکوب باید image pull secret/PAT داشته باشد. ساده‌ترین مسیر برای MVP این است که package را در GitHub Packages عمومی کنی یا برای دارکوب token read-only بسازی.

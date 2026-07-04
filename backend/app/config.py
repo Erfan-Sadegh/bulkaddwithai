@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     basalam_default_unit_type_id: int = Field(
         default=6304, validation_alias="BASALAM_DEFAULT_UNIT_TYPE_ID"
     )
+    basalam_category_cache_ttl_seconds: int = Field(
+        default=86400, validation_alias="BASALAM_CATEGORY_CACHE_TTL_SECONDS"
+    )
+    basalam_category_suggestion_threshold: float = Field(
+        default=0.45, validation_alias="BASALAM_CATEGORY_SUGGESTION_THRESHOLD"
+    )
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     @field_validator("basalam_default_category_id", "basalam_default_status", mode="before")

@@ -104,6 +104,9 @@ class BatchItem(Base):
     asset_links: Mapped[list["BatchItemAsset"]] = relationship(
         back_populates="batch_item", cascade="all, delete-orphan", order_by="BatchItemAsset.sort_order"
     )
+    platform_data: Mapped[list["BatchItemPlatformData"]] = relationship(
+        back_populates="batch_item", cascade="all, delete-orphan"
+    )
     published_products: Mapped[list["PublishedProduct"]] = relationship(back_populates="batch_item")
 
 
@@ -120,6 +123,32 @@ class BatchItemAsset(Base):
 
     batch_item: Mapped[BatchItem] = relationship(back_populates="asset_links")
     asset: Mapped[Asset] = relationship(back_populates="item_links")
+
+
+class BatchItemPlatformData(Base):
+    __tablename__ = "batch_item_platform_data"
+    __table_args__ = (
+        UniqueConstraint("batch_item_id", "platform", name="uq_batch_item_platform_data"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_item_id: Mapped[int] = mapped_column(ForeignKey("batch_items.id"), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    category_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    category_title: Mapped[str | None] = mapped_column(String(220), nullable=True)
+    category_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    category_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    category_unit_type_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    category_unit_type_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    category_max_preparation_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    platform_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    batch_item: Mapped[BatchItem] = relationship(back_populates="platform_data")
 
 
 class PlatformConnection(Base):

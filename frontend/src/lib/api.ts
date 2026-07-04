@@ -1,4 +1,4 @@
-import type { Asset, Batch, Job, PlatformConnection, ProductItem, PublishedProduct, PublishJob, Seller } from './types';
+import type { Asset, BasalamCategory, Batch, Job, PlatformConnection, ProductItem, PublishedProduct, PublishJob, Seller } from './types';
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '');
 
@@ -23,6 +23,8 @@ export const api = {
   listPlatformConnections: (sellerId: number) => request<PlatformConnection[]>(`/sellers/${sellerId}/platform-connections`),
   getBasalamOAuthUrl: (sellerId: number) =>
     request<{ configured: boolean; url: string | null; state: string | null; error: string | null }>(`/integrations/basalam/oauth-url?seller_id=${sellerId}`),
+  searchBasalamCategories: (query: string) =>
+    request<BasalamCategory[]>(`/integrations/basalam/categories?query=${encodeURIComponent(query)}&limit=12`),
   createBatch: (sellerId: number) => request<Batch>('/batches', { method: 'POST', body: JSON.stringify({ seller_id: sellerId }) }),
   listBatches: (sellerId: number) => request<Batch[]>(`/batches?seller_id=${sellerId}`),
   uploadAssets: (batchId: number, files: File[]) => {
@@ -34,8 +36,12 @@ export const api = {
   processBatch: (batchId: number) => request<{ job_id: number }>(`/batches/${batchId}/process`, { method: 'POST', body: JSON.stringify({}) }),
   getJob: (jobId: number) => request<Job>(`/jobs/${jobId}`),
   listItems: (batchId: number) => request<ProductItem[]>(`/batches/${batchId}/items`),
+  suggestBasalamCategories: (batchId: number) =>
+    request<ProductItem[]>(`/batches/${batchId}/categories/basalam/suggest`, { method: 'POST', body: JSON.stringify({}) }),
   updateItem: (itemId: number, payload: Partial<Pick<ProductItem, 'title' | 'description' | 'price_toman'>>) =>
     request<ProductItem>(`/batch-items/${itemId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  setBasalamCategory: (itemId: number, categoryId: number) =>
+    request<ProductItem>(`/batch-items/${itemId}/basalam-category`, { method: 'PATCH', body: JSON.stringify({ category_id: categoryId }) }),
   mergeItems: (sourceItemIds: number[]) =>
     request<ProductItem>('/batch-items/merge', { method: 'POST', body: JSON.stringify({ source_item_ids: sourceItemIds }) }),
   splitItem: (itemId: number, assetIds: number[]) =>

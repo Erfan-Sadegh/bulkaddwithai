@@ -54,6 +54,32 @@ class FakeBasalamClient:
         self.uploaded_paths.append(path)
         return BasalamUploadedFile(id=1000 + len(self.uploaded_paths), raw={"path": path, "mime_type": mime_type})
 
+    def get_categories(self) -> dict:
+        return {
+            "data": [
+                {
+                    "id": 10,
+                    "title": "کالای دیجیتال",
+                    "children": [
+                        {
+                            "id": 20,
+                            "title": "گروه شده",
+                            "max_preparation_days": 7,
+                            "unit_type": {"id": 6304, "title": "عددی"},
+                            "children": [],
+                        },
+                        {
+                            "id": 21,
+                            "title": "عکس",
+                            "max_preparation_days": 5,
+                            "unit_type": {"id": 6304, "title": "عددی"},
+                            "children": [],
+                        },
+                    ],
+                }
+            ]
+        }
+
     def create_product(
         self,
         connection: PlatformConnection,
@@ -105,6 +131,25 @@ def test_basalam_callback_with_invalid_state_does_not_create_connection(client: 
     assert client.get(f"/sellers/{seller['id']}/platform-connections").json() == []
 
 
+def test_basalam_category_search_and_manual_item_category_selection(client: TestClient, batch: dict):
+    fake = FakeBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+
+    search = client.get("/integrations/basalam/categories?query=گروه").json()
+    assert search[0]["id"] == 20
+    assert search[0]["path"] == "کالای دیجیتال > گروه شده"
+
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")])
+    client.post(f"/batches/{batch['id']}/process")
+    item = client.get(f"/batches/{batch['id']}/items").json()[0]
+
+    patched = client.patch(f"/batch-items/{item['id']}/basalam-category", json={"category_id": 21}).json()
+
+    assert patched["basalam_category"]["category_id"] == 21
+    assert patched["basalam_category"]["source"] == "user"
+    assert patched["basalam_category"]["unit_type_id"] == 6304
+
+
 def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload(client: TestClient, batch: dict):
     fake = FakeBasalamClient()
     client.app.state.basalam_client_factory = lambda _settings: fake
@@ -121,6 +166,8 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     for item in ready_items:
         if item["price_toman"] is None:
             client.patch(f"/batch-items/{item['id']}", json={"price_toman": 456000})
+    suggested = client.post(f"/batches/{batch['id']}/categories/basalam/suggest").json()
+    assert suggested[0]["basalam_category"]["category_id"] == 20
 
     callback_state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}").json()["state"]
     client.get(f"/integrations/basalam/callback?code=valid-code&state={callback_state}", follow_redirects=False)
@@ -138,6 +185,7 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     assert [product.name for product in fake.created_products] == [item["title"] for item in client.get(f"/batches/{batch['id']}/items").json()]
     assert fake.created_products[0].photo_ids == [1001, 1002]
     assert fake.created_products[0].primary_price == 456000
+    assert fake.created_products[0].category_id == 20
 
 
 def test_empty_optional_basalam_numeric_settings_are_ignored():

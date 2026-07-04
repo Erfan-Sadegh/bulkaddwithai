@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .ai import AiProvider
 from .config import Settings
-from .models import Asset, Batch, BatchItem, BatchItemAsset, ProcessingJob, Seller, utc_now
-from .schemas import AiExtraction, BatchItemAssetRead, BatchItemRead
+from .models import Asset, Batch, BatchItem, BatchItemAsset, BatchItemPlatformData, ProcessingJob, Seller, utc_now
+from .schemas import AiExtraction, BatchItemAssetRead, BatchItemBasalamCategoryRead, BatchItemRead
 
 
 IMAGE_MIME_PREFIX = "image/"
@@ -609,6 +609,7 @@ def _items_statement(batch_id: int) -> Select:
         .where(BatchItem.batch_id == batch_id)
         .options(
             selectinload(BatchItem.asset_links).selectinload(BatchItemAsset.asset),
+            selectinload(BatchItem.platform_data),
         )
         .order_by(BatchItem.id)
     )
@@ -618,11 +619,15 @@ def _item_by_id_statement(item_id: int) -> Select:
     return (
         select(BatchItem)
         .where(BatchItem.id == item_id)
-        .options(selectinload(BatchItem.asset_links).selectinload(BatchItemAsset.asset))
+        .options(
+            selectinload(BatchItem.asset_links).selectinload(BatchItemAsset.asset),
+            selectinload(BatchItem.platform_data),
+        )
     )
 
 
 def _item_to_read(item: BatchItem) -> BatchItemRead:
+    basalam_data = _platform_data(item, "basalam")
     return BatchItemRead(
         id=item.id,
         batch_id=item.batch_id,
@@ -641,6 +646,24 @@ def _item_to_read(item: BatchItem) -> BatchItemRead:
             )
             for link in sorted(item.asset_links, key=lambda link: link.sort_order)
         ],
+        basalam_category=_platform_data_to_basalam_read(basalam_data) if basalam_data else None,
         created_at=item.created_at,
         updated_at=item.updated_at,
+    )
+
+
+def _platform_data(item: BatchItem, platform: str) -> BatchItemPlatformData | None:
+    return next((data for data in item.platform_data if data.platform == platform), None)
+
+
+def _platform_data_to_basalam_read(data: BatchItemPlatformData) -> BatchItemBasalamCategoryRead:
+    return BatchItemBasalamCategoryRead(
+        category_id=data.category_id,
+        title=data.category_title,
+        path=data.category_path,
+        confidence=data.category_confidence,
+        source=data.category_source,
+        unit_type_id=data.category_unit_type_id,
+        unit_type_title=data.category_unit_type_title,
+        max_preparation_days=data.category_max_preparation_days,
     )

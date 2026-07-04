@@ -20,6 +20,7 @@ const item = {
     { asset_id: 11, upload_order: 1, url: '/files/7/image/0001.jpg', role: 'product_photo', sort_order: 1 },
     { asset_id: 12, upload_order: 2, url: '/files/7/image/0002.jpg', role: 'product_photo', sort_order: 2 },
   ],
+  basalam_category: null,
   created_at: now,
   updated_at: now,
 };
@@ -45,6 +46,21 @@ test('photo first flow with mocked API', async ({ page }) => {
   await page.route('**/batches/7/process', async (route) => route.fulfill({ json: { job_id: 30 }, status: 202 }));
   await page.route('**/jobs/30', async (route) => route.fulfill({ json: { id: 30, batch_id: 7, status: 'succeeded', step: 'ready', error: null } }));
   await page.route('**/batches/7/items', async (route) => route.fulfill({ json: [item] }));
+  await page.route('**/batches/7/categories/basalam/suggest', async (route) => route.fulfill({
+    json: [{
+      ...item,
+      basalam_category: {
+        category_id: 20,
+        title: 'گروه شده',
+        path: 'کالای دیجیتال > گروه شده',
+        confidence: 0.88,
+        source: 'auto',
+        unit_type_id: 6304,
+        unit_type_title: 'عددی',
+        max_preparation_days: 7,
+      },
+    }],
+  }));
   await page.route('**/batch-items/101', async (route) => {
     savedBody = JSON.parse(route.request().postData() ?? '{}');
     return route.fulfill({ json: { ...item, ...savedBody, edited_by_user: true } });

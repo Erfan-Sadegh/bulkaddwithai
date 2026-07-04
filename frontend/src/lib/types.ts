@@ -55,8 +55,30 @@ export type ProductItem = {
   confidence: number;
   edited_by_user: boolean;
   photos: ProductPhoto[];
+  basalam_category: ProductBasalamCategory | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ProductBasalamCategory = {
+  category_id: number | null;
+  title: string | null;
+  path: string | null;
+  confidence: number | null;
+  source: 'auto' | 'user' | string | null;
+  unit_type_id: number | null;
+  unit_type_title: string | null;
+  max_preparation_days: number | null;
+};
+
+export type BasalamCategory = {
+  id: number;
+  title: string;
+  path: string;
+  unit_type_id: number | null;
+  unit_type_title: string | null;
+  max_preparation_days: number | null;
+  confidence: number | null;
 };
 
 export type PlatformConnection = {

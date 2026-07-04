@@ -148,6 +148,14 @@ class BasalamClient:
         )
         return self._json_or_raise(response, "Basalam product create failed")
 
+    def get_categories(self) -> dict:
+        response = httpx.get(
+            f"{self.settings.basalam_api_base_url.rstrip('/')}/v1/categories",
+            headers={"Accept": "application/json"},
+            timeout=self.timeout,
+        )
+        return self._json_or_raise(response, "Basalam categories request failed")
+
     def _auth_headers(self, access_token: str) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {access_token}",

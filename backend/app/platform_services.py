@@ -10,6 +10,14 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
+from .basalam_categories import (
+    BasalamCategory,
+    category_to_dict,
+    find_category,
+    get_basalam_leaf_categories,
+    search_categories,
+    suggest_category,
+)
 from .config import Settings
 from .integrations.basalam import (
     BasalamClient,
@@ -23,12 +31,14 @@ from .models import (
     Batch,
     BatchItem,
     BatchItemAsset,
+    BatchItemPlatformData,
     PlatformConnection,
     PublishedProduct,
     PublishJob,
     Seller,
     utc_now,
 )
+from .services import _item_to_read
 
 BASALAM_PLATFORM = "basalam"
 PUBLISH_STEPS = ("uploading_photos", "creating_products", "ready", "failed")
@@ -172,6 +182,39 @@ def create_basalam_publish_job(session: Session, batch_id: int) -> PublishJob:
     return job
 
 
+def search_basalam_categories(settings: Settings, client: BasalamClient, query: str, limit: int = 20) -> list[dict]:
+    categories = get_basalam_leaf_categories(settings, client)
+    return [category_to_dict(category) for category in search_categories(categories, query, limit)]
+
+
+def suggest_basalam_categories_for_batch(
+    session: Session, settings: Settings, client: BasalamClient, batch_id: int
+):
+    batch = _batch_for_category_suggestion(session, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    categories = get_basalam_leaf_categories(settings, client)
+    _suggest_missing_categories(session, settings, categories, batch.items, replace_low_confidence=True)
+    session.commit()
+    return [_item_to_read(item) for item in _batch_for_category_suggestion(session, batch_id).items]
+
+
+def set_basalam_category_for_item(
+    session: Session, settings: Settings, client: BasalamClient, item_id: int, category_id: int
+):
+    item = _item_for_category(session, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Batch item not found")
+    categories = get_basalam_leaf_categories(settings, client)
+    category = find_category(categories, category_id)
+    if not category:
+        raise HTTPException(status_code=422, detail="Basalam category was not found")
+    _upsert_category_data(item, category, source="user", confidence=1.0)
+    item.edited_by_user = True
+    session.commit()
+    return _item_to_read(_item_for_category(session, item_id))
+
+
 def run_basalam_publish_job(
     settings: Settings,
     session_factory: sessionmaker[Session],
@@ -194,6 +237,10 @@ def run_basalam_publish_job(
             raise RuntimeError("Publish job data was not found")
 
         client = client_factory(settings)
+        if not settings.basalam_default_category_id:
+            categories = get_basalam_leaf_categories(settings, client)
+            _suggest_missing_categories(session, settings, categories, batch.items, replace_low_confidence=False)
+            session.commit()
         uploaded_by_asset_id = _upload_batch_photos(session, client, connection, batch.assets)
 
         job.step = "creating_products"
@@ -306,6 +353,10 @@ def _item_to_basalam_payload(
 ) -> BasalamProductPayload:
     if item.price_toman is None:
         raise ValueError("برای ثبت محصول در باسلام، قیمت لازم است.")
+    category_data = _publishable_category_data(settings, item)
+    category_id = category_data.category_id if category_data else settings.basalam_default_category_id
+    if category_id is None:
+        raise ValueError("برای ثبت محصول در باسلام، دسته‌بندی این محصول را انتخاب کن.")
     photo_ids = [
         uploaded_by_asset_id[link.asset_id].id
         for link in sorted(item.asset_links, key=lambda link: link.sort_order)
@@ -318,14 +369,14 @@ def _item_to_basalam_payload(
         description=item.description or item.title,
         primary_price=item.price_toman,
         photo_ids=photo_ids,
-        category_id=settings.basalam_default_category_id,
+        category_id=category_id,
         stock=settings.basalam_default_stock,
         status=settings.basalam_default_status,
-        preparation_days=settings.basalam_default_preparation_days,
+        preparation_days=_preparation_days(settings, category_data),
         weight=settings.basalam_default_weight_grams,
         package_weight=settings.basalam_default_package_weight_grams,
         unit_quantity=settings.basalam_default_unit_quantity,
-        unit_type=settings.basalam_default_unit_type_id,
+        unit_type=category_data.category_unit_type_id if category_data and category_data.category_unit_type_id else settings.basalam_default_unit_type_id,
     )
 
 
@@ -346,8 +397,100 @@ def _batch_for_publish(session: Session, batch_id: int) -> Batch | None:
             selectinload(Batch.items)
             .selectinload(BatchItem.asset_links)
             .selectinload(BatchItemAsset.asset),
+            selectinload(Batch.items).selectinload(BatchItem.platform_data),
         )
     )
+
+
+def _batch_for_category_suggestion(session: Session, batch_id: int) -> Batch | None:
+    return session.scalar(
+        select(Batch)
+        .where(Batch.id == batch_id)
+        .options(
+            selectinload(Batch.items)
+            .selectinload(BatchItem.asset_links)
+            .selectinload(BatchItemAsset.asset),
+            selectinload(Batch.items).selectinload(BatchItem.platform_data),
+        )
+    )
+
+
+def _item_for_category(session: Session, item_id: int) -> BatchItem | None:
+    return session.scalar(
+        select(BatchItem)
+        .where(BatchItem.id == item_id)
+        .options(
+            selectinload(BatchItem.asset_links).selectinload(BatchItemAsset.asset),
+            selectinload(BatchItem.platform_data),
+        )
+    )
+
+
+def _suggest_missing_categories(
+    session: Session,
+    settings: Settings,
+    categories: list[BasalamCategory],
+    items: list[BatchItem],
+    replace_low_confidence: bool,
+) -> None:
+    for item in items:
+        current = _basalam_platform_data(item)
+        if current and current.category_source == "user":
+            continue
+        if current and current.category_id and not replace_low_confidence:
+            continue
+        if current and current.category_id and (current.category_confidence or 0) >= settings.basalam_category_suggestion_threshold:
+            continue
+        suggested = suggest_category(categories, item.title, item.description)
+        if suggested:
+            _upsert_category_data(
+                item,
+                suggested,
+                source="auto",
+                confidence=suggested.confidence or 0,
+            )
+    session.flush()
+
+
+def _upsert_category_data(
+    item: BatchItem, category: BasalamCategory, source: str, confidence: float
+) -> BatchItemPlatformData:
+    data = _basalam_platform_data(item)
+    if not data:
+        data = BatchItemPlatformData(batch_item_id=item.id, platform=BASALAM_PLATFORM)
+        item.platform_data.append(data)
+    data.category_id = category.id
+    data.category_title = category.title
+    data.category_path = category.path
+    data.category_confidence = confidence
+    data.category_source = source
+    data.category_unit_type_id = category.unit_type_id
+    data.category_unit_type_title = category.unit_type_title
+    data.category_max_preparation_days = category.max_preparation_days
+    data.platform_metadata = {"matched_at": utc_now().isoformat()}
+    return data
+
+
+def _basalam_platform_data(item: BatchItem) -> BatchItemPlatformData | None:
+    return next((data for data in item.platform_data if data.platform == BASALAM_PLATFORM), None)
+
+
+def _publishable_category_data(settings: Settings, item: BatchItem) -> BatchItemPlatformData | None:
+    data = _basalam_platform_data(item)
+    if not data or not data.category_id:
+        return None
+    if data.category_source == "user":
+        return data
+    if (data.category_confidence or 0) >= settings.basalam_category_suggestion_threshold:
+        return data
+    return None
+
+
+def _preparation_days(settings: Settings, category_data: BatchItemPlatformData | None) -> int:
+    days = settings.basalam_default_preparation_days
+    if category_data and category_data.category_max_preparation_days:
+        return min(days, category_data.category_max_preparation_days)
+    return days
 
 
 def _make_oauth_state(settings: Settings, seller_id: int) -> str:

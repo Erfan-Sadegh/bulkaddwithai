@@ -17,7 +17,7 @@ import type { ChangeEvent, MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { API_BASE, api } from './lib/api';
-import type { Asset, Batch, Job, PlatformConnection, ProductItem, PublishedProduct, PublishJob, Seller } from './lib/types';
+import type { Asset, BasalamCategory, Batch, Job, PlatformConnection, ProductItem, PublishedProduct, PublishJob, Seller } from './lib/types';
 
 type ProductDraft = Pick<ProductItem, 'title' | 'description'> & { price_toman: string };
 type DraftMap = Record<number, ProductDraft>;
@@ -52,6 +52,7 @@ export function App() {
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [savingList, setSavingList] = useState(false);
+  const [suggestingCategories, setSuggestingCategories] = useState(false);
   const [connectingBasalam, setConnectingBasalam] = useState(false);
   const [publishingBasalam, setPublishingBasalam] = useState(false);
   const [savingShop, setSavingShop] = useState(false);
@@ -83,8 +84,7 @@ export function App() {
         const nextJob = await api.getJob(job.id);
         setJob(nextJob);
         if (nextJob.status === 'succeeded' && batch) {
-          const readyItems = await api.listItems(batch.id);
-          setItems(readyItems);
+          await loadItemsWithCategorySuggestions(batch.id);
           setProcessing(false);
         }
         if (nextJob.status === 'failed') {
@@ -203,8 +203,7 @@ export function App() {
       const firstJob = await api.getJob(result.job_id);
       setJob(firstJob);
       if (firstJob.status === 'succeeded') {
-        const readyItems = await api.listItems(batch.id);
-        setItems(readyItems);
+        await loadItemsWithCategorySuggestions(batch.id);
         setProcessing(false);
       }
       if (firstJob.status === 'failed') {
@@ -259,6 +258,30 @@ export function App() {
 
   async function saveWholeList() {
     await persistDrafts(true);
+  }
+
+  async function loadItemsWithCategorySuggestions(batchId: number) {
+    const readyItems = await api.listItems(batchId);
+    setItems(readyItems);
+    setSuggestingCategories(true);
+    try {
+      const suggestedItems = await api.suggestBasalamCategories(batchId);
+      setItems(suggestedItems);
+    } catch {
+      setItems(readyItems);
+    } finally {
+      setSuggestingCategories(false);
+    }
+  }
+
+  async function selectBasalamCategory(itemId: number, category: BasalamCategory) {
+    setError(null);
+    try {
+      const updated = await api.setBasalamCategory(itemId, category.id);
+      setItems((current) => current.map((item) => (item.id === itemId ? updated : item)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'دسته‌بندی محصول ذخیره نشد.');
+    }
   }
 
   async function connectBasalam() {
@@ -391,12 +414,14 @@ export function App() {
             items={items}
             drafts={drafts}
             saving={savingList}
+            suggestingCategories={suggestingCategories}
             publishing={publishingBasalam}
             basalamConnected={Boolean(basalamConnection)}
             publishJob={publishJob}
             publishedProducts={publishedProducts}
             splittingPhotoKey={splittingPhotoKey}
             onDraftChange={updateDraft}
+            onSelectBasalamCategory={selectBasalamCategory}
             onSaveList={saveWholeList}
             onPublishBasalam={publishToBasalam}
             onSplitPhoto={splitPhoto}
@@ -683,12 +708,14 @@ function PreviewPanel({
   items,
   drafts,
   saving,
+  suggestingCategories,
   publishing,
   basalamConnected,
   publishJob,
   publishedProducts,
   splittingPhotoKey,
   onDraftChange,
+  onSelectBasalamCategory,
   onSaveList,
   onPublishBasalam,
   onSplitPhoto,
@@ -699,12 +726,14 @@ function PreviewPanel({
   items: ProductItem[];
   drafts: DraftMap;
   saving: boolean;
+  suggestingCategories: boolean;
   publishing: boolean;
   basalamConnected: boolean;
   publishJob: PublishJob | null;
   publishedProducts: PublishedProduct[];
   splittingPhotoKey: string | null;
   onDraftChange: (itemId: number, patch: Partial<ProductDraft>) => void;
+  onSelectBasalamCategory: (itemId: number, category: BasalamCategory) => void;
   onSaveList: () => void;
   onPublishBasalam: () => void;
   onSplitPhoto: (itemId: number, assetId: number) => void;
@@ -735,6 +764,12 @@ function PreviewPanel({
       </div>
 
       {publishJob && <PublishStatusPanel job={publishJob} products={publishedProducts} />}
+      {suggestingCategories && (
+        <div className="category-loading" role="status">
+          <Loader2 className="spin" size={17} />
+          در حال حدس دسته‌بندی باسلام
+        </div>
+      )}
 
       <div className="item-list">
         {items.map((item) => (
@@ -744,6 +779,7 @@ function PreviewPanel({
             draft={drafts[item.id] ?? toDraft(item)}
             splittingPhotoKey={splittingPhotoKey}
             onDraftChange={(patch) => onDraftChange(item.id, patch)}
+            onSelectBasalamCategory={onSelectBasalamCategory}
             onSplitPhoto={onSplitPhoto}
           />
         ))}
@@ -788,12 +824,14 @@ function ProductCard({
   draft,
   splittingPhotoKey,
   onDraftChange,
+  onSelectBasalamCategory,
   onSplitPhoto,
 }: {
   item: ProductItem;
   draft: ProductDraft;
   splittingPhotoKey: string | null;
   onDraftChange: (patch: Partial<ProductDraft>) => void;
+  onSelectBasalamCategory: (itemId: number, category: BasalamCategory) => void;
   onSplitPhoto: (itemId: number, assetId: number) => void;
 }) {
   const needsPhotoCheck = item.photos.length > 1 && item.confidence < 0.8;
@@ -848,8 +886,97 @@ function ProductCard({
             <span>تومان</span>
           </div>
         </label>
+        <BasalamCategoryPicker
+          item={item}
+          onSelect={(category) => onSelectBasalamCategory(item.id, category)}
+        />
       </div>
     </article>
+  );
+}
+
+function BasalamCategoryPicker({ item, onSelect }: { item: ProductItem; onSelect: (category: BasalamCategory) => void }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<BasalamCategory[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selectingId, setSelectingId] = useState<number | null>(null);
+  const category = item.basalam_category;
+  const lowConfidence = category?.source === 'auto' && (category.confidence ?? 0) < 0.45;
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const nextResults = await api.searchBasalamCategories(trimmed);
+        if (!cancelled) setResults(nextResults);
+      } catch {
+        if (!cancelled) setResults([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  async function selectCategory(category: BasalamCategory) {
+    setSelectingId(category.id);
+    try {
+      await onSelect(category);
+      setQuery('');
+      setResults([]);
+    } finally {
+      setSelectingId(null);
+    }
+  }
+
+  return (
+    <div className={`category-picker ${lowConfidence || !category?.category_id ? 'needs-category' : ''}`}>
+      <div className="category-current">
+        <span>دسته‌بندی باسلام</span>
+        {category?.category_id ? (
+          <strong>{category.path || category.title}</strong>
+        ) : (
+          <strong>انتخاب نشده</strong>
+        )}
+      </div>
+      {(lowConfidence || !category?.category_id) && (
+        <small>{lowConfidence ? 'اگر دسته درست نیست، اصلاحش کن.' : 'برای ثبت در باسلام، دسته را انتخاب کن.'}</small>
+      )}
+      <div className="category-search">
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="جستجوی دسته"
+          aria-label="جستجوی دسته‌بندی باسلام"
+        />
+        {loading && <Loader2 className="spin" size={16} />}
+      </div>
+      {results.length > 0 && (
+        <div className="category-results">
+          {results.map((category) => (
+            <button
+              key={category.id}
+              type="button"
+              onClick={() => selectCategory(category)}
+              disabled={selectingId === category.id}
+            >
+              <span>{category.path}</span>
+              {selectingId === category.id && <Loader2 className="spin" size={14} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
