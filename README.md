@@ -1,0 +1,120 @@
+# Bulk Add With AI
+
+MVP محلی برای ساخت کاتالوگ محصول از عکس و ویس فروشنده‌های حضوری.
+
+- `backend`: FastAPI + SQLite + AvalAI/fake AI provider
+- `frontend`: React + Vite + TypeScript با UI راست‌به‌چپ و فونت Vazirmatn
+
+## تجربه کاربر
+
+کاربر با انتخاب فروشنده یا ساخت بچ درگیر نمی‌شود. اپ پشت‌صحنه یک فضای کاری محلی می‌سازد و صفحه اول مستقیم روی کار اصلی است:
+
+1. عکس محصولات را اضافه کن.
+2. اگر لازم بود، ویس بگو یا فایل ویس بده.
+3. دکمه «ساخت لیست محصولات» را بزن.
+4. نام، توضیح و قیمت را در صفحه بازبینی اصلاح کن.
+5. خروجی CSV یا JSON بگیر.
+
+اطلاعات فروشگاه اختیاری است و در یک بخش بسته قرار دارد.
+
+## اجرای سریع
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+در ترمینال دوم:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+اپ روی `http://127.0.0.1:5173` بالا می‌آید.
+
+## AI واقعی
+
+اگر `AVALAI_API_KEY` خالی باشد، backend از provider جعلی استفاده می‌کند تا کل جریان بدون هزینه API تست شود. برای AvalAI واقعی:
+
+```env
+AI_PROVIDER=avalai
+AVALAI_API_KEY=...
+AVALAI_BASE_URL=https://api.avalai.ir/v1
+AVALAI_VISION_MODEL=gpt-5.4
+AVALAI_TEXT_MODEL=gpt-5.4
+AVALAI_STT_MODEL=gpt-4o-mini-transcribe
+```
+
+## تست‌ها
+
+```powershell
+cd backend
+$env:TMP=(Resolve-Path .pytest-tmp).Path
+$env:TEMP=$env:TMP
+pytest --basetemp .pytest-tmp\run
+```
+
+```powershell
+cd frontend
+npm test
+npm run build
+npm run e2e
+```
+
+جزئیات بیشتر در [docs/ONBOARDING.md](docs/ONBOARDING.md).
+
+## Production Image
+
+برای production یک image واحد ساخته می‌شود که frontend build شده و backend FastAPI را با هم سرو می‌کند.
+
+روی GitHub فقط build/push انجام می‌دهیم و deploy نداریم. بعد از هر push، workflow با نام `Build image` اجرا می‌شود و image را در GitHub Container Registry می‌گذارد.
+
+آدرس image برای دارکوب:
+
+```text
+ghcr.io/<github-owner>/<repo-name>
+```
+
+تگ پیشنهادی برای دارکوب:
+
+```text
+sha-<short-commit-sha>
+```
+
+مثال:
+
+```text
+Image: ghcr.io/my-org/bulkaddwithai
+Tag: sha-a1b2c3d
+```
+
+برای پیدا کردن tag دقیق:
+
+1. در GitHub به تب `Actions` برو.
+2. آخرین workflow موفق `Build image` را باز کن.
+3. commit همان run را بردار.
+4. در دارکوب image را با tag `sha-<7 کاراکتر اول commit>` ثبت کن.
+
+متغیرهای لازم runtime در دارکوب:
+
+```env
+AI_PROVIDER=avalai
+AVALAI_API_KEY=...
+AVALAI_BASE_URL=https://api.avalai.ir/v1
+AVALAI_VISION_MODEL=gpt-5.4
+AVALAI_TEXT_MODEL=gpt-5.4
+AVALAI_STT_MODEL=gpt-4o-mini-transcribe
+DATABASE_URL=sqlite:////data/catalog.db
+UPLOAD_DIR=/data/uploads
+FRONTEND_DIST_DIR=/app/frontend-dist
+```
+
+برای SQLite و فایل‌های آپلود، مسیر `/data` باید persistent volume باشد؛ وگرنه با restart داده‌ها از بین می‌روند.
+
+اگر package در GHCR private بود، دارکوب باید image pull secret/PAT داشته باشد. ساده‌ترین مسیر برای MVP این است که package را در GitHub Packages عمومی کنی یا برای دارکوب token read-only بسازی.
