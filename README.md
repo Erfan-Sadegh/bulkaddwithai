@@ -84,14 +84,14 @@ ghcr.io/<github-owner>/<repo-name>
 تگ پیشنهادی برای دارکوب:
 
 ```text
-sha-<short-commit-sha>
+<short-commit-sha>
 ```
 
 مثال:
 
 ```text
 Image: ghcr.io/my-org/bulkaddwithai
-Tag: sha-a1b2c3d
+Tag: a1b2c3d
 ```
 
 برای پیدا کردن tag دقیق:
@@ -99,7 +99,7 @@ Tag: sha-a1b2c3d
 1. در GitHub به تب `Actions` برو.
 2. آخرین workflow موفق `Build image` را باز کن.
 3. commit همان run را بردار.
-4. در دارکوب image را با tag `sha-<7 کاراکتر اول commit>` ثبت کن.
+4. در دارکوب image را با tag `<7 کاراکتر اول commit>` ثبت کن.
 
 متغیرهای لازم runtime در دارکوب:
 
