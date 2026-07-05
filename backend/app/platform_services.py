@@ -237,10 +237,9 @@ def run_basalam_publish_job(
             raise RuntimeError("Publish job data was not found")
 
         client = client_factory(settings)
-        if not settings.basalam_default_category_id:
-            categories = get_basalam_leaf_categories(settings, client)
-            _suggest_missing_categories(session, settings, categories, batch.items, replace_low_confidence=False)
-            session.commit()
+        categories = get_basalam_leaf_categories(settings, client)
+        _suggest_missing_categories(session, settings, categories, batch.items, replace_low_confidence=False)
+        session.commit()
         uploaded_by_asset_id = _upload_batch_photos(session, client, connection, batch.assets)
 
         job.step = "creating_products"
@@ -364,7 +363,7 @@ def _item_to_basalam_payload(
     if item.unit_quantity is None:
         raise ValueError("برای ثبت محصول در باسلام، مقدار هر فروش را وارد کن.")
     category_data = _publishable_category_data(settings, item)
-    category_id = category_data.category_id if category_data else settings.basalam_default_category_id
+    category_id = category_data.category_id if category_data else None
     if category_id is None:
         raise ValueError("برای ثبت محصول در باسلام، دسته‌بندی این محصول را انتخاب کن.")
     if (

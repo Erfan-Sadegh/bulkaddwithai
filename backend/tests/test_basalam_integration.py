@@ -272,8 +272,7 @@ def test_publish_does_not_use_low_confidence_auto_category(client: TestClient, b
     assert fake.created_products == []
 
 
-def test_empty_optional_basalam_numeric_settings_are_ignored():
-    settings = Settings(basalam_default_category_id="", basalam_default_status="")
+def test_empty_optional_basalam_status_is_ignored():
+    settings = Settings(basalam_default_status="")
 
-    assert settings.basalam_default_category_id is None
     assert settings.basalam_default_status is None

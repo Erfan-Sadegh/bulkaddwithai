@@ -41,9 +41,6 @@ class Settings(BaseSettings):
     basalam_legacy_core_base_url: str = Field(
         default="https://core.basalam.com", validation_alias="BASALAM_LEGACY_CORE_BASE_URL"
     )
-    basalam_default_category_id: int | None = Field(
-        default=None, validation_alias="BASALAM_DEFAULT_CATEGORY_ID"
-    )
     basalam_default_status: int | None = Field(default=None, validation_alias="BASALAM_DEFAULT_STATUS")
     basalam_category_cache_ttl_seconds: int = Field(
         default=86400, validation_alias="BASALAM_CATEGORY_CACHE_TTL_SECONDS"
@@ -53,7 +50,7 @@ class Settings(BaseSettings):
     )
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
-    @field_validator("basalam_default_category_id", "basalam_default_status", mode="before")
+    @field_validator("basalam_default_status", mode="before")
     @classmethod
     def empty_optional_int(cls, value):
         if value == "":
