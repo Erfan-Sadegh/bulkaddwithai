@@ -11,6 +11,7 @@
   --primary-strong: #0f4d46;
   --danger: #b42318;
   --danger-soft: #fff3f1;
+  --text: #1f2528;
   --shadow: 0 14px 36px rgba(32, 33, 36, 0.07);
 }
 
@@ -145,6 +146,19 @@ a {
   background: #f2faf7;
   color: var(--primary);
   line-height: 1.6;
+}
+
+.connection-state span {
+  display: grid;
+  gap: 1px;
+}
+
+.connection-state strong {
+  font-size: 0.92rem;
+}
+
+.connection-state small {
+  color: #526160;
 }
 
 .optional-panel summary {
@@ -415,7 +429,16 @@ a {
   padding: 10px 12px;
   background: #ffffff;
   color: #202124;
-  outline-color: var(--primary);
+  outline: 0;
+}
+
+.field input:focus,
+.field textarea:focus,
+.price-input:focus-within,
+.category-search:focus-within {
+  border-color: #dfe8e5;
+  box-shadow: none;
+  outline: 0;
 }
 
 .field textarea {
@@ -618,32 +641,32 @@ a {
 
 .category-picker {
   display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid #e5ecea;
-  border-radius: 8px;
-  background: #fbfcfc;
+  gap: 7px;
+  padding: 4px 0 0;
 }
 
 .category-picker.needs-category {
-  border-color: #f2c8bd;
-  background: #fffdfc;
+  background: transparent;
 }
 
 .category-current {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .category-current span {
+  flex: 0 0 auto;
   color: var(--muted);
   font-size: 0.8rem;
 }
 
 .category-current strong {
   color: var(--text);
-  font-size: 0.9rem;
-  line-height: 1.65;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  text-align: left;
 }
 
 .category-picker small {
@@ -656,7 +679,7 @@ a {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 40px;
+  min-height: 38px;
   padding: 0 10px;
   border: 1px solid #dfe8e5;
   border-radius: 7px;
@@ -703,7 +726,7 @@ a {
 
 .publish-status {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
@@ -727,6 +750,33 @@ a {
 .publish-status span {
   color: var(--muted);
   line-height: 1.7;
+}
+
+.publish-status > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.publish-errors {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.publish-errors li {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px solid #f4d0c9;
+  border-radius: 7px;
+  background: #fffdfc;
+}
+
+.publish-errors b {
+  color: var(--danger);
+  font-size: 0.86rem;
 }
 
 .save-dock {

@@ -130,7 +130,12 @@ def run_processing_job(
 
         _mark_job(session, job, status="running", step="transcribing", started=True)
         images = [asset for asset in batch.assets if asset.type == "image"]
-        audio = next((asset for asset in batch.assets if asset.type == "audio"), None)
+        audio_assets = sorted(
+            (asset for asset in batch.assets if asset.type == "audio"),
+            key=lambda asset: asset.upload_order,
+            reverse=True,
+        )
+        audio = audio_assets[0] if audio_assets else None
         provider = provider_factory()
         transcript = provider.transcribe(audio)
 

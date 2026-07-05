@@ -1,6 +1,6 @@
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 
 from .config import Settings
@@ -94,9 +94,20 @@ def search_categories(categories: list[BasalamCategory], query: str, limit: int 
 
 
 def suggest_category(categories: list[BasalamCategory], title: str, description: str = "") -> BasalamCategory | None:
-    query = f"{title} {title} {description}".strip()
-    matches = search_categories(categories, query, limit=1)
-    return matches[0] if matches else None
+    title_query = title.strip()
+    full_query = f"{title} {description}".strip()
+    title_matches = search_categories(categories, title_query, limit=3) if title_query else []
+    full_matches = search_categories(categories, full_query, limit=3) if full_query else []
+    if not title_matches and not full_matches:
+        return None
+
+    best = full_matches[0] if full_matches else title_matches[0]
+    if title_matches and (title_matches[0].confidence or 0) >= (best.confidence or 0) * 0.85:
+        best = title_matches[0]
+
+    if not _has_direct_title_signal(best, title_query):
+        return replace(best, confidence=round(min(best.confidence or 0, 0.4), 3))
+    return best
 
 
 def category_with_score(category: BasalamCategory, query: str) -> BasalamCategory:
@@ -146,6 +157,16 @@ def normalize_text(value: str) -> str:
     value = re.sub(r"[\u064b-\u065f]", "", value)
     value = re.sub(r"[^\w\u0600-\u06ff]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _has_direct_title_signal(category: BasalamCategory, query: str) -> bool:
+    normalized_query = normalize_text(query)
+    title_norm = normalize_text(category.title)
+    if title_norm and title_norm in normalized_query:
+        return True
+    query_tokens = set(_tokenize(normalized_query))
+    title_tokens = set(_tokenize(title_norm))
+    return bool(query_tokens and title_tokens and query_tokens & title_tokens)
 
 
 @lru_cache(maxsize=4096)

@@ -65,7 +65,7 @@ class Settings(BaseSettings):
         default=86400, validation_alias="BASALAM_CATEGORY_CACHE_TTL_SECONDS"
     )
     basalam_category_suggestion_threshold: float = Field(
-        default=0.45, validation_alias="BASALAM_CATEGORY_SUGGESTION_THRESHOLD"
+        default=0.62, validation_alias="BASALAM_CATEGORY_SUGGESTION_THRESHOLD"
     )
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 

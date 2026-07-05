@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Check,
   Download,
   FileJson,
@@ -21,6 +22,7 @@ import type { Asset, BasalamCategory, Batch, Job, PlatformConnection, ProductIte
 
 type ProductDraft = Pick<ProductItem, 'title' | 'description'> & { price_toman: string };
 type DraftMap = Record<number, ProductDraft>;
+const BASALAM_AUTO_CATEGORY_THRESHOLD = 0.62;
 
 const jobLabels: Record<Job['step'], string> = {
   upload_ready: 'آماده شروع',
@@ -62,6 +64,7 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
+  const resultsAutoScrolledRef = useRef(false);
 
   const imageAssets = useMemo(
     () => assets.filter((asset) => asset.type === 'image').sort((a, b) => a.upload_order - b.upload_order),
@@ -121,8 +124,13 @@ export function App() {
   }, [batch, publishJob]);
 
   useEffect(() => {
-    if (items.length === 0) return;
+    if (items.length === 0) {
+      setDrafts({});
+      return;
+    }
     setDrafts(buildDrafts(items));
+    if (resultsAutoScrolledRef.current) return;
+    resultsAutoScrolledRef.current = true;
     window.setTimeout(() => {
       resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
@@ -148,6 +156,7 @@ export function App() {
       setAssets([]);
       setItems([]);
       setDrafts({});
+      resultsAutoScrolledRef.current = false;
       setPublishedProducts([]);
       setPublishJob(null);
       setJob(null);
@@ -170,6 +179,7 @@ export function App() {
       setAssets([]);
       setItems([]);
       setDrafts({});
+      resultsAutoScrolledRef.current = false;
       setPublishedProducts([]);
       setPublishJob(null);
       setJob(null);
@@ -186,7 +196,11 @@ export function App() {
     setError(null);
     try {
       const uploaded = await api.uploadAssets(batch.id, files);
-      setAssets((current) => [...current, ...uploaded].sort((a, b) => a.type.localeCompare(b.type) || a.upload_order - b.upload_order));
+      const hasNewAudio = uploaded.some((asset) => asset.type === 'audio');
+      setAssets((current) => {
+        const base = hasNewAudio ? current.filter((asset) => asset.type !== 'audio') : current;
+        return [...base, ...uploaded].sort((a, b) => a.type.localeCompare(b.type) || a.upload_order - b.upload_order);
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'فایل‌ها اضافه نشدند. دوباره امتحان کن.');
     } finally {
@@ -198,6 +212,7 @@ export function App() {
     if (!batch || imageAssets.length === 0) return;
     setProcessing(true);
     setError(null);
+    resultsAutoScrolledRef.current = false;
     try {
       const result = await api.processBatch(batch.id);
       const firstJob = await api.getJob(result.job_id);
@@ -588,7 +603,7 @@ function VoicePanel({
         </button>
       </div>
       {voiceError && <span className="field-error" role="alert">{voiceError}</span>}
-      <span className="muted">{audios.length ? `${toPersianDigits(audios.length)} ویس آماده است` : 'می‌توانی بدون ویس هم ادامه بدهی.'}</span>
+      <span className="muted">{audios.length ? 'ویس ضبط شد و آماده پردازش است.' : 'می‌توانی بدون ویس هم ادامه بدهی.'}</span>
     </section>
   );
 }
@@ -611,7 +626,10 @@ function BasalamPanel({
       {connection ? (
         <div className="connection-state connected">
           <Check size={17} />
-          <span>{connection.external_shop_name} وصل است</span>
+          <span>
+            <strong>وصل به باسلام</strong>
+            <small>{connection.external_shop_name}</small>
+          </span>
         </div>
       ) : (
         <>
@@ -763,7 +781,7 @@ function PreviewPanel({
         </div>
       </div>
 
-      {publishJob && <PublishStatusPanel job={publishJob} products={publishedProducts} />}
+      {publishJob && <PublishStatusPanel job={publishJob} products={publishedProducts} items={items} />}
       {suggestingCategories && (
         <div className="category-loading" role="status">
           <Loader2 className="spin" size={17} />
@@ -799,22 +817,44 @@ function PreviewPanel({
   );
 }
 
-function PublishStatusPanel({ job, products }: { job: PublishJob; products: PublishedProduct[] }) {
+function PublishStatusPanel({ job, products, items }: { job: PublishJob; products: PublishedProduct[]; items: ProductItem[] }) {
   const published = products.filter((product) => product.status === 'published').length;
-  const failed = products.filter((product) => product.status === 'failed').length;
-  const isFailed = job.status === 'failed' || job.status === 'partial_failed' || failed > 0;
+  const failedProducts = products.filter((product) => product.status === 'failed');
+  const hasFailedState = job.status === 'failed' || job.status === 'partial_failed';
+  const isFailed = hasFailedState || failedProducts.length > 0;
+  const failed = failedProducts.length || (hasFailedState ? Math.max(0, items.length - published) : 0);
+  const isRunning = job.status === 'running' || job.status === 'queued';
+  const itemTitleById = new Map(items.map((item) => [item.id, item.title]));
+  const title = isRunning
+    ? publishLabels[job.step]
+    : isFailed
+      ? published > 0
+        ? 'بعضی محصول‌ها ثبت نشدند'
+        : 'ثبت محصول‌ها انجام نشد'
+      : 'محصول‌ها در باسلام ثبت شدند';
+  const message = isRunning
+    ? 'چند لحظه صبر کن.'
+    : isFailed
+      ? `${toPersianDigits(published)} محصول ثبت شد، ${toPersianDigits(failed)} محصول خطا دارد.`
+      : `${toPersianDigits(published)} محصول با موفقیت ثبت شد.`;
   return (
     <section className={`publish-status ${isFailed ? 'failed' : ''}`} role="status">
       <div>
-        <strong>{publishLabels[job.step]}</strong>
-        <span>
-          {job.status === 'running' || job.status === 'queued'
-            ? 'چند لحظه صبر کن.'
-            : `${toPersianDigits(published)} محصول ثبت شد${failed ? `، ${toPersianDigits(failed)} محصول نیاز به بررسی دارد` : ''}.`}
-        </span>
+        <strong>{title}</strong>
+        <span>{message}</span>
+        {failedProducts.length > 0 && (
+          <ul className="publish-errors">
+            {failedProducts.slice(0, 3).map((product) => (
+              <li key={product.id}>
+                <b>{itemTitleById.get(product.batch_item_id) ?? 'محصول'}</b>
+                <span>{humanizePublishError(product.error)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
-      {job.status === 'running' || job.status === 'queued' ? <Loader2 className="spin" size={20} /> : <Check size={20} />}
-      {job.error && <span className="field-error">{job.error}</span>}
+      {isRunning ? <Loader2 className="spin" size={20} /> : isFailed ? <AlertTriangle size={20} /> : <Check size={20} />}
+      {job.error && !failedProducts.length && <span className="field-error">{humanizePublishError(job.error)}</span>}
     </section>
   );
 }
@@ -901,7 +941,7 @@ function BasalamCategoryPicker({ item, onSelect }: { item: ProductItem; onSelect
   const [loading, setLoading] = useState(false);
   const [selectingId, setSelectingId] = useState<number | null>(null);
   const category = item.basalam_category;
-  const lowConfidence = category?.source === 'auto' && (category.confidence ?? 0) < 0.45;
+  const lowConfidence = category?.source === 'auto' && (category.confidence ?? 0) < BASALAM_AUTO_CATEGORY_THRESHOLD;
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -1049,6 +1089,36 @@ function toDraft(item: ProductItem): ProductDraft {
 function parsePersianPrice(value: string): number | null {
   const normalized = normalizeDigits(value).replace(/[^\d]/g, '');
   return normalized ? Number(normalized) : null;
+}
+
+function humanizePublishError(error: string | null): string {
+  if (!error) return 'این محصول ثبت نشد. فیلدهای قیمت، عکس و دسته‌بندی را چک کن.';
+  const normalized = error.toLowerCase();
+  if (/product\(s\) failed|product failed/i.test(error)) {
+    return 'ثبت این محصول ناموفق بود. فیلدهای لازم را چک کن و دوباره تلاش کن.';
+  }
+  if (normalized.includes('inactive') || (normalized.includes('vendor') && normalized.includes('active'))) {
+    return 'غرفه باسلام فعال نیست یا اجازه ثبت محصول ندارد. وضعیت غرفه را در باسلام چک کن.';
+  }
+  if (normalized.includes('category') || error.includes('دسته‌بندی')) {
+    return 'دسته‌بندی این محصول درست نیست یا انتخاب نشده. دسته‌بندی را اصلاح کن و دوباره ثبت کن.';
+  }
+  if (normalized.includes('stock') || normalized.includes('inventory')) {
+    return 'موجودی محصول برای باسلام قابل قبول نیست. موجودی پیش‌فرض را چک کن.';
+  }
+  if (normalized.includes('preparation')) {
+    return 'زمان آماده‌سازی محصول برای این دسته قابل قبول نیست.';
+  }
+  if (normalized.includes('shipping')) {
+    return 'تنظیمات ارسال غرفه یا روش ارسال برای ثبت محصول کامل نیست.';
+  }
+  if (normalized.includes('attribute')) {
+    return 'این دسته‌بندی به ویژگی‌های بیشتری نیاز دارد. باید فیلدهای لازم دسته را اضافه کنیم یا دسته را عوض کنی.';
+  }
+  if (normalized.includes('basalam product create failed')) {
+    return `باسلام ثبت این محصول را قبول نکرد. جزئیات خطا: ${toPersianDigits(error).slice(0, 180)}`;
+  }
+  return toPersianDigits(error).slice(0, 220);
 }
 
 function formatPriceInput(value: string): string {

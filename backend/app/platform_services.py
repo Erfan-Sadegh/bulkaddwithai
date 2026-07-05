@@ -257,7 +257,7 @@ def run_basalam_publish_job(
 
         job.step = "ready"
         job.status = "succeeded" if failure_count == 0 else "partial_failed"
-        job.error = None if failure_count == 0 else f"{failure_count} product(s) failed"
+        job.error = None if failure_count == 0 else f"{failure_count} محصول ثبت نشد"
         job.finished_at = utc_now()
         session.commit()
     except Exception as exc:

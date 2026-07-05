@@ -188,6 +188,44 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     assert fake.created_products[0].category_id == 20
 
 
+def test_publish_does_not_use_low_confidence_auto_category(client: TestClient, batch: dict):
+    fake = FakeBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")])
+    client.post(f"/batches/{batch['id']}/process")
+    item = client.get(f"/batches/{batch['id']}/items").json()[0]
+    client.patch(
+        f"/batch-items/{item['id']}",
+        json={
+            "title": "محصول تستی",
+            "description": "برای گروه شده مناسب است",
+            "price_toman": 456000,
+        },
+    )
+    suggested = client.post(f"/batches/{batch['id']}/categories/basalam/suggest").json()
+
+    assert suggested[0]["basalam_category"]["category_id"] == 20
+    assert suggested[0]["basalam_category"]["confidence"] < 0.62
+
+    callback_state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}").json()["state"]
+    client.get(f"/integrations/basalam/callback?code=valid-code&state={callback_state}", follow_redirects=False)
+
+    publish = client.post(f"/batches/{batch['id']}/publish/basalam")
+
+    assert publish.status_code == 202
+    job = client.get(f"/publish-jobs/{publish.json()['job_id']}").json()
+    assert job["status"] == "partial_failed"
+    assert "محصول ثبت نشد" in job["error"]
+    published = client.get(f"/batches/{batch['id']}/published-products").json()
+    assert published[0]["status"] == "failed"
+    assert "دسته‌بندی" in published[0]["error"]
+    assert fake.created_products == []
+
+
 def test_empty_optional_basalam_numeric_settings_are_ignored():
     settings = Settings(basalam_default_category_id="", basalam_default_status="")
 
