@@ -52,6 +52,11 @@ export type ProductItem = {
   title: string;
   description: string;
   price_toman: number | null;
+  stock: number | null;
+  preparation_days: number | null;
+  weight_grams: number | null;
+  package_weight_grams: number | null;
+  unit_quantity: number | null;
   confidence: number;
   edited_by_user: boolean;
   photos: ProductPhoto[];

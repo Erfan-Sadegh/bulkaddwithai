@@ -58,6 +58,11 @@ const item = {
   title: 'محصول تستی',
   description: 'توضیح اولیه',
   price_toman: 123000,
+  stock: null,
+  preparation_days: null,
+  weight_grams: null,
+  package_weight_grams: null,
+  unit_quantity: null,
   confidence: 0.73,
   edited_by_user: false,
   photos: [
@@ -96,7 +101,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({ uploadAssetCount: 1 });
 
-    expect(await screen.findByRole('heading', { name: 'محصولاتت رو با عکس و ویس به فروشگاهت اضافه کن' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
     expect(screen.getByText('هرچی محصول داری می‌تونی عکسش رو بذاری.')).toBeInTheDocument();
     expect(await screen.findByText('عکس محصولات')).toBeInTheDocument();
     expect(screen.queryByText('بچ')).not.toBeInTheDocument();
@@ -111,12 +116,12 @@ describe('App', () => {
     expect(await screen.findByAltText('عکس شماره ۱')).toBeInTheDocument();
   });
 
-  it('shows results, formats Persian price, saves once, and confirms starting over', async () => {
+  it('shows results, formats Persian price, and confirms starting over', async () => {
     const user = userEvent.setup();
     const updateBodies: Array<Record<string, unknown>> = [];
     const { container } = renderWithApi({ updateBodies });
 
-    await screen.findByRole('heading', { name: 'محصولاتت رو با عکس و ویس به فروشگاهت اضافه کن' });
+    await screen.findByRole('heading', { level: 1 });
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
       new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
       new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
@@ -130,11 +135,7 @@ describe('App', () => {
     expect(screen.queryByText(/اطمینان/)).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByDisplayValue('۱۲۳٬۰۰۰'), { target: { value: '۱۲۳۴۵۶۷' } });
-    await user.click(screen.getByRole('button', { name: /ذخیره لیست/ }));
-
-    await waitFor(() => expect(updateBodies[updateBodies.length - 1]?.price_toman).toBe(1234567));
-    expect(await screen.findByRole('dialog')).toHaveTextContent('لیست محصولات ذخیره شد');
-    await user.click(screen.getByRole('button', { name: 'باشه' }));
+    expect(screen.getByDisplayValue('۱٬۲۳۴٬۵۶۷')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /افزودن محصولات جدید/ }));
     expect(await screen.findByRole('dialog')).toHaveTextContent('محصولات جدید اضافه می‌کنی؟');
@@ -147,12 +148,12 @@ describe('App', () => {
     let processCalls = 0;
     const { container } = renderWithApi({ failProcessing: true, uploadAssetCount: 1, onProcess: () => { processCalls += 1; } });
 
-    await screen.findByRole('heading', { name: 'محصولاتت رو با عکس و ویس به فروشگاهت اضافه کن' });
+    await screen.findByRole('heading', { level: 1 });
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }));
     await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
 
     expect(await screen.findByText('ساخت لیست ناموفق بود')).toBeInTheDocument();
-    expect(screen.getByText('عکس‌ها و ویس پاک نشده‌اند. می‌توانی دوباره تلاش کنی.')).toBeInTheDocument();
+    expect(screen.getByText('عکس‌ها و صدا پاک نشده‌اند. می‌توانی دوباره تلاش کنی.')).toBeInTheDocument();
     expect(screen.getByText('۱ عکس اضافه شده')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'دوباره تلاش کن' }));
@@ -163,7 +164,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({ itemOverride: { confidence: 0.93 } });
 
-    await screen.findByRole('heading', { name: 'محصولاتت رو با عکس و ویس به فروشگاهت اضافه کن' });
+    await screen.findByRole('heading', { level: 1 });
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
       new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
       new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
@@ -193,10 +194,23 @@ describe('App', () => {
     ]);
     await user.click(container.querySelector('.action-button') as HTMLButtonElement);
     await screen.findByDisplayValue(item.title);
-    await user.click(container.querySelectorAll('.save-dock button')[1] as HTMLButtonElement);
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    fireEvent.change(extraInputs[0], { target: { value: '۵' } });
+    fireEvent.change(extraInputs[1], { target: { value: '۲' } });
+    fireEvent.change(extraInputs[2], { target: { value: '۳۰۰' } });
+    fireEvent.change(extraInputs[3], { target: { value: '۵۰۰' } });
+    fireEvent.change(extraInputs[4], { target: { value: '۱' } });
+    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
 
     await waitFor(() => expect(publishCalled).toBe(true));
     expect(updateBodies.length).toBeGreaterThan(0);
+    expect(updateBodies[updateBodies.length - 1]).toMatchObject({
+      stock: 5,
+      preparation_days: 2,
+      weight_grams: 300,
+      package_weight_grams: 500,
+      unit_quantity: 1,
+    });
     await waitFor(() => expect(container.querySelector('.publish-status')).toBeInTheDocument());
   });
 });

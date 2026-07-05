@@ -14,6 +14,11 @@ const item = {
   title: 'محصول تستی',
   description: 'توضیح اولیه',
   price_toman: 123000,
+  stock: null,
+  preparation_days: null,
+  weight_grams: null,
+  package_weight_grams: null,
+  unit_quantity: null,
   confidence: 0.73,
   edited_by_user: false,
   photos: [
@@ -69,7 +74,7 @@ test('photo first flow with mocked API', async ({ page }) => {
   await page.route('**/batch-items/101/photos/reorder', async (route) => route.fulfill({ json: item }));
 
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'محصولاتت رو با عکس و ویس به فروشگاهت اضافه کن' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await expect(page.getByText('هرچی محصول داری می‌تونی عکسش رو بذاری.')).toBeVisible();
   await expect(page.getByText('بچ', { exact: true })).toHaveCount(0);
   await expect(page.getByText('انتخاب فروشنده')).toHaveCount(0);
@@ -94,10 +99,8 @@ test('photo first flow with mocked API', async ({ page }) => {
 
   await page.locator('.price-input input').fill('1234567');
   await expect(page.locator('.price-input input')).toHaveValue('۱٬۲۳۴٬۵۶۷');
-  await page.getByRole('button', { name: /ذخیره لیست/ }).click();
-  await expect.poll(() => savedBody?.price_toman).toBe(1234567);
-  await expect(page.getByRole('dialog')).toContainText('لیست محصولات ذخیره شد');
-  await page.getByRole('button', { name: 'باشه' }).click();
+  await expect(page.getByLabel('موجودی')).toBeVisible();
+  await expect(page.getByLabel('زمان آماده‌سازی همه محصولات')).toBeVisible();
 
   await page.getByRole('button', { name: /افزودن محصولات جدید/ }).click();
   await expect(page.getByRole('dialog')).toContainText('محصولات جدید اضافه می‌کنی؟');

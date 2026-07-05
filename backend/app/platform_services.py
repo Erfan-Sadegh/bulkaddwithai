@@ -353,10 +353,31 @@ def _item_to_basalam_payload(
 ) -> BasalamProductPayload:
     if item.price_toman is None:
         raise ValueError("برای ثبت محصول در باسلام، قیمت لازم است.")
+    if item.stock is None:
+        raise ValueError("برای ثبت محصول در باسلام، موجودی را وارد کن.")
+    if item.preparation_days is None:
+        raise ValueError("برای ثبت محصول در باسلام، زمان آماده‌سازی را وارد کن.")
+    if item.weight_grams is None:
+        raise ValueError("برای ثبت محصول در باسلام، وزن محصول را به گرم وارد کن.")
+    if item.package_weight_grams is None:
+        raise ValueError("برای ثبت محصول در باسلام، وزن بسته‌بندی را به گرم وارد کن.")
+    if item.unit_quantity is None:
+        raise ValueError("برای ثبت محصول در باسلام، مقدار هر فروش را وارد کن.")
     category_data = _publishable_category_data(settings, item)
     category_id = category_data.category_id if category_data else settings.basalam_default_category_id
     if category_id is None:
         raise ValueError("برای ثبت محصول در باسلام، دسته‌بندی این محصول را انتخاب کن.")
+    if (
+        category_data
+        and category_data.category_max_preparation_days
+        and item.preparation_days > category_data.category_max_preparation_days
+    ):
+        raise ValueError(
+            f"زمان آماده‌سازی این دسته‌بندی حداکثر {category_data.category_max_preparation_days} روز است."
+        )
+    unit_type = category_data.category_unit_type_id if category_data and category_data.category_unit_type_id else None
+    if unit_type is None:
+        raise ValueError("برای ثبت محصول در باسلام، واحد فروش این دسته‌بندی مشخص نیست. دسته‌بندی را اصلاح کن.")
     photo_ids = [
         uploaded_by_asset_id[link.asset_id].id
         for link in sorted(item.asset_links, key=lambda link: link.sort_order)
@@ -370,13 +391,13 @@ def _item_to_basalam_payload(
         primary_price=item.price_toman,
         photo_ids=photo_ids,
         category_id=category_id,
-        stock=settings.basalam_default_stock,
+        stock=item.stock,
         status=settings.basalam_default_status,
-        preparation_days=_preparation_days(settings, category_data),
-        weight=settings.basalam_default_weight_grams,
-        package_weight=settings.basalam_default_package_weight_grams,
-        unit_quantity=settings.basalam_default_unit_quantity,
-        unit_type=category_data.category_unit_type_id if category_data and category_data.category_unit_type_id else settings.basalam_default_unit_type_id,
+        preparation_days=item.preparation_days,
+        weight=item.weight_grams,
+        package_weight=item.package_weight_grams,
+        unit_quantity=item.unit_quantity,
+        unit_type=unit_type,
     )
 
 
@@ -484,13 +505,6 @@ def _publishable_category_data(settings: Settings, item: BatchItem) -> BatchItem
     if (data.category_confidence or 0) >= settings.basalam_category_suggestion_threshold:
         return data
     return None
-
-
-def _preparation_days(settings: Settings, category_data: BatchItemPlatformData | None) -> int:
-    days = settings.basalam_default_preparation_days
-    if category_data and category_data.category_max_preparation_days:
-        return min(days, category_data.category_max_preparation_days)
-    return days
 
 
 def _make_oauth_state(settings: Settings, seller_id: int) -> str:

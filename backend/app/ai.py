@@ -18,6 +18,11 @@ class ProductSchema(BaseModel):
     title: str
     description: str
     price_toman: int | None
+    stock: int | None
+    preparation_days: int | None
+    weight_grams: int | None
+    package_weight_grams: int | None
+    unit_quantity: int | None
     confidence: float = Field(ge=0, le=1)
     image_numbers: list[int]
 
@@ -42,6 +47,11 @@ AVALAI_EXTRACTION_JSON_SCHEMA = {
                     "title": {"type": "string"},
                     "description": {"type": "string"},
                     "price_toman": {"type": ["integer", "null"]},
+                    "stock": {"type": ["integer", "null"]},
+                    "preparation_days": {"type": ["integer", "null"]},
+                    "weight_grams": {"type": ["integer", "null"]},
+                    "package_weight_grams": {"type": ["integer", "null"]},
+                    "unit_quantity": {"type": ["integer", "null"]},
                     "confidence": {"type": "number"},
                     "image_numbers": {"type": "array", "items": {"type": "integer"}},
                 },
@@ -49,6 +59,11 @@ AVALAI_EXTRACTION_JSON_SCHEMA = {
                     "title",
                     "description",
                     "price_toman",
+                    "stock",
+                    "preparation_days",
+                    "weight_grams",
+                    "package_weight_grams",
+                    "unit_quantity",
                     "confidence",
                     "image_numbers",
                 ],
@@ -96,6 +111,11 @@ class FakeAiProvider(AiProvider):
                     title="محصول تستی گروه‌شده",
                     description="این محصول از دو عکس اول ساخته شده و برای تست pipeline است.",
                     price_toman=123000 if transcript else None,
+                    stock=None,
+                    preparation_days=None,
+                    weight_grams=None,
+                    package_weight_grams=None,
+                    unit_quantity=None,
                     confidence=0.86,
                     image_numbers=[asset.upload_order for asset in first_two],
                 )
@@ -107,6 +127,11 @@ class FakeAiProvider(AiProvider):
                     title=f"محصول عکس {asset.upload_order}",
                     description=f"توضیح پیشنهادی برای عکس شماره {asset.upload_order}.",
                     price_toman=None,
+                    stock=None,
+                    preparation_days=None,
+                    weight_grams=None,
+                    package_weight_grams=None,
+                    unit_quantity=None,
                     confidence=0.72,
                     image_numbers=[asset.upload_order],
                 )
@@ -153,6 +178,8 @@ class AvalAiProvider(AiProvider):
                     "title باید برای جستجوی خریدار مناسب باشد و description فقط ویژگی‌های قابل فروش محصول را بگوید، نه یادداشت‌های پردازشی یا حرف‌های فروشنده درباره یکی بودن عکس‌ها. "
                     "قیمت را به تومان نرمال کن: «سی هزار» یعنی 30000، «دویست هزار» یعنی 200000، «۳۰۰ تومن» در ادبیات فروشنده یعنی 300000، «۹۰۰ تومن» یعنی 900000، و «۱ تومن/یک تومن/یه تومن» یعنی 1000000. "
                     "اگر فروشنده عدد قیمت را گفته، آن را معتبر بدان؛ فقط وقتی هیچ قیمت مرتبطی گفته نشده null بده. عددهای کوتاه رایج فروشنده‌ای را صفر کمتر ذخیره نکن. "
+                    "stock، preparation_days، weight_grams، package_weight_grams و unit_quantity را حدس نزن. فقط اگر فروشنده در ویس صریحاً گفته بود مقدار بده؛ در غیر این صورت null بگذار. "
+                    "preparation_days یعنی چند روز تا آماده‌سازی/ارسال. weight_grams و package_weight_grams همیشه به گرم باشند. "
                     "confidence را بین 0 و 1 بده. metadata.currency_assumption را درباره تومان/ریال پر کن. "
                 ),
             },
@@ -219,6 +246,11 @@ class AvalAiProvider(AiProvider):
                     title=product.title,
                     description=product.description,
                     price_toman=product.price_toman,
+                    stock=product.stock,
+                    preparation_days=product.preparation_days,
+                    weight_grams=product.weight_grams,
+                    package_weight_grams=product.package_weight_grams,
+                    unit_quantity=product.unit_quantity,
                     confidence=product.confidence,
                     image_numbers=product.image_numbers,
                 )

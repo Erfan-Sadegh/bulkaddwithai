@@ -176,8 +176,9 @@ def update_item(session: Session, item_id: int, **changes) -> BatchItemRead:
     if not item:
         raise HTTPException(status_code=404, detail="Batch item not found")
     for key, value in changes.items():
-        if value is not None:
-            setattr(item, key, value)
+        if key == "title" and value is None:
+            continue
+        setattr(item, key, value)
     item.edited_by_user = True
     session.commit()
     session.refresh(item)
@@ -317,6 +318,11 @@ def export_csv(session: Session, batch_id: int) -> str:
             "title",
             "description",
             "price_toman",
+            "stock",
+            "preparation_days",
+            "weight_grams",
+            "package_weight_grams",
+            "unit_quantity",
             "image_numbers",
             "image_paths",
         ],
@@ -333,6 +339,11 @@ def export_csv(session: Session, batch_id: int) -> str:
                 "title": item.title,
                 "description": item.description,
                 "price_toman": item.price_toman or "",
+                "stock": item.stock if item.stock is not None else "",
+                "preparation_days": item.preparation_days if item.preparation_days is not None else "",
+                "weight_grams": item.weight_grams if item.weight_grams is not None else "",
+                "package_weight_grams": item.package_weight_grams if item.package_weight_grams is not None else "",
+                "unit_quantity": item.unit_quantity if item.unit_quantity is not None else "",
                 "image_numbers": ",".join(str(photo.upload_order) for photo in item.photos),
                 "image_paths": ",".join(photo.url for photo in item.photos),
             }
@@ -366,6 +377,11 @@ def _replace_items_from_extraction(
             title=product.title.strip() or "محصول بدون نام",
             description=product.description.strip(),
             price_toman=price_toman,
+            stock=_normalize_non_negative_int(product.stock),
+            preparation_days=_normalize_positive_int(product.preparation_days),
+            weight_grams=_normalize_positive_int(product.weight_grams),
+            package_weight_grams=_normalize_positive_int(product.package_weight_grams),
+            unit_quantity=_normalize_positive_int(product.unit_quantity),
             confidence=product.confidence,
             edited_by_user=False,
         )
@@ -390,6 +406,11 @@ def _replace_items_from_extraction(
             title=f"محصول عکس {asset.upload_order}",
             description="",
             price_toman=None,
+            stock=None,
+            preparation_days=None,
+            weight_grams=None,
+            package_weight_grams=None,
+            unit_quantity=None,
             confidence=0.0,
             edited_by_user=False,
         )
@@ -416,6 +437,18 @@ def _normalize_extracted_price_toman(price_toman: int | None) -> int | None:
     if price_toman < 1_000:
         return price_toman * 1_000
     return price_toman
+
+
+def _normalize_positive_int(value: int | None) -> int | None:
+    if value is None or value <= 0:
+        return None
+    return value
+
+
+def _normalize_non_negative_int(value: int | None) -> int | None:
+    if value is None or value < 0:
+        return None
+    return value
 
 
 _DIGIT_TRANSLATION = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
@@ -639,6 +672,11 @@ def _item_to_read(item: BatchItem) -> BatchItemRead:
         title=item.title,
         description=item.description,
         price_toman=item.price_toman,
+        stock=item.stock,
+        preparation_days=item.preparation_days,
+        weight_grams=item.weight_grams,
+        package_weight_grams=item.package_weight_grams,
+        unit_quantity=item.unit_quantity,
         confidence=item.confidence,
         edited_by_user=item.edited_by_user,
         photos=[

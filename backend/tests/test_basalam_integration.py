@@ -164,8 +164,17 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     client.post(f"/batches/{batch['id']}/process")
     ready_items = client.get(f"/batches/{batch['id']}/items").json()
     for item in ready_items:
-        if item["price_toman"] is None:
-            client.patch(f"/batch-items/{item['id']}", json={"price_toman": 456000})
+        client.patch(
+            f"/batch-items/{item['id']}",
+            json={
+                "price_toman": item["price_toman"] or 456000,
+                "stock": 5,
+                "preparation_days": 2,
+                "weight_grams": 300,
+                "package_weight_grams": 500,
+                "unit_quantity": 1,
+            },
+        )
     suggested = client.post(f"/batches/{batch['id']}/categories/basalam/suggest").json()
     assert suggested[0]["basalam_category"]["category_id"] == 20
 
@@ -186,6 +195,38 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     assert fake.created_products[0].photo_ids == [1001, 1002]
     assert fake.created_products[0].primary_price == 456000
     assert fake.created_products[0].category_id == 20
+    assert fake.created_products[0].stock == 5
+    assert fake.created_products[0].preparation_days == 2
+    assert fake.created_products[0].weight == 300
+    assert fake.created_products[0].package_weight == 500
+    assert fake.created_products[0].unit_quantity == 1
+
+
+def test_publish_requires_seller_operational_fields(client: TestClient, batch: dict):
+    fake = FakeBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")])
+    client.post(f"/batches/{batch['id']}/process")
+    item = client.get(f"/batches/{batch['id']}/items").json()[0]
+    client.patch(f"/batch-items/{item['id']}", json={"price_toman": 456000})
+    client.patch(f"/batch-items/{item['id']}/basalam-category", json={"category_id": 20})
+
+    callback_state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}").json()["state"]
+    client.get(f"/integrations/basalam/callback?code=valid-code&state={callback_state}", follow_redirects=False)
+
+    publish = client.post(f"/batches/{batch['id']}/publish/basalam")
+
+    assert publish.status_code == 202
+    job = client.get(f"/publish-jobs/{publish.json()['job_id']}").json()
+    assert job["status"] == "partial_failed"
+    published = client.get(f"/batches/{batch['id']}/published-products").json()
+    assert published[0]["status"] == "failed"
+    assert "موجودی" in published[0]["error"]
+    assert fake.created_products == []
 
 
 def test_publish_does_not_use_low_confidence_auto_category(client: TestClient, batch: dict):
@@ -204,6 +245,11 @@ def test_publish_does_not_use_low_confidence_auto_category(client: TestClient, b
             "title": "محصول تستی",
             "description": "برای گروه شده مناسب است",
             "price_toman": 456000,
+            "stock": 5,
+            "preparation_days": 2,
+            "weight_grams": 300,
+            "package_weight_grams": 500,
+            "unit_quantity": 1,
         },
     )
     suggested = client.post(f"/batches/{batch['id']}/categories/basalam/suggest").json()

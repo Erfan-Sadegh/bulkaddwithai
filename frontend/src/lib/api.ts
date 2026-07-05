@@ -38,7 +38,22 @@ export const api = {
   listItems: (batchId: number) => request<ProductItem[]>(`/batches/${batchId}/items`),
   suggestBasalamCategories: (batchId: number) =>
     request<ProductItem[]>(`/batches/${batchId}/categories/basalam/suggest`, { method: 'POST', body: JSON.stringify({}) }),
-  updateItem: (itemId: number, payload: Partial<Pick<ProductItem, 'title' | 'description' | 'price_toman'>>) =>
+  updateItem: (
+    itemId: number,
+    payload: Partial<
+      Pick<
+        ProductItem,
+        | 'title'
+        | 'description'
+        | 'price_toman'
+        | 'stock'
+        | 'preparation_days'
+        | 'weight_grams'
+        | 'package_weight_grams'
+        | 'unit_quantity'
+      >
+    >,
+  ) =>
     request<ProductItem>(`/batch-items/${itemId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   setBasalamCategory: (itemId: number, categoryId: number) =>
     request<ProductItem>(`/batch-items/${itemId}/basalam-category`, { method: 'PATCH', body: JSON.stringify({ category_id: categoryId }) }),

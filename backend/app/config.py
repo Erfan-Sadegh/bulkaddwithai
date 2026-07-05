@@ -44,23 +44,7 @@ class Settings(BaseSettings):
     basalam_default_category_id: int | None = Field(
         default=None, validation_alias="BASALAM_DEFAULT_CATEGORY_ID"
     )
-    basalam_default_stock: int = Field(default=1, validation_alias="BASALAM_DEFAULT_STOCK")
     basalam_default_status: int | None = Field(default=None, validation_alias="BASALAM_DEFAULT_STATUS")
-    basalam_default_preparation_days: int = Field(
-        default=1, validation_alias="BASALAM_DEFAULT_PREPARATION_DAYS"
-    )
-    basalam_default_weight_grams: int = Field(
-        default=300, validation_alias="BASALAM_DEFAULT_WEIGHT_GRAMS"
-    )
-    basalam_default_package_weight_grams: int = Field(
-        default=500, validation_alias="BASALAM_DEFAULT_PACKAGE_WEIGHT_GRAMS"
-    )
-    basalam_default_unit_quantity: int = Field(
-        default=1, validation_alias="BASALAM_DEFAULT_UNIT_QUANTITY"
-    )
-    basalam_default_unit_type_id: int = Field(
-        default=6304, validation_alias="BASALAM_DEFAULT_UNIT_TYPE_ID"
-    )
     basalam_category_cache_ttl_seconds: int = Field(
         default=86400, validation_alias="BASALAM_CATEGORY_CACHE_TTL_SECONDS"
     )

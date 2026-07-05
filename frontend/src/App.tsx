@@ -1,8 +1,6 @@
 import {
   AlertTriangle,
   Check,
-  Download,
-  FileJson,
   Loader2,
   Mic,
   Pause,
@@ -20,13 +18,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, api } from './lib/api';
 import type { Asset, BasalamCategory, Batch, Job, PlatformConnection, ProductItem, PublishedProduct, PublishJob, Seller } from './lib/types';
 
-type ProductDraft = Pick<ProductItem, 'title' | 'description'> & { price_toman: string };
+type ProductDraft = Pick<ProductItem, 'title' | 'description'> & {
+  price_toman: string;
+  stock: string;
+  preparation_days: string;
+  weight_grams: string;
+  package_weight_grams: string;
+  unit_quantity: string;
+};
 type DraftMap = Record<number, ProductDraft>;
 const BASALAM_AUTO_CATEGORY_THRESHOLD = 0.62;
 
 const jobLabels: Record<Job['step'], string> = {
   upload_ready: 'آماده شروع',
-  transcribing: 'در حال خواندن ویس',
+  transcribing: 'در حال خواندن صدا',
   vision_extracting: 'در حال بررسی عکس‌ها',
   matching: 'در حال ساخت لیست محصولات',
   ready: 'لیست آماده است',
@@ -60,7 +65,6 @@ export function App() {
   const [savingShop, setSavingShop] = useState(false);
   const [splittingPhotoKey, setSplittingPhotoKey] = useState<string | null>(null);
   const [freshConfirmOpen, setFreshConfirmOpen] = useState(false);
-  const [saveSuccessOpen, setSaveSuccessOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
@@ -245,7 +249,7 @@ export function App() {
     }
   }
 
-  async function persistDrafts(showSuccess = false) {
+  async function persistDrafts() {
     setSavingList(true);
     setError(null);
     try {
@@ -257,22 +261,22 @@ export function App() {
             title: draft.title.trim() || item.title,
             description: draft.description,
             price_toman: parsePersianPrice(draft.price_toman),
+            stock: parseNullableInt(draft.stock),
+            preparation_days: parseNullableInt(draft.preparation_days),
+            weight_grams: parseNullableInt(draft.weight_grams),
+            package_weight_grams: parseNullableInt(draft.package_weight_grams),
+            unit_quantity: parseNullableInt(draft.unit_quantity),
           });
         }),
       );
       setItems(savedItems);
-      if (showSuccess) setSaveSuccessOpen(true);
       return savedItems;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'لیست ذخیره نشد. دوباره تلاش کن.');
+      setError(err instanceof Error ? err.message : 'تغییرات محصول‌ها ثبت نشد. دوباره تلاش کن.');
       return null;
     } finally {
       setSavingList(false);
     }
-  }
-
-  async function saveWholeList() {
-    await persistDrafts(true);
   }
 
   async function loadItemsWithCategorySuggestions(batchId: number) {
@@ -322,7 +326,7 @@ export function App() {
     setPublishingBasalam(true);
     setError(null);
     try {
-      const saved = await persistDrafts(false);
+      const saved = await persistDrafts();
       if (!saved) return;
       const started = await api.publishToBasalam(batch.id);
       const firstJob = await api.getPublishJob(started.job_id);
@@ -369,7 +373,7 @@ export function App() {
     <main className="app-shell">
       <header className="hero">
         <div>
-          <h1>محصولاتت رو با عکس و ویس به فروشگاهت اضافه کن</h1>
+          <h1>محصولاتت رو با عکس وُ ویس به فروشگاهت اضافه کن</h1>
         </div>
       </header>
 
@@ -436,8 +440,20 @@ export function App() {
             publishedProducts={publishedProducts}
             splittingPhotoKey={splittingPhotoKey}
             onDraftChange={updateDraft}
+            onApplyPreparationDays={(days) => {
+              setDrafts((current) =>
+                Object.fromEntries(
+                  items.map((item) => [
+                    item.id,
+                    {
+                      ...(current[item.id] ?? toDraft(item)),
+                      preparation_days: String(days),
+                    },
+                  ]),
+                ),
+              );
+            }}
             onSelectBasalamCategory={selectBasalamCategory}
-            onSaveList={saveWholeList}
             onPublishBasalam={publishToBasalam}
             onSplitPhoto={splitPhoto}
             onAskStartFresh={() => setFreshConfirmOpen(true)}
@@ -448,7 +464,7 @@ export function App() {
       {freshConfirmOpen && (
         <ConfirmDialog
           title="محصولات جدید اضافه می‌کنی؟"
-          body="اگر ادامه بدهی، صفحه برای عکس‌های جدید خالی می‌شود. لیست آماده‌شده از بین نمی‌رود و در خروجی همین نوبت قبلی باقی می‌ماند."
+          body="اگر ادامه بدهی، صفحه برای عکس‌های جدید خالی می‌شود. لیست آماده‌شده قبلی پاک نمی‌شود."
           confirmLabel="بله، صفحه را خالی کن"
           cancelLabel="نه، برگرد"
           onConfirm={startFreshList}
@@ -456,14 +472,6 @@ export function App() {
         />
       )}
 
-      {saveSuccessOpen && (
-        <ConfirmDialog
-          title="لیست محصولات ذخیره شد"
-          body="تغییراتت ثبت شد. حالا می‌توانی خروجی CSV یا JSON بگیری."
-          confirmLabel="باشه"
-          onConfirm={() => setSaveSuccessOpen(false)}
-        />
-      )}
     </main>
   );
 }
@@ -589,7 +597,7 @@ function VoicePanel({
     <section className={inline ? 'voice-inline' : 'panel compact-panel'}>
       <h2>توضیحات صوتی <small className="optional-note">(اختیاری)</small></h2>
       <ul className="voice-tips">
-        <li>با ویس می‌تونی قیمت و توضیحات محصول را هم بگی.</li>
+        <li>با ویس می‌تونی قیمت، موجودی و توضیحات محصول را هم بگی.</li>
         <li>با شماره عکس محصول هم می‌تونی توضیح بدی؛ مثلا «عکس شماره ۲ قیمتش ۲۰۰ هزار تومنه».</li>
         <li>اسم و توضیح بهتر کمک می‌کند محصولت در ترب بهتر دیده شود.</li>
       </ul>
@@ -599,11 +607,11 @@ function VoicePanel({
             {askingMic ? <Loader2 className="spin" size={18} /> : recording ? <Pause size={18} /> : <Mic size={18} />}
             {!askingMic && !recording && <Sparkles className="mic-spark" size={10} />}
           </span>
-          {askingMic ? 'در حال آماده‌سازی' : recording ? 'توقف ضبط' : 'ضبط ویس'}
+          {askingMic ? 'در حال آماده‌سازی' : recording ? 'توقف ضبط' : 'ضبط صدا'}
         </button>
       </div>
       {voiceError && <span className="field-error" role="alert">{voiceError}</span>}
-      <span className="muted">{audios.length ? 'ویس ضبط شد و آماده پردازش است.' : 'می‌توانی بدون ویس هم ادامه بدهی.'}</span>
+      <span className="muted">{audios.length ? 'صدا ضبط شد و آماده پردازش است.' : 'می‌توانی بدون صدا هم ادامه بدهی.'}</span>
     </section>
   );
 }
@@ -706,7 +714,7 @@ function ProgressPanel({
     <section className={`panel progress-panel ${failed ? 'failed' : ''}`}>
       <div>
         <h2>{job ? jobLabels[job.step] : 'در حال ساخت لیست'}</h2>
-        <p>{failed ? 'عکس‌ها و ویس پاک نشده‌اند. می‌توانی دوباره تلاش کنی.' : 'این کار ممکن است کمی زمان ببرد.'}</p>
+        <p>{failed ? 'عکس‌ها و صدا پاک نشده‌اند. می‌توانی دوباره تلاش کنی.' : 'این کار ممکن است کمی زمان ببرد.'}</p>
       </div>
       {processing ? <Loader2 className="spin" size={22} /> : failed ? <RotateCcw size={22} /> : <Check size={22} />}
       {job?.error && <div className="error inline">{job.error}</div>}
@@ -733,8 +741,8 @@ function PreviewPanel({
   publishedProducts,
   splittingPhotoKey,
   onDraftChange,
+  onApplyPreparationDays,
   onSelectBasalamCategory,
-  onSaveList,
   onPublishBasalam,
   onSplitPhoto,
   onAskStartFresh,
@@ -751,8 +759,8 @@ function PreviewPanel({
   publishedProducts: PublishedProduct[];
   splittingPhotoKey: string | null;
   onDraftChange: (itemId: number, patch: Partial<ProductDraft>) => void;
+  onApplyPreparationDays: (days: number) => void;
   onSelectBasalamCategory: (itemId: number, category: BasalamCategory) => void;
-  onSaveList: () => void;
   onPublishBasalam: () => void;
   onSplitPhoto: (itemId: number, assetId: number) => void;
   onAskStartFresh: () => void;
@@ -763,17 +771,9 @@ function PreviewPanel({
       <div className="preview-head">
         <div>
           <h2>لیست آماده شد</h2>
-          <p>چک کن، اصلاح کن، بعد کل لیست را ذخیره کن.</p>
+          <p>چک کن، اصلاح کن، بعد محصول‌ها را در غرفه ثبت کن.</p>
         </div>
         <div className="actions">
-          <a className="button secondary" href={`${API_BASE}/batches/${batch.id}/export.csv`}>
-            <Download size={18} />
-            CSV
-          </a>
-          <a className="button secondary" href={`${API_BASE}/batches/${batch.id}/export.json`}>
-            <FileJson size={18} />
-            JSON
-          </a>
           <button className="button secondary" type="button" onClick={onAskStartFresh}>
             <Upload size={18} />
             افزودن محصولات جدید
@@ -788,6 +788,8 @@ function PreviewPanel({
           در حال حدس دسته‌بندی باسلام
         </div>
       )}
+
+      <BulkPreparationBox onApply={onApplyPreparationDays} />
 
       <div className="item-list">
         {items.map((item) => (
@@ -804,16 +806,49 @@ function PreviewPanel({
       </div>
 
       <div className="save-dock">
-        <button className="button secondary save-list-button" type="button" onClick={onSaveList} disabled={saving || publishing}>
-          {saving ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
-          ذخیره لیست
-        </button>
         <button className="button primary save-list-button" type="button" onClick={onPublishBasalam} disabled={saving || publishing}>
           {publishing ? <Loader2 className="spin" size={18} /> : basalamConnected ? <Send size={18} /> : <Store size={18} />}
           {basalamConnected ? 'ثبت در غرفه باسلام' : 'اتصال غرفه باسلام'}
         </button>
       </div>
     </section>
+  );
+}
+
+function BulkPreparationBox({ onApply }: { onApply: (days: number) => void }) {
+  const [visible, setVisible] = useState(true);
+  const [value, setValue] = useState('');
+  if (!visible) return null;
+  const days = parseNullableInt(value);
+  return (
+    <div className="bulk-prep-box">
+      <button className="icon-dismiss" type="button" aria-label="بستن" onClick={() => setVisible(false)}>
+        ×
+      </button>
+      <span>زمان آماده‌سازی همه محصولات</span>
+      <div className="suffix-input compact">
+        <input
+          value={toPersianDigits(value)}
+          inputMode="numeric"
+          placeholder="مثلا ۲"
+          aria-label="زمان آماده‌سازی همه محصولات"
+          onChange={(event) => setValue(normalizeDigits(event.target.value).replace(/[^\d]/g, ''))}
+        />
+        <span>روز</span>
+      </div>
+      <button
+        className="button secondary"
+        type="button"
+        disabled={days === null}
+        onClick={() => {
+          if (days === null) return;
+          onApply(days);
+          setVisible(false);
+        }}
+      >
+        اعمال برای همه
+      </button>
+    </div>
   );
 }
 
@@ -875,6 +910,7 @@ function ProductCard({
   onSplitPhoto: (itemId: number, assetId: number) => void;
 }) {
   const needsPhotoCheck = item.photos.length > 1 && item.confidence < 0.8;
+  const unitLabel = item.basalam_category?.unit_type_title || 'واحد';
   return (
     <article className="panel product-card">
       <div className="product-photos">
@@ -926,6 +962,65 @@ function ProductCard({
             <span>تومان</span>
           </div>
         </label>
+        <div className="product-extra-fields" aria-label="جزئیات ثبت در باسلام">
+          <label className="field">
+            <span>موجودی</span>
+            <input
+              value={formatIntegerInput(draft.stock)}
+              inputMode="numeric"
+              placeholder="مثلا ۵"
+              onChange={(event) => onDraftChange({ stock: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+            />
+          </label>
+          <label className="field">
+            <span>آماده‌سازی</span>
+            <div className="suffix-input">
+              <input
+                value={formatIntegerInput(draft.preparation_days)}
+                inputMode="numeric"
+                placeholder="مثلا ۲"
+                onChange={(event) => onDraftChange({ preparation_days: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+              />
+              <span>روز</span>
+            </div>
+          </label>
+          <label className="field">
+            <span>وزن محصول</span>
+            <div className="suffix-input">
+              <input
+                value={formatIntegerInput(draft.weight_grams)}
+                inputMode="numeric"
+                placeholder="مثلا ۳۰۰"
+                onChange={(event) => onDraftChange({ weight_grams: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+              />
+              <span>گرم</span>
+            </div>
+          </label>
+          <label className="field">
+            <span>وزن بسته</span>
+            <div className="suffix-input">
+              <input
+                value={formatIntegerInput(draft.package_weight_grams)}
+                inputMode="numeric"
+                placeholder="مثلا ۵۰۰"
+                onChange={(event) => onDraftChange({ package_weight_grams: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+              />
+              <span>گرم</span>
+            </div>
+          </label>
+          <label className="field">
+            <span>مقدار هر فروش</span>
+            <div className="suffix-input">
+              <input
+                value={formatIntegerInput(draft.unit_quantity)}
+                inputMode="numeric"
+                placeholder="مثلا ۱"
+                onChange={(event) => onDraftChange({ unit_quantity: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+              />
+              <span>{unitLabel}</span>
+            </div>
+          </label>
+        </div>
         <BasalamCategoryPicker
           item={item}
           onSelect={(category) => onSelectBasalamCategory(item.id, category)}
@@ -1083,10 +1178,20 @@ function toDraft(item: ProductItem): ProductDraft {
     title: item.title,
     description: item.description,
     price_toman: item.price_toman?.toString() ?? '',
+    stock: item.stock?.toString() ?? '',
+    preparation_days: item.preparation_days?.toString() ?? '',
+    weight_grams: item.weight_grams?.toString() ?? '',
+    package_weight_grams: item.package_weight_grams?.toString() ?? '',
+    unit_quantity: item.unit_quantity?.toString() ?? '',
   };
 }
 
 function parsePersianPrice(value: string): number | null {
+  const normalized = normalizeDigits(value).replace(/[^\d]/g, '');
+  return normalized ? Number(normalized) : null;
+}
+
+function parseNullableInt(value: string): number | null {
   const normalized = normalizeDigits(value).replace(/[^\d]/g, '');
   return normalized ? Number(normalized) : null;
 }
@@ -1104,9 +1209,9 @@ function humanizePublishError(error: string | null): string {
     return 'دسته‌بندی این محصول درست نیست یا انتخاب نشده. دسته‌بندی را اصلاح کن و دوباره ثبت کن.';
   }
   if (normalized.includes('stock') || normalized.includes('inventory')) {
-    return 'موجودی محصول برای باسلام قابل قبول نیست. موجودی پیش‌فرض را چک کن.';
+    return 'موجودی محصول را چک کن و دوباره ثبت کن.';
   }
-  if (normalized.includes('preparation')) {
+  if (normalized.includes('preparation') || error.includes('آماده')) {
     return 'زمان آماده‌سازی محصول برای این دسته قابل قبول نیست.';
   }
   if (normalized.includes('shipping')) {
@@ -1116,15 +1221,20 @@ function humanizePublishError(error: string | null): string {
     return 'این دسته‌بندی به ویژگی‌های بیشتری نیاز دارد. باید فیلدهای لازم دسته را اضافه کنیم یا دسته را عوض کنی.';
   }
   if (normalized.includes('basalam product create failed')) {
-    return `باسلام ثبت این محصول را قبول نکرد. جزئیات خطا: ${toPersianDigits(error).slice(0, 180)}`;
+    return 'باسلام ثبت این محصول را قبول نکرد. فیلدهای محصول را چک کن و دوباره تلاش کن.';
   }
-  return toPersianDigits(error).slice(0, 220);
+  return 'این محصول ثبت نشد. فیلدهای محصول را چک کن و دوباره تلاش کن.';
 }
 
 function formatPriceInput(value: string): string {
   const normalized = normalizeDigits(value).replace(/[^\d]/g, '');
   if (!normalized) return '';
   return toPersianDigits(Number(normalized).toLocaleString('en-US')).replace(/,/g, '٬');
+}
+
+function formatIntegerInput(value: string): string {
+  const normalized = normalizeDigits(value).replace(/[^\d]/g, '');
+  return normalized ? toPersianDigits(normalized) : '';
 }
 
 function normalizeDigits(value: string): string {

@@ -105,6 +105,11 @@ class BatchItemRead(BaseModel):
     title: str
     description: str
     price_toman: int | None
+    stock: int | None = None
+    preparation_days: int | None = None
+    weight_grams: int | None = None
+    package_weight_grams: int | None = None
+    unit_quantity: int | None = None
     confidence: float
     edited_by_user: bool
     photos: list[BatchItemAssetRead]
@@ -117,6 +122,11 @@ class BatchItemPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=220)
     description: str | None = None
     price_toman: int | None = Field(default=None, ge=0)
+    stock: int | None = Field(default=None, ge=0)
+    preparation_days: int | None = Field(default=None, ge=1)
+    weight_grams: int | None = Field(default=None, ge=1)
+    package_weight_grams: int | None = Field(default=None, ge=1)
+    unit_quantity: int | None = Field(default=None, ge=1)
 
 
 class BasalamCategoryPatch(BaseModel):
@@ -154,6 +164,11 @@ class AiProduct(BaseModel):
     title: str
     description: str
     price_toman: int | None
+    stock: int | None = None
+    preparation_days: int | None = None
+    weight_grams: int | None = None
+    package_weight_grams: int | None = None
+    unit_quantity: int | None = None
     confidence: float = Field(ge=0, le=1)
     image_numbers: list[int] = Field(min_length=1)
 
