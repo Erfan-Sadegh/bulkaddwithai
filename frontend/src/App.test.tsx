@@ -130,9 +130,14 @@ describe('App', () => {
 
     expect(await screen.findByDisplayValue('محصول تستی')).toBeInTheDocument();
     expect(screen.getByDisplayValue('۱۲۳٬۰۰۰')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'این یک محصول جداست' }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'این عکس محصول جداست' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'عکس قبلی' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'عکس بعدی' })).toBeInTheDocument();
     expect(screen.getByText('عکس‌های این محصول را چک کن.')).toBeInTheDocument();
     expect(screen.queryByText(/اطمینان/)).not.toBeInTheDocument();
+
+    const uploadInputs = Array.from(container.querySelectorAll('input[accept="image/*"]')) as HTMLInputElement[];
+    expect(uploadInputs.every((input) => input.disabled)).toBe(true);
 
     fireEvent.change(screen.getByDisplayValue('۱۲۳٬۰۰۰'), { target: { value: '۱۲۳۴۵۶۷' } });
     expect(screen.getByDisplayValue('۱٬۲۳۴٬۵۶۷')).toBeInTheDocument();
@@ -172,7 +177,7 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
 
     expect(await screen.findByDisplayValue('محصول تستی')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'این یک محصول جداست' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'این عکس محصول جداست' })).not.toBeInTheDocument();
     expect(screen.queryByText('عکس‌های این محصول را چک کن.')).not.toBeInTheDocument();
   });
   it('publishes reviewed products to connected Basalam booth', async () => {

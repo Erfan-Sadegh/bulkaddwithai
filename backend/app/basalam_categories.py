@@ -89,7 +89,7 @@ def search_categories(categories: list[BasalamCategory], query: str, limit: int 
         return []
     scored = [category_with_score(category, query) for category in categories]
     scored = [category for category in scored if (category.confidence or 0) > 0]
-    scored.sort(key=lambda category: (category.confidence or 0, len(category.path)), reverse=True)
+    scored.sort(key=lambda category: (category.confidence or 0, _specificity(category)), reverse=True)
     return scored[:limit]
 
 
@@ -115,18 +115,26 @@ def category_with_score(category: BasalamCategory, query: str) -> BasalamCategor
     title_norm = normalize_text(category.title)
     path_norm = normalize_text(category.path)
     query_tokens = set(_tokenize(normalized_query))
+    expanded_query_tokens = _expand_query_tokens(query_tokens)
     title_tokens = set(_tokenize(title_norm))
     path_tokens = set(_tokenize(path_norm))
     if not query_tokens:
         score = 0.0
     else:
-        title_overlap = len(title_tokens & query_tokens) / max(1, len(title_tokens))
-        path_overlap = len(path_tokens & query_tokens) / max(1, min(len(path_tokens), 8))
-        score = title_overlap * 0.72 + path_overlap * 0.18
+        title_match = title_tokens & expanded_query_tokens
+        path_match = path_tokens & expanded_query_tokens
+        title_coverage = len(title_match) / max(1, len(title_tokens))
+        query_title_coverage = len(title_match) / max(1, len(query_tokens))
+        path_coverage = len(path_match) / max(1, min(len(query_tokens), 8))
+        score = title_coverage * 0.46 + query_title_coverage * 0.25 + path_coverage * 0.18
         if title_norm and title_norm in normalized_query:
             score += 0.28
         if normalized_query and normalized_query in path_norm:
             score += 0.12
+        boost = _domain_boost(path_tokens, expanded_query_tokens)
+        score += boost
+        if not (title_tokens & query_tokens) and boost <= 0:
+            score = min(score, 0.42)
     score = max(0.0, min(1.0, score))
     return BasalamCategory(
         id=category.id,
@@ -165,8 +173,75 @@ def _has_direct_title_signal(category: BasalamCategory, query: str) -> bool:
     if title_norm and title_norm in normalized_query:
         return True
     query_tokens = set(_tokenize(normalized_query))
+    expanded_query_tokens = _expand_query_tokens(query_tokens)
     title_tokens = set(_tokenize(title_norm))
-    return bool(query_tokens and title_tokens and query_tokens & title_tokens)
+    return bool(query_tokens and title_tokens and expanded_query_tokens & title_tokens)
+
+
+def _specificity(category: BasalamCategory) -> int:
+    return len(_tokenize(normalize_text(category.title)))
+
+
+def _expand_query_tokens(tokens: set[str]) -> set[str]:
+    expanded = set(tokens)
+    synonym_groups = [
+        {"ایرپاد", "ایرپادز", "ایرباد", "هندزفری", "هدفون", "airpod", "airpods", "apods", "earbud", "earbuds"},
+        {"اسپیکر", "بلندگو", "speaker"},
+        {"ساعت", "واچ", "مچ", "بند", "هوشمند", "watch"},
+        {"شارژر", "کابل", "اداپتور", "آداپتور", "charger", "cable"},
+        {"قاب", "کاور", "گارد", "case", "cover"},
+    ]
+    for group in synonym_groups:
+        if tokens & group:
+            expanded |= group
+    return expanded
+
+
+def _domain_boost(path_tokens: set[str], query_tokens: set[str]) -> float:
+    boost = 0.0
+    digital_path = {"دیجیتال", "موبایل", "کامپیوتر", "صوتی", "تصویری", "لوازم", "جانبی"} & path_tokens
+    unrelated_path = {"خانه", "اشپزخانه", "آشپزخانه", "سرگرمی"} & path_tokens
+
+    if query_tokens & {"ایرپاد", "ایرپادز", "ایرباد", "هندزفری", "هدفون", "airpod", "airpods", "apods", "earbud", "earbuds"}:
+        if path_tokens & {"ایرپاد", "هندزفری", "هدفون", "ایرباد"}:
+            boost += 0.35
+        elif digital_path:
+            boost += 0.08
+        if unrelated_path:
+            boost -= 0.28
+
+    if query_tokens & {"اسپیکر", "بلندگو", "speaker"}:
+        if path_tokens & {"اسپیکر", "بلندگو", "صوتی"}:
+            boost += 0.32
+        elif digital_path:
+            boost += 0.08
+        if unrelated_path:
+            boost -= 0.25
+
+    smart_watch_query = bool(query_tokens & {"ساعت", "واچ", "watch", "مچ"}) and bool(query_tokens & {"هوشمند", "بند", "مچ"})
+    if smart_watch_query:
+        if path_tokens & {"ساعت", "مچ", "هوشمند", "واچ"}:
+            boost += 0.34
+        elif digital_path:
+            boost += 0.08
+        if unrelated_path:
+            boost -= 0.25
+
+    if query_tokens & {"شارژر", "کابل", "اداپتور", "آداپتور", "charger", "cable"}:
+        if path_tokens & {"شارژر", "کابل", "اداپتور", "آداپتور"}:
+            boost += 0.33
+        elif digital_path:
+            boost += 0.08
+        if unrelated_path:
+            boost -= 0.22
+
+    if query_tokens & {"قاب", "کاور", "گارد", "case", "cover"}:
+        if path_tokens & {"قاب", "کاور", "گارد"}:
+            boost += 0.33
+        elif digital_path:
+            boost += 0.08
+
+    return boost
 
 
 @lru_cache(maxsize=4096)

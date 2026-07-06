@@ -93,9 +93,12 @@ test('photo first flow with mocked API', async ({ page }) => {
   await page.getByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }).click();
   await expect(page.getByLabel('نام محصول')).toHaveValue('محصول تستی');
   await expect(page.locator('.price-input input')).toHaveValue('۱۲۳٬۰۰۰');
-  await expect(page.getByRole('button', { name: 'این یک محصول جداست' }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'این عکس محصول جداست' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'عکس بعدی' })).toBeVisible();
   await expect(page.getByText('عکس‌های این محصول را چک کن.')).toBeVisible();
   await expect(page.getByText(/اطمینان/)).toHaveCount(0);
+
+  await expect(page.locator('input[accept="image/*"]').first()).toBeDisabled();
 
   await page.locator('.price-input input').fill('1234567');
   await expect(page.locator('.price-input input')).toHaveValue('۱٬۲۳۴٬۵۶۷');

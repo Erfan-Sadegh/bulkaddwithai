@@ -1,6 +1,8 @@
 import {
   AlertTriangle,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   Mic,
   Pause,
@@ -196,6 +198,10 @@ export function App() {
 
   async function upload(files: File[]) {
     if (!batch || files.length === 0) return;
+    if (items.length > 0) {
+      setError('برای عکس‌های جدید، اول روی «افزودن محصولات جدید» بزن.');
+      return;
+    }
     setUploading(true);
     setError(null);
     try {
@@ -394,7 +400,8 @@ export function App() {
             images={imageAssets}
             audios={audioAssets}
             uploading={uploading}
-            voiceDisabled={uploading || processing}
+            uploadDisabled={items.length > 0 || processing}
+            voiceDisabled={items.length > 0 || uploading || processing}
             onUpload={upload}
           />
 
@@ -480,12 +487,14 @@ function UploadPanel({
   images,
   audios,
   uploading,
+  uploadDisabled,
   voiceDisabled,
   onUpload,
 }: {
   images: Asset[];
   audios: Asset[];
   uploading: boolean;
+  uploadDisabled: boolean;
   voiceDisabled: boolean;
   onUpload: (files: File[]) => void;
 }) {
@@ -503,17 +512,17 @@ function UploadPanel({
           <p>هرچی محصول داری می‌تونی عکسش رو بذاری.</p>
         </div>
         {images.length > 0 && (
-          <label className="button primary file-button">
+          <label className={`button primary file-button ${uploadDisabled ? 'disabled' : ''}`} aria-disabled={uploadDisabled}>
             {uploading ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
             افزودن عکس
-            <input type="file" accept="image/*" multiple disabled={uploading} onChange={handleFileInput} />
+            <input type="file" accept="image/*" multiple disabled={uploading || uploadDisabled} onChange={handleFileInput} />
           </label>
         )}
       </div>
 
       {images.length === 0 ? (
-        <label className={`drop-zone ${uploading ? 'disabled' : ''}`}>
-          <input type="file" accept="image/*" multiple disabled={uploading} onChange={handleFileInput} />
+        <label className={`drop-zone ${uploading || uploadDisabled ? 'disabled' : ''}`}>
+          <input type="file" accept="image/*" multiple disabled={uploading || uploadDisabled} onChange={handleFileInput} />
           <span className="camera-mark">
             {uploading ? <Loader2 className="spin" size={30} /> : <Upload size={30} />}
           </span>
@@ -825,7 +834,7 @@ function BulkPreparationBox({ onApply }: { onApply: (days: number) => void }) {
       <button className="icon-dismiss" type="button" aria-label="بستن" onClick={() => setVisible(false)}>
         ×
       </button>
-      <span>زمان آماده‌سازی همه محصولات</span>
+      <span>آماده‌سازی همه</span>
       <div className="suffix-input compact">
         <input
           value={toPersianDigits(value)}
@@ -837,7 +846,7 @@ function BulkPreparationBox({ onApply }: { onApply: (days: number) => void }) {
         <span>روز</span>
       </div>
       <button
-        className="button secondary"
+        className="prep-apply"
         type="button"
         disabled={days === null}
         onClick={() => {
@@ -911,28 +920,81 @@ function ProductCard({
 }) {
   const needsPhotoCheck = item.photos.length > 1 && item.confidence < 0.8;
   const unitLabel = item.basalam_category?.unit_type_title || 'واحد';
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
+  const touchStartX = useRef<number | null>(null);
+  const activePhoto = item.photos[activePhotoIndex] ?? item.photos[0];
+  const hasMultiplePhotos = item.photos.length > 1;
+
+  useEffect(() => {
+    if (activePhotoIndex > item.photos.length - 1) setActivePhotoIndex(0);
+  }, [activePhotoIndex, item.photos.length]);
+
+  function movePhoto(delta: number) {
+    if (!hasMultiplePhotos) return;
+    setActivePhotoIndex((current) => (current + delta + item.photos.length) % item.photos.length);
+  }
+
+  function handleTouchEnd(clientX: number) {
+    if (touchStartX.current === null) return;
+    const delta = clientX - touchStartX.current;
+    touchStartX.current = null;
+    if (Math.abs(delta) < 38) return;
+    movePhoto(delta > 0 ? -1 : 1);
+  }
+
   return (
     <article className="panel product-card">
-      <div className="product-photos">
-        {item.photos.map((photo) => {
-          const splitKey = `${item.id}-${photo.asset_id}`;
-          return (
-            <figure className="photo-tile result-photo" key={photo.asset_id}>
-              <div className="result-photo-frame">
-                <img src={`${API_BASE}${photo.url}`} alt={`عکس شماره ${toPersianDigits(photo.upload_order)}`} />
-                <figcaption>شماره {toPersianDigits(photo.upload_order)}</figcaption>
-              </div>
-              {needsPhotoCheck && (
-                <div className="photo-actions">
-                  <button className="split-photo-button" type="button" onClick={() => onSplitPhoto(item.id, photo.asset_id)} disabled={splittingPhotoKey === splitKey}>
-                    {splittingPhotoKey === splitKey ? <Loader2 className="spin" size={15} /> : <SplitSquareHorizontal size={15} />}
-                    این یک محصول جداست
+      <div
+        className="product-photos"
+        onTouchStart={(event) => {
+          touchStartX.current = event.changedTouches[0]?.clientX ?? null;
+        }}
+        onTouchEnd={(event) => handleTouchEnd(event.changedTouches[0]?.clientX ?? 0)}
+      >
+        {activePhoto && (
+          <figure className="photo-tile result-photo">
+            <div className="result-photo-frame">
+              <img src={`${API_BASE}${activePhoto.url}`} alt={`عکس شماره ${toPersianDigits(activePhoto.upload_order)}`} />
+              <figcaption>شماره {toPersianDigits(activePhoto.upload_order)}</figcaption>
+              {hasMultiplePhotos && (
+                <div className="gallery-controls">
+                  <button type="button" aria-label="عکس قبلی" onClick={() => movePhoto(-1)}>
+                    <ChevronRight size={17} />
+                  </button>
+                  <button type="button" aria-label="عکس بعدی" onClick={() => movePhoto(1)}>
+                    <ChevronLeft size={17} />
                   </button>
                 </div>
               )}
-            </figure>
-          );
-        })}
+            </div>
+          </figure>
+        )}
+        {hasMultiplePhotos && (
+          <div className="gallery-dots" aria-label="عکس‌های محصول">
+            {item.photos.map((photo, index) => (
+              <button
+                key={photo.asset_id}
+                type="button"
+                aria-label={`نمایش عکس شماره ${toPersianDigits(photo.upload_order)}`}
+                className={index === activePhotoIndex ? 'active' : ''}
+                onClick={() => setActivePhotoIndex(index)}
+              />
+            ))}
+          </div>
+        )}
+        {needsPhotoCheck && activePhoto && (
+          <div className="photo-actions">
+            <button
+              className="split-photo-button"
+              type="button"
+              onClick={() => onSplitPhoto(item.id, activePhoto.asset_id)}
+              disabled={splittingPhotoKey === `${item.id}-${activePhoto.asset_id}`}
+            >
+              {splittingPhotoKey === `${item.id}-${activePhoto.asset_id}` ? <Loader2 className="spin" size={15} /> : <SplitSquareHorizontal size={15} />}
+              این عکس محصول جداست
+            </button>
+          </div>
+        )}
       </div>
 
       {needsPhotoCheck && (

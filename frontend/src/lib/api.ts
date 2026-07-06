@@ -9,9 +9,41 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed: ${response.status}`);
+    throw new Error(toFriendlyApiError(text, response.status));
   }
   return response.json() as Promise<T>;
+}
+
+function toFriendlyApiError(text: string, status: number): string {
+  const detail = extractDetail(text);
+  const normalized = detail.toLowerCase();
+  if (normalized.includes('batch not found')) return 'این نوبت محصول پیدا نشد. برای اضافه کردن عکس جدید، از «افزودن محصولات جدید» استفاده کن.';
+  if (normalized.includes('seller not found')) return 'اطلاعات فروشنده پیدا نشد. صفحه را دوباره باز کن.';
+  if (normalized.includes('batch item not found')) return 'این محصول پیدا نشد. صفحه را دوباره باز کن.';
+  if (normalized.includes('no ready products found')) return 'هنوز محصول آماده‌ای برای ثبت وجود ندارد.';
+  if (normalized.includes('basalam booth is not connected')) return 'غرفه باسلام هنوز وصل نیست.';
+  if (normalized.includes('basalam category was not found')) return 'این دسته‌بندی در باسلام پیدا نشد. دسته دیگری انتخاب کن.';
+  if (detail && !/[{}[\]":]/.test(detail) && !/[A-Za-z]{3,}/.test(detail)) return detail;
+  if (status === 404) return 'مورد موردنظر پیدا نشد. صفحه را دوباره باز کن.';
+  if (status === 422) return 'یکی از اطلاعات لازم کامل نیست. فیلدها را چک کن.';
+  return 'درخواست انجام نشد. دوباره تلاش کن.';
+}
+
+function extractDetail(text: string): string {
+  if (!text) return '';
+  try {
+    const parsed = JSON.parse(text);
+    if (typeof parsed?.detail === 'string') return parsed.detail;
+    if (Array.isArray(parsed?.detail)) {
+      return parsed.detail
+        .map((item: { msg?: string }) => item?.msg)
+        .filter(Boolean)
+        .join('، ');
+    }
+  } catch {
+    return text;
+  }
+  return text;
 }
 
 export const api = {
