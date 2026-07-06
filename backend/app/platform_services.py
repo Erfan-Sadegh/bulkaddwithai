@@ -10,13 +10,13 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
+from .ai import CategoryCandidate, get_ai_provider
 from .basalam_categories import (
     BasalamCategory,
     category_to_dict,
     find_category,
     get_basalam_leaf_categories,
     search_categories,
-    suggest_category,
 )
 from .config import Settings
 from .integrations.basalam import (
@@ -359,9 +359,9 @@ def _item_to_basalam_payload(
     if item.weight_grams is None:
         raise ValueError("برای ثبت محصول در باسلام، وزن محصول را به گرم وارد کن.")
     if item.package_weight_grams is None:
-        raise ValueError("برای ثبت محصول در باسلام، وزن بسته‌بندی را به گرم وارد کن.")
+        raise ValueError("برای ثبت محصول در باسلام، وزن محصول با بسته‌بندی را به گرم وارد کن.")
     if item.unit_quantity is None:
-        raise ValueError("برای ثبت محصول در باسلام، مقدار هر فروش را وارد کن.")
+        raise ValueError("برای ثبت محصول در باسلام، مشخص کن هر فروش چندتا محصول دارد.")
     category_data = _publishable_category_data(settings, item)
     category_id = category_data.category_id if category_data else None
     if category_id is None:
@@ -453,6 +453,7 @@ def _suggest_missing_categories(
     items: list[BatchItem],
     replace_low_confidence: bool,
 ) -> None:
+    ai_provider = get_ai_provider(settings)
     for item in items:
         current = _basalam_platform_data(item)
         if current and current.category_source == "user":
@@ -461,19 +462,76 @@ def _suggest_missing_categories(
             continue
         if current and current.category_id and (current.category_confidence or 0) >= settings.basalam_category_suggestion_threshold:
             continue
-        suggested = suggest_category(categories, item.title, item.description)
+        suggested, metadata = _suggest_category_with_ai(settings, ai_provider, categories, item)
         if suggested:
             _upsert_category_data(
                 item,
                 suggested,
                 source="auto",
                 confidence=suggested.confidence or 0,
+                metadata=metadata,
             )
     session.flush()
 
 
+def _suggest_category_with_ai(settings: Settings, ai_provider, categories: list[BasalamCategory], item: BatchItem):
+    candidates = search_categories(categories, f"{item.title} {item.description}", limit=14)
+    if not candidates:
+        return None, {"strategy": "ai_shortlist", "reason": "no candidates"}
+    candidate_payload = [
+        CategoryCandidate(
+            id=category.id,
+            title=category.title,
+            path=category.path,
+            confidence=category.confidence,
+        )
+        for category in candidates
+    ]
+    fallback = candidates[0]
+    try:
+        choice = ai_provider.choose_basalam_category(item.title, item.description, candidate_payload)
+    except Exception as exc:
+        return fallback, {
+            "strategy": "scored_fallback",
+            "reason": "ai_failed",
+            "error": str(exc)[:400],
+            "candidate_ids": [category.id for category in candidates],
+        }
+    if choice.candidate_id is None:
+        return None, {
+            "strategy": "ai_shortlist",
+            "reason": choice.reason,
+            "ai_confidence": choice.confidence,
+            "candidate_ids": [category.id for category in candidates],
+        }
+    selected = find_category(candidates, choice.candidate_id)
+    if not selected:
+        return fallback, {
+            "strategy": "scored_fallback",
+            "reason": "ai_selected_missing_candidate",
+            "ai_confidence": choice.confidence,
+            "candidate_ids": [category.id for category in candidates],
+        }
+    selected = BasalamCategory(
+        id=selected.id,
+        title=selected.title,
+        path=selected.path,
+        unit_type_id=selected.unit_type_id,
+        unit_type_title=selected.unit_type_title,
+        max_preparation_days=selected.max_preparation_days,
+        confidence=max(selected.confidence or 0.0, choice.confidence),
+    )
+    return selected, {
+        "strategy": "ai_shortlist",
+        "reason": choice.reason,
+        "ai_confidence": choice.confidence,
+        "scored_confidence": selected.confidence,
+        "candidate_ids": [category.id for category in candidates],
+    }
+
+
 def _upsert_category_data(
-    item: BatchItem, category: BasalamCategory, source: str, confidence: float
+    item: BatchItem, category: BasalamCategory, source: str, confidence: float, metadata: dict | None = None
 ) -> BatchItemPlatformData:
     data = _basalam_platform_data(item)
     if not data:
@@ -487,7 +545,7 @@ def _upsert_category_data(
     data.category_unit_type_id = category.unit_type_id
     data.category_unit_type_title = category.unit_type_title
     data.category_max_preparation_days = category.max_preparation_days
-    data.platform_metadata = {"matched_at": utc_now().isoformat()}
+    data.platform_metadata = {"matched_at": utc_now().isoformat(), **(metadata or {})}
     return data
 
 

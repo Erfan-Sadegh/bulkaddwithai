@@ -379,7 +379,7 @@ export function App() {
     <main className="app-shell">
       <header className="hero">
         <div>
-          <h1>محصولاتت رو با عکس وُ ویس به فروشگاهت اضافه کن</h1>
+          <h1>محصولاتت رو با عکس و وُیس به فروشگاهت اضافه کن</h1>
         </div>
       </header>
 
@@ -834,7 +834,7 @@ function BulkPreparationBox({ onApply }: { onApply: (days: number) => void }) {
       <button className="icon-dismiss" type="button" aria-label="بستن" onClick={() => setVisible(false)}>
         ×
       </button>
-      <span>آماده‌سازی همه</span>
+      <span>زمان آماده‌سازی همه محصولات</span>
       <div className="suffix-input compact">
         <input
           value={toPersianDigits(value)}
@@ -1059,7 +1059,7 @@ function ProductCard({
             </div>
           </label>
           <label className="field">
-            <span>وزن بسته</span>
+            <span>وزن محصول با بسته‌بندی</span>
             <div className="suffix-input">
               <input
                 value={formatIntegerInput(draft.package_weight_grams)}
@@ -1071,7 +1071,7 @@ function ProductCard({
             </div>
           </label>
           <label className="field">
-            <span>مقدار هر فروش</span>
+            <span>چندتایی می‌فروشی؟</span>
             <div className="suffix-input">
               <input
                 value={formatIntegerInput(draft.unit_quantity)}
@@ -1097,8 +1097,11 @@ function BasalamCategoryPicker({ item, onSelect }: { item: ProductItem; onSelect
   const [results, setResults] = useState<BasalamCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectingId, setSelectingId] = useState<number | null>(null);
+  const [editing, setEditing] = useState(false);
   const category = item.basalam_category;
   const lowConfidence = category?.source === 'auto' && (category.confidence ?? 0) < BASALAM_AUTO_CATEGORY_THRESHOLD;
+  const needsCategory = lowConfidence || !category?.category_id;
+  const showSearch = needsCategory || editing;
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -1131,13 +1134,14 @@ function BasalamCategoryPicker({ item, onSelect }: { item: ProductItem; onSelect
       await onSelect(category);
       setQuery('');
       setResults([]);
+      setEditing(false);
     } finally {
       setSelectingId(null);
     }
   }
 
   return (
-    <div className={`category-picker ${lowConfidence || !category?.category_id ? 'needs-category' : ''}`}>
+    <div className={`category-picker ${needsCategory ? 'needs-category' : ''}`}>
       <div className="category-current">
         <span>دسته‌بندی باسلام</span>
         {category?.category_id ? (
@@ -1145,33 +1149,42 @@ function BasalamCategoryPicker({ item, onSelect }: { item: ProductItem; onSelect
         ) : (
           <strong>انتخاب نشده</strong>
         )}
+        {!needsCategory && (
+          <button className="category-edit-button" type="button" onClick={() => setEditing((value) => !value)}>
+            {editing ? 'بستن' : 'تغییر'}
+          </button>
+        )}
       </div>
-      {(lowConfidence || !category?.category_id) && (
+      {needsCategory && (
         <small>{lowConfidence ? 'اگر دسته درست نیست، اصلاحش کن.' : 'برای ثبت در باسلام، دسته را انتخاب کن.'}</small>
       )}
-      <div className="category-search">
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="جستجوی دسته"
-          aria-label="جستجوی دسته‌بندی باسلام"
-        />
-        {loading && <Loader2 className="spin" size={16} />}
-      </div>
-      {results.length > 0 && (
-        <div className="category-results">
-          {results.map((category) => (
-            <button
-              key={category.id}
-              type="button"
-              onClick={() => selectCategory(category)}
-              disabled={selectingId === category.id}
-            >
-              <span>{category.path}</span>
-              {selectingId === category.id && <Loader2 className="spin" size={14} />}
-            </button>
-          ))}
-        </div>
+      {showSearch && (
+        <>
+          <div className="category-search">
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="جستجوی دسته"
+              aria-label="جستجوی دسته‌بندی باسلام"
+            />
+            {loading && <Loader2 className="spin" size={16} />}
+          </div>
+          {results.length > 0 && (
+            <div className="category-results">
+              {results.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  onClick={() => selectCategory(category)}
+                  disabled={selectingId === category.id}
+                >
+                  <span>{category.path}</span>
+                  {selectingId === category.id && <Loader2 className="spin" size={14} />}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

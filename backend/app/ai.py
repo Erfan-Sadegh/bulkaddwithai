@@ -12,6 +12,19 @@ from .models import Asset
 from .schemas import AiExtraction, AiProduct
 
 
+class CategoryCandidate(BaseModel):
+    id: int
+    title: str
+    path: str
+    confidence: float | None = None
+
+
+class CategoryChoice(BaseModel):
+    candidate_id: int | None
+    confidence: float = Field(ge=0, le=1)
+    reason: str = ""
+
+
 class ProductSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -33,6 +46,14 @@ class ExtractionSchema(BaseModel):
     transcript: str | None
     products: list[ProductSchema]
     metadata: dict
+
+
+class CategoryChoiceSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: int | None
+    confidence: float = Field(ge=0, le=1)
+    reason: str
 
 
 AVALAI_EXTRACTION_JSON_SCHEMA = {
@@ -85,6 +106,18 @@ AVALAI_EXTRACTION_JSON_SCHEMA = {
 }
 
 
+AVALAI_CATEGORY_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "candidate_id": {"type": ["integer", "null"]},
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
+    },
+    "required": ["candidate_id", "confidence", "reason"],
+    "additionalProperties": False,
+}
+
+
 class AiProvider(ABC):
     @abstractmethod
     def transcribe(self, audio: Asset | None) -> str | None:
@@ -92,6 +125,12 @@ class AiProvider(ABC):
 
     @abstractmethod
     def extract_products(self, images: list[Asset], transcript: str | None) -> AiExtraction:
+        raise NotImplementedError
+
+    @abstractmethod
+    def choose_basalam_category(
+        self, title: str, description: str, candidates: list[CategoryCandidate]
+    ) -> CategoryChoice:
         raise NotImplementedError
 
 
@@ -140,6 +179,18 @@ class FakeAiProvider(AiProvider):
             transcript=transcript,
             products=products,
             metadata={"provider": "fake", "note": "deterministic local provider"},
+        )
+
+    def choose_basalam_category(
+        self, title: str, description: str, candidates: list[CategoryCandidate]
+    ) -> CategoryChoice:
+        if not candidates:
+            return CategoryChoice(candidate_id=None, confidence=0.0, reason="no candidates")
+        best = candidates[0]
+        return CategoryChoice(
+            candidate_id=best.id,
+            confidence=best.confidence or 0.0,
+            reason="fake provider chooses top candidate",
         )
 
 
@@ -257,6 +308,72 @@ class AvalAiProvider(AiProvider):
                 for product in parsed.products
             ],
             metadata={"provider": "avalai", "model": self.settings.avalai_vision_model, **parsed.metadata},
+        )
+
+    def choose_basalam_category(
+        self, title: str, description: str, candidates: list[CategoryCandidate]
+    ) -> CategoryChoice:
+        if not candidates:
+            return CategoryChoice(candidate_id=None, confidence=0.0, reason="no candidates")
+        candidate_payload = [
+            {
+                "id": candidate.id,
+                "title": candidate.title,
+                "path": candidate.path,
+                "score": candidate.confidence,
+            }
+            for candidate in candidates[:20]
+        ]
+        response = self.client.chat.completions.create(
+            model=self.settings.avalai_text_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "تو فقط دسته‌بندی باسلام را برای یک محصول فروشگاهی انتخاب می‌کنی. "
+                        "حتماً فقط از candidate_idهای داده‌شده انتخاب کن و هرگز دسته جدید نساز. "
+                        "اگر هیچ candidate واقعاً مناسب نیست، candidate_id را null بگذار. "
+                        "هدف کم‌کردن زحمت فروشنده سنتی است، اما ثبت محصول در دسته اشتباه بدتر از پرسیدن از کاربر است."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "محصول:\n"
+                        f"title: {title}\n"
+                        f"description: {description or '-'}\n\n"
+                        "candidateهای واقعی باسلام:\n"
+                        f"{json.dumps(candidate_payload, ensure_ascii=False)}\n\n"
+                        "اگر title یا description با path یک candidate واضحاً مرتبط است، همان را انتخاب کن. "
+                        "برای محصولات کالای دیجیتال مثل ایرپاد، هندزفری، اسپیکر، شارژر، قاب، ساعت و مچ‌بند هوشمند، "
+                        "مسیرهای کالای دیجیتال و لوازم جانبی را به دسته‌های عمومی مثل خانه و آشپزخانه یا سرگرمی ترجیح بده."
+                    ),
+                },
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "basalam_category_choice_v1",
+                    "strict": True,
+                    "schema": AVALAI_CATEGORY_JSON_SCHEMA,
+                },
+            },
+        )
+        try:
+            message = response.choices[0].message
+            if getattr(message, "refusal", None):
+                raise RuntimeError(f"AI refused category choice: {message.refusal}")
+            parsed = CategoryChoiceSchema.model_validate(json.loads(message.content or "{}"))
+        except (json.JSONDecodeError, ValidationError) as exc:
+            raise RuntimeError(f"AI returned invalid category choice JSON: {exc}") from exc
+
+        candidate_ids = {candidate.id for candidate in candidates}
+        if parsed.candidate_id is not None and parsed.candidate_id not in candidate_ids:
+            return CategoryChoice(candidate_id=None, confidence=0.0, reason="AI selected an unknown candidate")
+        return CategoryChoice(
+            candidate_id=parsed.candidate_id,
+            confidence=parsed.confidence,
+            reason=parsed.reason,
         )
 
 

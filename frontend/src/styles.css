@@ -793,10 +793,10 @@ a {
 }
 
 .category-current {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
 }
 
 .category-current span {
@@ -807,9 +807,24 @@ a {
 
 .category-current strong {
   color: var(--text);
-  font-size: 0.86rem;
+  font-size: 0.82rem;
   line-height: 1.55;
-  text-align: left;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-edit-button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--primary);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
 }
 
 .category-picker small {
@@ -1030,7 +1045,7 @@ a {
 
 @media (max-width: 920px) {
   .app-shell {
-    width: min(100vw - 20px, 720px);
+    width: min(calc(100vw - 32px), 720px);
     padding-top: 18px;
   }
 
@@ -1085,10 +1100,11 @@ a {
     bottom: 0;
     display: grid;
     grid-template-columns: 1fr;
-    margin: 0 -10px -10px;
+    margin: 0;
     padding: 10px;
     background: rgba(247, 248, 248, 0.96);
     border-top: 1px solid var(--line);
+    border-radius: 8px;
   }
 
   .bulk-prep-box {
@@ -1113,8 +1129,8 @@ a {
   }
 
   .sticky-action {
-    left: 10px;
-    right: 10px;
+    left: 16px;
+    right: 16px;
   }
 
   .sticky-action .button {

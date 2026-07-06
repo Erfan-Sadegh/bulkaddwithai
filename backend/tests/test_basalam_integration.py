@@ -229,7 +229,7 @@ def test_publish_requires_seller_operational_fields(client: TestClient, batch: d
     assert fake.created_products == []
 
 
-def test_publish_does_not_use_low_confidence_auto_category(client: TestClient, batch: dict):
+def test_publish_does_not_guess_category_for_ambiguous_product(client: TestClient, batch: dict):
     fake = FakeBasalamClient()
     client.app.state.basalam_client_factory = lambda _settings: fake
     client.app.state.settings.basalam_client_id = "test-client"
@@ -241,11 +241,11 @@ def test_publish_does_not_use_low_confidence_auto_category(client: TestClient, b
     item = client.get(f"/batches/{batch['id']}/items").json()[0]
     client.patch(
         f"/batch-items/{item['id']}",
-        json={
-            "title": "محصول تستی",
-            "description": "برای گروه شده مناسب است",
-            "price_toman": 456000,
-            "stock": 5,
+            json={
+                "title": "محصول نامشخص",
+                "description": "برای استفاده روزانه مناسب است",
+                "price_toman": 456000,
+                "stock": 5,
             "preparation_days": 2,
             "weight_grams": 300,
             "package_weight_grams": 500,
@@ -254,8 +254,7 @@ def test_publish_does_not_use_low_confidence_auto_category(client: TestClient, b
     )
     suggested = client.post(f"/batches/{batch['id']}/categories/basalam/suggest").json()
 
-    assert suggested[0]["basalam_category"]["category_id"] == 20
-    assert suggested[0]["basalam_category"]["confidence"] < 0.62
+    assert suggested[0]["basalam_category"] is None
 
     callback_state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}").json()["state"]
     client.get(f"/integrations/basalam/callback?code=valid-code&state={callback_state}", follow_redirects=False)
