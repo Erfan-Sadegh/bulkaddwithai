@@ -552,6 +552,10 @@ a {
   gap: 8px;
 }
 
+.product-photos > .result-photo ~ .result-photo {
+  display: none;
+}
+
 .result-photo-frame {
   position: relative;
   min-height: 0;
@@ -619,10 +623,10 @@ a {
 .photo-actions button {
   min-width: 0;
   min-height: 34px;
-  border: 1px solid #f1b4ad;
+  border: 1px solid #f3d3cf;
   border-radius: 8px;
-  background: #ffffff;
-  color: var(--danger);
+  background: #fffdfc;
+  color: #a55a51;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -757,16 +761,16 @@ a {
   gap: 4px;
   margin: 7px 0 4px;
   padding: 7px 8px;
-  border: 1px solid #f2c8bd;
+  border: 1px solid #f2d8d3;
   border-radius: 8px;
-  background: #fff8f6;
-  color: #9f2f22;
+  background: #fffafa;
+  color: #8d4d45;
   font-size: 0.78rem;
   line-height: 1.55;
 }
 
 .photo-check-warning span {
-  color: #8d554f;
+  color: #7b6865;
 }
 
 .category-loading {

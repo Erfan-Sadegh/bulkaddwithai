@@ -25,6 +25,20 @@ class CategoryChoice(BaseModel):
     reason: str = ""
 
 
+class CategoryChoiceRequest(BaseModel):
+    item_key: str
+    title: str
+    description: str = ""
+    candidates: list[CategoryCandidate]
+
+
+class CategoryChoiceResult(BaseModel):
+    item_key: str
+    candidate_id: int | None
+    confidence: float = Field(ge=0, le=1)
+    reason: str = ""
+
+
 class ProductSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -54,6 +68,12 @@ class CategoryChoiceSchema(BaseModel):
     candidate_id: int | None
     confidence: float = Field(ge=0, le=1)
     reason: str
+
+
+class CategoryChoicesSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    choices: list[CategoryChoiceResult]
 
 
 AVALAI_EXTRACTION_JSON_SCHEMA = {
@@ -118,6 +138,43 @@ AVALAI_CATEGORY_JSON_SCHEMA = {
 }
 
 
+AVALAI_CATEGORY_BATCH_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "choices": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "item_key": {"type": "string"},
+                    "candidate_id": {"type": ["integer", "null"]},
+                    "confidence": {"type": "number"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["item_key", "candidate_id", "confidence", "reason"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["choices"],
+    "additionalProperties": False,
+}
+
+
+def _validate_category_choice_result(
+    request: CategoryChoiceRequest, result: CategoryChoiceResult
+) -> CategoryChoiceResult:
+    candidate_ids = {candidate.id for candidate in request.candidates}
+    if result.candidate_id is not None and result.candidate_id not in candidate_ids:
+        return CategoryChoiceResult(
+            item_key=request.item_key,
+            candidate_id=None,
+            confidence=0.0,
+            reason="AI selected an unknown candidate",
+        )
+    return result
+
+
 class AiProvider(ABC):
     @abstractmethod
     def transcribe(self, audio: Asset | None) -> str | None:
@@ -132,6 +189,19 @@ class AiProvider(ABC):
         self, title: str, description: str, candidates: list[CategoryCandidate]
     ) -> CategoryChoice:
         raise NotImplementedError
+
+    def choose_basalam_categories(
+        self, requests: list[CategoryChoiceRequest]
+    ) -> list[CategoryChoiceResult]:
+        return [
+            CategoryChoiceResult(
+                item_key=request.item_key,
+                **self.choose_basalam_category(
+                    request.title, request.description, request.candidates
+                ).model_dump(),
+            )
+            for request in requests
+        ]
 
 
 class FakeAiProvider(AiProvider):
@@ -375,6 +445,85 @@ class AvalAiProvider(AiProvider):
             confidence=parsed.confidence,
             reason=parsed.reason,
         )
+
+    def choose_basalam_categories(
+        self, requests: list[CategoryChoiceRequest]
+    ) -> list[CategoryChoiceResult]:
+        if not requests:
+            return []
+        payload = [
+            {
+                "item_key": request.item_key,
+                "title": request.title,
+                "description": request.description or "",
+                "candidates": [
+                    {
+                        "id": candidate.id,
+                        "title": candidate.title,
+                        "path": candidate.path,
+                        "score": candidate.confidence,
+                    }
+                    for candidate in request.candidates[:20]
+                ],
+            }
+            for request in requests
+        ]
+        response = self.client.chat.completions.create(
+            model=self.settings.avalai_text_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "تو دسته‌بندی باسلام را برای چند محصول فروشگاهی انتخاب می‌کنی. "
+                        "برای هر item_key دقیقاً یک choice بده. "
+                        "فقط از candidate_idهای همان item انتخاب کن و هرگز دسته جدید نساز. "
+                        "اگر هیچ candidate واقعاً مناسب نیست، candidate_id را null بگذار. "
+                        "هدف کاهش زحمت فروشنده سنتی است، اما ثبت محصول در دسته اشتباه بدتر از پرسیدن از کاربر است."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "برای هر محصول از بین candidateهای واقعی باسلام انتخاب کن:\n"
+                        f"{json.dumps(payload, ensure_ascii=False)}\n\n"
+                        "برای کالاهای دیجیتال مثل ایرپاد، هندزفری، اسپیکر، شارژر، قاب، ساعت و مچ‌بند هوشمند، "
+                        "مسیرهای کالای دیجیتال و لوازم جانبی را به دسته‌های عمومی مثل خانه و آشپزخانه یا سرگرمی ترجیح بده."
+                    ),
+                },
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "basalam_category_batch_choice_v1",
+                    "strict": True,
+                    "schema": AVALAI_CATEGORY_BATCH_JSON_SCHEMA,
+                },
+            },
+        )
+        try:
+            message = response.choices[0].message
+            if getattr(message, "refusal", None):
+                raise RuntimeError(f"AI refused category choice: {message.refusal}")
+            parsed = CategoryChoicesSchema.model_validate(json.loads(message.content or "{}"))
+        except (json.JSONDecodeError, ValidationError) as exc:
+            raise RuntimeError(f"AI returned invalid category choice JSON: {exc}") from exc
+
+        result_by_key = {result.item_key: result for result in parsed.choices}
+        return [
+            _validate_category_choice_result(
+                request,
+                result_by_key.get(
+                    request.item_key,
+                    CategoryChoiceResult(
+                        item_key=request.item_key,
+                        candidate_id=None,
+                        confidence=0.0,
+                        reason="AI did not return a choice for this item",
+                    ),
+                ),
+            )
+            for request in requests
+        ]
 
 
 def get_ai_provider(settings: Settings) -> AiProvider:

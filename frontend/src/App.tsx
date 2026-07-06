@@ -30,6 +30,7 @@ type ProductDraft = Pick<ProductItem, 'title' | 'description'> & {
 };
 type DraftMap = Record<number, ProductDraft>;
 const BASALAM_AUTO_CATEGORY_THRESHOLD = 0.62;
+const PHOTO_GROUP_WARNING_THRESHOLD = 0.65;
 
 const jobLabels: Record<Job['step'], string> = {
   upload_ready: 'آماده شروع',
@@ -918,7 +919,7 @@ function ProductCard({
   onSelectBasalamCategory: (itemId: number, category: BasalamCategory) => void;
   onSplitPhoto: (itemId: number, assetId: number) => void;
 }) {
-  const needsPhotoCheck = item.photos.length > 1 && item.confidence < 0.8;
+  const needsPhotoCheck = item.photos.length > 1 && item.confidence < PHOTO_GROUP_WARNING_THRESHOLD;
   const unitLabel = item.basalam_category?.unit_type_title || 'واحد';
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
   const touchStartX = useRef<number | null>(null);

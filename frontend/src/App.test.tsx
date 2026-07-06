@@ -130,10 +130,10 @@ describe('App', () => {
 
     expect(await screen.findByDisplayValue('محصول تستی')).toBeInTheDocument();
     expect(screen.getByDisplayValue('۱۲۳٬۰۰۰')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'این عکس محصول جداست' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'این عکس محصول جداست' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'عکس قبلی' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'عکس بعدی' })).toBeInTheDocument();
-    expect(screen.getByText('عکس‌های این محصول را چک کن.')).toBeInTheDocument();
+    expect(screen.queryByText('عکس‌های این محصول را چک کن.')).not.toBeInTheDocument();
     expect(screen.queryByText(/اطمینان/)).not.toBeInTheDocument();
 
     const uploadInputs = Array.from(container.querySelectorAll('input[accept="image/*"]')) as HTMLInputElement[];
@@ -179,6 +179,22 @@ describe('App', () => {
     expect(await screen.findByDisplayValue('محصول تستی')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'این عکس محصول جداست' })).not.toBeInTheDocument();
     expect(screen.queryByText('عکس‌های این محصول را چک کن.')).not.toBeInTheDocument();
+  });
+
+  it('shows split action only when grouped photos are very uncertain', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({ itemOverride: { confidence: 0.51 } });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+
+    expect(await screen.findByDisplayValue('محصول تستی')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'این عکس محصول جداست' })).toBeInTheDocument();
+    expect(screen.getByText('عکس‌های این محصول را چک کن.')).toBeInTheDocument();
   });
   it('publishes reviewed products to connected Basalam booth', async () => {
     const user = userEvent.setup();

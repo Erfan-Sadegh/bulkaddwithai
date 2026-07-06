@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from .ai import CategoryCandidate, get_ai_provider
+from .ai import CategoryCandidate, CategoryChoiceRequest, CategoryChoiceResult, get_ai_provider
 from .basalam_categories import (
     BasalamCategory,
     category_to_dict,
@@ -454,6 +454,7 @@ def _suggest_missing_categories(
     replace_low_confidence: bool,
 ) -> None:
     ai_provider = get_ai_provider(settings)
+    pending: list[tuple[BatchItem, list[BasalamCategory], CategoryChoiceRequest]] = []
     for item in items:
         current = _basalam_platform_data(item)
         if current and current.category_source == "user":
@@ -462,7 +463,52 @@ def _suggest_missing_categories(
             continue
         if current and current.category_id and (current.category_confidence or 0) >= settings.basalam_category_suggestion_threshold:
             continue
-        suggested, metadata = _suggest_category_with_ai(settings, ai_provider, categories, item)
+        candidates = search_categories(categories, f"{item.title} {item.description}", limit=14)
+        if not candidates:
+            continue
+        pending.append(
+            (
+                item,
+                candidates,
+                CategoryChoiceRequest(
+                    item_key=str(item.id),
+                    title=item.title,
+                    description=item.description,
+                    candidates=[
+                        CategoryCandidate(
+                            id=category.id,
+                            title=category.title,
+                            path=category.path,
+                            confidence=category.confidence,
+                        )
+                        for category in candidates
+                    ],
+                ),
+            )
+        )
+    if not pending:
+        session.flush()
+        return
+    requests = [request for _, _, request in pending]
+    try:
+        choices = ai_provider.choose_basalam_categories(requests)
+        choice_by_key = {choice.item_key: choice for choice in choices}
+        ai_error = None
+    except Exception as exc:
+        choice_by_key = {}
+        ai_error = str(exc)[:400]
+
+    for item, candidates, request in pending:
+        if ai_error:
+            fallback = candidates[0]
+            suggested, metadata = fallback, {
+                "strategy": "scored_fallback",
+                "reason": "ai_failed",
+                "error": ai_error,
+                "candidate_ids": [category.id for category in candidates],
+            }
+        else:
+            suggested, metadata = _category_from_ai_choice(candidates, choice_by_key.get(request.item_key))
         if suggested:
             _upsert_category_data(
                 item,
@@ -474,32 +520,19 @@ def _suggest_missing_categories(
     session.flush()
 
 
-def _suggest_category_with_ai(settings: Settings, ai_provider, categories: list[BasalamCategory], item: BatchItem):
-    candidates = search_categories(categories, f"{item.title} {item.description}", limit=14)
-    if not candidates:
-        return None, {"strategy": "ai_shortlist", "reason": "no candidates"}
-    candidate_payload = [
-        CategoryCandidate(
-            id=category.id,
-            title=category.title,
-            path=category.path,
-            confidence=category.confidence,
-        )
-        for category in candidates
-    ]
+def _category_from_ai_choice(
+    candidates: list[BasalamCategory], choice: CategoryChoiceResult | None
+) -> tuple[BasalamCategory | None, dict]:
     fallback = candidates[0]
-    try:
-        choice = ai_provider.choose_basalam_category(item.title, item.description, candidate_payload)
-    except Exception as exc:
+    if not choice:
         return fallback, {
             "strategy": "scored_fallback",
-            "reason": "ai_failed",
-            "error": str(exc)[:400],
+            "reason": "ai_missing_choice",
             "candidate_ids": [category.id for category in candidates],
         }
     if choice.candidate_id is None:
         return None, {
-            "strategy": "ai_shortlist",
+            "strategy": "ai_batch_shortlist",
             "reason": choice.reason,
             "ai_confidence": choice.confidence,
             "candidate_ids": [category.id for category in candidates],
@@ -522,7 +555,7 @@ def _suggest_category_with_ai(settings: Settings, ai_provider, categories: list[
         confidence=max(selected.confidence or 0.0, choice.confidence),
     )
     return selected, {
-        "strategy": "ai_shortlist",
+        "strategy": "ai_batch_shortlist",
         "reason": choice.reason,
         "ai_confidence": choice.confidence,
         "scored_confidence": selected.confidence,
