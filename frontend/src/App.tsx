@@ -90,7 +90,7 @@ export function App() {
 
 function MainApp() {
   const [seller, setSeller] = useState<Seller | null>(null);
-  const [platform, setPlatform] = useState<Platform>('basalam');
+  const [platform, setPlatform] = useState<Platform | null>(null);
   const [batch, setBatch] = useState<Batch | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [items, setItems] = useState<ProductItem[]>([]);
@@ -141,7 +141,7 @@ function MainApp() {
       try {
         const nextJob = await api.getJob(job.id);
         setJob(nextJob);
-        if (nextJob.status === 'succeeded' && batch) {
+        if (nextJob.status === 'succeeded' && batch && platform) {
           await loadItemsForPlatform(batch.id, platform);
           setProcessing(false);
         }
@@ -273,7 +273,7 @@ function MainApp() {
   }
 
   async function processBatch() {
-    if (!batch || imageAssets.length === 0) return;
+    if (!batch || !platform || imageAssets.length === 0) return;
     setProcessing(true);
     setError(null);
     resultsAutoScrolledRef.current = false;
@@ -458,7 +458,7 @@ function MainApp() {
     setDrafts((current) => ({ ...current, [itemId]: { ...current[itemId], ...patch } }));
   }
 
-  function selectPlatform(nextPlatform: Platform) {
+  function selectPlatform(nextPlatform: Platform | null) {
     setPlatform(nextPlatform);
     setError(null);
     setShowPublishValidation(false);
@@ -501,36 +501,42 @@ function MainApp() {
         <LoadingPanel label="در حال آماده‌سازی صفحه" />
       ) : (
         <section className="workspace">
-          <PlatformChooser platform={platform} onChange={selectPlatform} />
+          {!platform ? (
+            <PlatformChooser platform={platform} onChange={selectPlatform} />
+          ) : (
+            <>
+              {seller && platform === 'basalam' && (
+                <BasalamPanel
+                  connection={basalamConnection}
+                  connecting={connectingBasalam}
+                  onConnect={connectBasalam}
+                  onChangePlatform={() => selectPlatform(null)}
+                />
+              )}
 
-          {seller && platform === 'basalam' && (
-            <BasalamPanel
-              connection={basalamConnection}
-              connecting={connectingBasalam}
-              onConnect={connectBasalam}
-            />
+              {platform === 'torob' && (
+                <TorobPanel
+                  shopName={torobShopName}
+                  contactMobile={torobContactMobile}
+                  touched={torobInfoTouched}
+                  onShopNameChange={setTorobShopName}
+                  onContactMobileChange={setTorobContactMobile}
+                  onChangePlatform={() => selectPlatform(null)}
+                />
+              )}
+
+              <UploadPanel
+                images={imageAssets}
+                audios={audioAssets}
+                uploading={uploading}
+                uploadDisabled={items.length > 0 || processing}
+                voiceDisabled={items.length > 0 || uploading || processing}
+                onUpload={upload}
+              />
+            </>
           )}
 
-          {platform === 'torob' && (
-            <TorobPanel
-              shopName={torobShopName}
-              contactMobile={torobContactMobile}
-              touched={torobInfoTouched}
-              onShopNameChange={setTorobShopName}
-              onContactMobileChange={setTorobContactMobile}
-            />
-          )}
-
-          <UploadPanel
-            images={imageAssets}
-            audios={audioAssets}
-            uploading={uploading}
-            uploadDisabled={items.length > 0 || processing}
-            voiceDisabled={items.length > 0 || uploading || processing}
-            onUpload={upload}
-          />
-
-          {(processing || job?.status === 'failed') && (
+          {platform && (processing || job?.status === 'failed') && (
             <ProgressPanel
               job={job}
               processing={processing}
@@ -539,7 +545,7 @@ function MainApp() {
             />
           )}
 
-          {hasPhotos && items.length === 0 && (
+          {platform && hasPhotos && items.length === 0 && (
             <div className="sticky-action">
               <button className="button primary action-button" type="button" onClick={processBatch} disabled={!canProcess}>
                 {processing ? <Loader2 className="spin" size={19} /> : <Sparkles size={19} />}
@@ -548,45 +554,47 @@ function MainApp() {
             </div>
           )}
 
-          <PreviewPanel
-            refNode={resultsRef}
-            batch={batch}
-            items={items}
-            drafts={drafts}
-            platform={platform}
-            saving={savingList}
-            suggestingCategories={suggestingCategories}
-            publishing={platform === 'basalam' ? publishingBasalam : submittingTorob}
-            basalamConnected={Boolean(basalamConnection)}
-            publishJob={publishJob}
-            publishedProducts={publishedProducts}
-            audios={audioAssets}
-            processing={processing}
-            splittingPhotoKey={splittingPhotoKey}
-            onDraftChange={updateDraft}
-            onUploadVoice={upload}
-            onReprocessWithVoice={processBatch}
-            onGoToFirstIssue={scrollToFirstIssue}
-            onApplyPreparationDays={(days) => {
-              setDrafts((current) =>
-                Object.fromEntries(
-                  items.map((item) => [
-                    item.id,
-                    {
-                      ...(current[item.id] ?? toDraft(item)),
-                      preparation_days: String(days),
-                    },
-                  ]),
-                ),
-              );
-            }}
-            onSelectBasalamCategory={selectBasalamCategory}
-            onPublishBasalam={publishToBasalam}
-            onSubmitTorob={submitToTorob}
-            onSplitPhoto={splitPhoto}
-            onAskStartFresh={() => setFreshConfirmOpen(true)}
-            validationIssues={activeValidationIssues}
-          />
+          {platform && (
+            <PreviewPanel
+              refNode={resultsRef}
+              batch={batch}
+              items={items}
+              drafts={drafts}
+              platform={platform}
+              saving={savingList}
+              suggestingCategories={suggestingCategories}
+              publishing={platform === 'basalam' ? publishingBasalam : submittingTorob}
+              basalamConnected={Boolean(basalamConnection)}
+              publishJob={publishJob}
+              publishedProducts={publishedProducts}
+              audios={audioAssets}
+              processing={processing}
+              splittingPhotoKey={splittingPhotoKey}
+              onDraftChange={updateDraft}
+              onUploadVoice={upload}
+              onReprocessWithVoice={processBatch}
+              onGoToFirstIssue={scrollToFirstIssue}
+              onApplyPreparationDays={(days) => {
+                setDrafts((current) =>
+                  Object.fromEntries(
+                    items.map((item) => [
+                      item.id,
+                      {
+                        ...(current[item.id] ?? toDraft(item)),
+                        preparation_days: String(days),
+                      },
+                    ]),
+                  ),
+                );
+              }}
+              onSelectBasalamCategory={selectBasalamCategory}
+              onPublishBasalam={publishToBasalam}
+              onSubmitTorob={submitToTorob}
+              onSplitPhoto={splitPhoto}
+              onAskStartFresh={() => setFreshConfirmOpen(true)}
+              validationIssues={activeValidationIssues}
+            />
+          )}
         </section>
       )}
 
@@ -903,7 +911,7 @@ function torobStatusLabel(status: string): string {
   return 'در انتظار بررسی';
 }
 
-function PlatformChooser({ platform, onChange }: { platform: Platform; onChange: (platform: Platform) => void }) {
+function PlatformChooser({ platform, onChange }: { platform: Platform | null; onChange: (platform: Platform) => void }) {
   return (
     <section className="platform-chooser" aria-label="انتخاب مسیر فروشگاه">
       <button
@@ -912,7 +920,7 @@ function PlatformChooser({ platform, onChange }: { platform: Platform; onChange:
         onClick={() => onChange('basalam')}
       >
         <span>باسلام</span>
-        <strong>ثبت مستقیم در غرفه</strong>
+        <strong>افزودن محصولات به باسلام</strong>
       </button>
       <button
         className={`platform-card ${platform === 'torob' ? 'active' : ''}`}
@@ -920,7 +928,7 @@ function PlatformChooser({ platform, onChange }: { platform: Platform; onChange:
         onClick={() => onChange('torob')}
       >
         <span>ترب</span>
-        <strong>آماده‌سازی برای اضافه شدن</strong>
+        <strong>افزودن محصولات به ترب</strong>
       </button>
     </section>
   );
@@ -932,12 +940,14 @@ function TorobPanel({
   touched,
   onShopNameChange,
   onContactMobileChange,
+  onChangePlatform,
 }: {
   shopName: string;
   contactMobile: string;
   touched: boolean;
   onShopNameChange: (value: string) => void;
   onContactMobileChange: (value: string) => void;
+  onChangePlatform: () => void;
 }) {
   return (
     <section className="panel torob-panel">
@@ -947,6 +957,9 @@ function TorobPanel({
           <strong>فروشگاه ترب</strong>
           <p>اسم فروشگاهت رو بگو تا درخواستت درست پیگیری شود.</p>
         </div>
+        <button className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
+          تغییر مسیر
+        </button>
       </div>
       <div className="torob-form">
         <label className={`field ${touched && !shopName.trim() ? 'missing' : ''}`}>
@@ -1113,10 +1126,12 @@ function BasalamPanel({
   connection,
   connecting,
   onConnect,
+  onChangePlatform,
 }: {
   connection: PlatformConnection | null;
   connecting: boolean;
   onConnect: () => void;
+  onChangePlatform: () => void;
 }) {
   return (
     <section className="panel basalam-panel">
@@ -1124,6 +1139,9 @@ function BasalamPanel({
         <Store size={18} />
         <strong>غرفه باسلام</strong>
       </div>
+      <button className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
+        تغییر مسیر
+      </button>
       {connection ? (
         <div className="connection-state connected">
           <Check size={17} />

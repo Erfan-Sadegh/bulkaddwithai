@@ -102,6 +102,11 @@ describe('App', () => {
     const { container } = renderWithApi({ uploadAssetCount: 1 });
 
     expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /افزودن محصولات به ترب/ })).toBeInTheDocument();
+    expect(screen.queryByText('عکس محصولات')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+
     expect(screen.getByText('هرچی محصول داری می‌تونی عکسش رو بذاری.')).toBeInTheDocument();
     expect(await screen.findByText('عکس محصولات')).toBeInTheDocument();
     expect(screen.getByText('غرفه باسلام')).toBeInTheDocument();
@@ -127,6 +132,7 @@ describe('App', () => {
     const { container } = renderWithApi({ updateBodies });
 
     await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
       new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
       new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
@@ -159,6 +165,7 @@ describe('App', () => {
     const { container } = renderWithApi({ failProcessing: true, uploadAssetCount: 1, onProcess: () => { processCalls += 1; } });
 
     await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }));
     await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
 
@@ -175,6 +182,7 @@ describe('App', () => {
     const { container } = renderWithApi({ itemOverride: { confidence: 0.93 } });
 
     await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
       new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
       new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
@@ -191,6 +199,7 @@ describe('App', () => {
     const { container } = renderWithApi({ itemOverride: { confidence: 0.51 } });
 
     await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
       new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
       new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
@@ -213,6 +222,7 @@ describe('App', () => {
     });
 
     await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
       new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
       new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
@@ -240,6 +250,7 @@ describe('App', () => {
     });
 
     await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
       new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
       new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
@@ -278,7 +289,7 @@ describe('App', () => {
     });
 
     await screen.findByRole('heading', { level: 1 });
-    await user.click(screen.getByRole('button', { name: /ترب/ }));
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به ترب/ }));
     expect(screen.getByText('فروشگاه ترب')).toBeInTheDocument();
     expect(screen.queryByText('غرفه باسلام')).not.toBeInTheDocument();
 

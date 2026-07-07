@@ -69,11 +69,11 @@ a {
 }
 
 .platform-card {
-  min-height: 76px;
+  min-height: 68px;
   display: grid;
   gap: 4px;
   align-content: center;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
@@ -89,7 +89,8 @@ a {
 }
 
 .platform-card strong {
-  font-size: 1.03rem;
+  font-size: 0.92rem;
+  line-height: 1.7;
 }
 
 .platform-card.active {
@@ -171,6 +172,11 @@ a {
   gap: 10px;
 }
 
+.torob-panel-head > div {
+  min-width: 0;
+  flex: 1;
+}
+
 .torob-panel-head p {
   margin: 4px 0 0;
   color: var(--muted);
@@ -213,7 +219,7 @@ a {
   width: auto;
   min-width: 164px;
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 2;
 }
 
 .connection-state {
@@ -228,9 +234,19 @@ a {
 
 .basalam-panel .connection-state {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 2;
   min-width: 220px;
   justify-self: end;
+}
+
+.change-platform-button {
+  justify-self: end;
+  min-height: 32px;
+}
+
+.basalam-panel .change-platform-button {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .connection-state span {

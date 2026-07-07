@@ -75,6 +75,11 @@ test('photo first flow with mocked API', async ({ page }) => {
 
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await expect(page.getByRole('button', { name: /افزودن محصولات به باسلام/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /افزودن محصولات به ترب/ })).toBeVisible();
+  await expect(page.getByText('عکس محصولات')).toHaveCount(0);
+
+  await page.getByRole('button', { name: /افزودن محصولات به باسلام/ }).click();
   await expect(page.getByText('هرچی محصول داری می‌تونی عکسش رو بذاری.')).toBeVisible();
   await expect(page.getByText('بچ', { exact: true })).toHaveCount(0);
   await expect(page.getByText('انتخاب فروشنده')).toHaveCount(0);
