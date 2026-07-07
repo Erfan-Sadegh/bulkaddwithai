@@ -640,7 +640,6 @@ function VoicePanel({
       <ul className="voice-tips">
         <li>با ویس می‌تونی قیمت، موجودی و توضیحات محصول را هم بگی.</li>
         <li>با شماره عکس محصول هم می‌تونی توضیح بدی؛ مثلا «عکس شماره ۲ قیمتش ۲۰۰ هزار تومنه».</li>
-        <li>اسم و توضیح بهتر کمک می‌کند محصولت در ترب بهتر دیده شود.</li>
       </ul>
       <div className="voice-actions">
         <button className={`button mic-button ${recording ? 'danger' : 'secondary'}`} type="button" onClick={toggleRecording} disabled={disabled || askingMic}>
@@ -1178,7 +1177,7 @@ function ProductCard({
           <input value={draft.title} onChange={(event) => onDraftChange({ title: event.target.value })} />
         </label>
         <label className="field product-desc-field">
-          <span>توضیح کوتاه</span>
+          <span>توضیحات</span>
           <textarea value={draft.description} onChange={(event) => onDraftChange({ description: event.target.value })} />
         </label>
         <label className={`field price-field product-price-field ${missingFields.has('price_toman') ? 'missing' : ''}`}>

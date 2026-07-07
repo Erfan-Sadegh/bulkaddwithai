@@ -796,8 +796,8 @@ a {
 }
 
 .bulk-prep-close {
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   display: inline-grid;
   place-items: center;
   border: 0;
@@ -806,7 +806,7 @@ a {
   color: var(--muted);
   cursor: pointer;
   font: inherit;
-  font-size: 1rem;
+  font-size: 1.35rem;
   line-height: 1;
 }
 
@@ -1252,6 +1252,10 @@ a {
     justify-content: stretch;
   }
 
+  .product-card .result-photo-frame {
+    aspect-ratio: 4 / 3;
+  }
+
   .actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1304,8 +1308,8 @@ a {
 
   .bulk-prep-close {
     position: absolute;
-    top: 12px;
-    inset-inline-end: 12px;
+    top: 9px;
+    inset-inline-end: 9px;
   }
 
   .product-extra-fields {
