@@ -57,8 +57,8 @@ a {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
   align-items: start;
 }
 
@@ -118,7 +118,10 @@ a {
 
 .basalam-panel {
   display: grid;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 14px 16px;
 }
 
 .basalam-title,
@@ -138,6 +141,13 @@ a {
   line-height: 1.7;
 }
 
+.basalam-panel .button.full {
+  width: auto;
+  min-width: 164px;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
 .connection-state {
   min-height: 42px;
   padding: 8px 10px;
@@ -146,6 +156,13 @@ a {
   background: #f2faf7;
   color: var(--primary);
   line-height: 1.6;
+}
+
+.basalam-panel .connection-state {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 220px;
+  justify-self: end;
 }
 
 .connection-state span {
@@ -1195,6 +1212,18 @@ a {
   .preview-head {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .basalam-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .basalam-panel .button.full,
+  .basalam-panel .connection-state {
+    grid-column: 1;
+    grid-row: auto;
+    width: 100%;
+    min-width: 0;
   }
 
   .upload-panel {

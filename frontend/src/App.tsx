@@ -7,7 +7,6 @@ import {
   Mic,
   Pause,
   RotateCcw,
-  Save,
   Send,
   Sparkles,
   SplitSquareHorizontal,
@@ -89,7 +88,6 @@ export function App() {
   const [suggestingCategories, setSuggestingCategories] = useState(false);
   const [connectingBasalam, setConnectingBasalam] = useState(false);
   const [publishingBasalam, setPublishingBasalam] = useState(false);
-  const [savingShop, setSavingShop] = useState(false);
   const [splittingPhotoKey, setSplittingPhotoKey] = useState<string | null>(null);
   const [freshConfirmOpen, setFreshConfirmOpen] = useState(false);
   const [showPublishValidation, setShowPublishValidation] = useState(false);
@@ -271,21 +269,6 @@ export function App() {
     }
   }
 
-  async function saveShopInfo(payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) {
-    if (!seller) return;
-    setSavingShop(true);
-    setError(null);
-    try {
-      const saved = await api.updateSeller(seller.id, payload);
-      setSeller(saved);
-      showToast('اطلاعات فروشگاه ذخیره شد.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'اطلاعات فروشگاه ذخیره نشد.');
-    } finally {
-      setSavingShop(false);
-    }
-  }
-
   async function persistDrafts() {
     setSavingList(true);
     setError(null);
@@ -442,6 +425,14 @@ export function App() {
         <LoadingPanel label="در حال آماده‌سازی صفحه" />
       ) : (
         <section className="workspace">
+          {seller && (
+            <BasalamPanel
+              connection={basalamConnection}
+              connecting={connectingBasalam}
+              onConnect={connectBasalam}
+            />
+          )}
+
           <UploadPanel
             images={imageAssets}
             audios={audioAssets}
@@ -450,17 +441,6 @@ export function App() {
             voiceDisabled={items.length > 0 || uploading || processing}
             onUpload={upload}
           />
-
-          {seller && (
-            <aside className="side-rail">
-              <BasalamPanel
-                connection={basalamConnection}
-                connecting={connectingBasalam}
-                onConnect={connectBasalam}
-              />
-              <ShopInfoPanel seller={seller} saving={savingShop} onSave={saveShopInfo} />
-            </aside>
-          )}
 
           {(processing || job?.status === 'failed') && (
             <ProgressPanel
@@ -710,52 +690,6 @@ function BasalamPanel({
         </>
       )}
     </section>
-  );
-}
-
-function ShopInfoPanel({
-  seller,
-  saving,
-  onSave,
-}: {
-  seller: Seller;
-  saving: boolean;
-  onSave: (payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) => void;
-}) {
-  const [form, setForm] = useState({
-    name: seller.name === 'فروشنده' ? '' : seller.name,
-    mobile: seller.mobile === '-' ? '' : seller.mobile,
-    shop_name: seller.shop_name === 'فروشگاه' ? '' : seller.shop_name,
-  });
-
-  useEffect(() => {
-    setForm({
-      name: seller.name === 'فروشنده' ? '' : seller.name,
-      mobile: seller.mobile === '-' ? '' : seller.mobile,
-      shop_name: seller.shop_name === 'فروشگاه' ? '' : seller.shop_name,
-    });
-  }, [seller]);
-
-  return (
-    <details className="panel optional-panel">
-      <summary>اطلاعات فروشگاه <small className="optional-note">(اختیاری)</small></summary>
-      <label className="field">
-        <span>نام شما</span>
-        <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-      </label>
-      <label className="field">
-        <span>موبایل</span>
-        <input value={toPersianDigits(form.mobile)} inputMode="tel" onChange={(event) => setForm({ ...form, mobile: normalizeDigits(event.target.value) })} />
-      </label>
-      <label className="field">
-        <span>نام فروشگاه</span>
-        <input value={form.shop_name} onChange={(event) => setForm({ ...form, shop_name: event.target.value })} />
-      </label>
-      <button className="button secondary full" type="button" onClick={() => onSave(form)} disabled={saving}>
-        {saving ? <Loader2 className="spin" size={17} /> : <Save size={17} />}
-        ذخیره اطلاعات
-      </button>
-    </details>
   );
 }
 

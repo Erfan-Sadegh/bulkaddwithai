@@ -104,6 +104,11 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
     expect(screen.getByText('هرچی محصول داری می‌تونی عکسش رو بذاری.')).toBeInTheDocument();
     expect(await screen.findByText('عکس محصولات')).toBeInTheDocument();
+    expect(screen.getByText('غرفه باسلام')).toBeInTheDocument();
+    expect(screen.queryByText('اطلاعات فروشگاه')).not.toBeInTheDocument();
+    const basalamPanel = container.querySelector('.basalam-panel');
+    const uploadPanel = container.querySelector('.upload-panel');
+    expect(basalamPanel && uploadPanel && basalamPanel.compareDocumentPosition(uploadPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText('بچ')).not.toBeInTheDocument();
     expect(screen.queryByText('انتخاب فروشنده')).not.toBeInTheDocument();
     expect(screen.queryByText('یکی کردن')).not.toBeInTheDocument();
