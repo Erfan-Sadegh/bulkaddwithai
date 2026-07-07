@@ -29,8 +29,32 @@ type ProductDraft = Pick<ProductItem, 'title' | 'description'> & {
   unit_quantity: string;
 };
 type DraftMap = Record<number, ProductDraft>;
+type RequiredField =
+  | 'title'
+  | 'price_toman'
+  | 'stock'
+  | 'preparation_days'
+  | 'weight_grams'
+  | 'package_weight_grams'
+  | 'unit_quantity'
+  | 'category';
+type PublishValidationIssue = {
+  itemId: number;
+  title: string;
+  fields: RequiredField[];
+};
 const BASALAM_AUTO_CATEGORY_THRESHOLD = 0.62;
 const PHOTO_GROUP_WARNING_THRESHOLD = 0.65;
+const REQUIRED_FIELD_LABELS: Record<RequiredField, string> = {
+  title: 'نام محصول',
+  price_toman: 'قیمت',
+  stock: 'موجودی',
+  preparation_days: 'زمان آماده‌سازی',
+  weight_grams: 'وزن محصول',
+  package_weight_grams: 'وزن با بسته‌بندی',
+  unit_quantity: 'چندتایی می‌فروشی',
+  category: 'دسته‌بندی باسلام',
+};
 
 const jobLabels: Record<Job['step'], string> = {
   upload_ready: 'آماده شروع',
@@ -68,6 +92,7 @@ export function App() {
   const [savingShop, setSavingShop] = useState(false);
   const [splittingPhotoKey, setSplittingPhotoKey] = useState<string | null>(null);
   const [freshConfirmOpen, setFreshConfirmOpen] = useState(false);
+  const [showPublishValidation, setShowPublishValidation] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
@@ -82,6 +107,7 @@ export function App() {
     () => connections.find((connection) => connection.platform === 'basalam' && connection.status === 'connected') ?? null,
     [connections],
   );
+  const publishValidationIssues = useMemo(() => validateItemsForBasalam(items, drafts), [drafts, items]);
 
   useEffect(() => {
     bootstrapWorkspace();
@@ -167,6 +193,7 @@ export function App() {
       setPublishedProducts([]);
       setPublishJob(null);
       setJob(null);
+      setShowPublishValidation(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'صفحه آماده نشد. دوباره تلاش کن.');
     } finally {
@@ -190,6 +217,7 @@ export function App() {
       setPublishedProducts([]);
       setPublishJob(null);
       setJob(null);
+      setShowPublishValidation(false);
       showToast('صفحه برای محصولات جدید آماده شد.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
@@ -199,7 +227,8 @@ export function App() {
 
   async function upload(files: File[]) {
     if (!batch || files.length === 0) return;
-    if (items.length > 0) {
+    const hasImage = files.some((file) => file.type.startsWith('image/'));
+    if (items.length > 0 && hasImage) {
       setError('برای عکس‌های جدید، اول روی «افزودن محصولات جدید» بزن.');
       return;
     }
@@ -230,6 +259,7 @@ export function App() {
       setJob(firstJob);
       if (firstJob.status === 'succeeded') {
         await loadItemsWithCategorySuggestions(batch.id);
+        setShowPublishValidation(false);
         setProcessing(false);
       }
       if (firstJob.status === 'failed') {
@@ -330,11 +360,20 @@ export function App() {
       await connectBasalam();
       return;
     }
+    setShowPublishValidation(true);
+    setPublishJob(null);
+    setPublishedProducts([]);
+    if (publishValidationIssues.length > 0) {
+      return;
+    }
     setPublishingBasalam(true);
     setError(null);
     try {
       const saved = await persistDrafts();
-      if (!saved) return;
+      if (!saved) {
+        setPublishingBasalam(false);
+        return;
+      }
       const started = await api.publishToBasalam(batch.id);
       const firstJob = await api.getPublishJob(started.job_id);
       setPublishJob(firstJob);
@@ -366,6 +405,12 @@ export function App() {
 
   function updateDraft(itemId: number, patch: Partial<ProductDraft>) {
     setDrafts((current) => ({ ...current, [itemId]: { ...current[itemId], ...patch } }));
+  }
+
+  function scrollToFirstIssue() {
+    const firstIssue = publishValidationIssues[0];
+    if (!firstIssue) return;
+    document.querySelector(`[data-product-id="${firstIssue.itemId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function showToast(message: string) {
@@ -446,8 +491,14 @@ export function App() {
             basalamConnected={Boolean(basalamConnection)}
             publishJob={publishJob}
             publishedProducts={publishedProducts}
+            audios={audioAssets}
+            processing={processing}
+            validationIssues={showPublishValidation ? publishValidationIssues : []}
             splittingPhotoKey={splittingPhotoKey}
             onDraftChange={updateDraft}
+            onUploadVoice={upload}
+            onReprocessWithVoice={processBatch}
+            onGoToFirstIssue={scrollToFirstIssue}
             onApplyPreparationDays={(days) => {
               setDrafts((current) =>
                 Object.fromEntries(
@@ -749,8 +800,14 @@ function PreviewPanel({
   basalamConnected,
   publishJob,
   publishedProducts,
+  audios,
+  processing,
+  validationIssues,
   splittingPhotoKey,
   onDraftChange,
+  onUploadVoice,
+  onReprocessWithVoice,
+  onGoToFirstIssue,
   onApplyPreparationDays,
   onSelectBasalamCategory,
   onPublishBasalam,
@@ -767,8 +824,14 @@ function PreviewPanel({
   basalamConnected: boolean;
   publishJob: PublishJob | null;
   publishedProducts: PublishedProduct[];
+  audios: Asset[];
+  processing: boolean;
+  validationIssues: PublishValidationIssue[];
   splittingPhotoKey: string | null;
   onDraftChange: (itemId: number, patch: Partial<ProductDraft>) => void;
+  onUploadVoice: (files: File[]) => void | Promise<void>;
+  onReprocessWithVoice: () => void;
+  onGoToFirstIssue: () => void;
   onApplyPreparationDays: (days: number) => void;
   onSelectBasalamCategory: (itemId: number, category: BasalamCategory) => void;
   onPublishBasalam: () => void;
@@ -776,6 +839,12 @@ function PreviewPanel({
   onAskStartFresh: () => void;
 }) {
   if (items.length === 0 || !batch) return null;
+  const missingByItemId = missingFieldMap(validationIssues);
+  const noMissingFields = new Set<RequiredField>();
+  const hasValidationIssues = validationIssues.length > 0;
+  const publishFailed = Boolean(
+    publishJob && ['partial_failed', 'failed'].includes(publishJob.status),
+  );
   return (
     <section className="preview" ref={(node) => { refNode.current = node; }}>
       <div className="preview-head">
@@ -807,6 +876,7 @@ function PreviewPanel({
             key={item.id}
             item={item}
             draft={drafts[item.id] ?? toDraft(item)}
+            missingFields={missingByItemId.get(item.id) ?? noMissingFields}
             splittingPhotoKey={splittingPhotoKey}
             onDraftChange={(patch) => onDraftChange(item.id, patch)}
             onSelectBasalamCategory={onSelectBasalamCategory}
@@ -816,9 +886,36 @@ function PreviewPanel({
       </div>
 
       <div className="save-dock">
-        <button className="button primary save-list-button" type="button" onClick={onPublishBasalam} disabled={saving || publishing}>
-          {publishing ? <Loader2 className="spin" size={18} /> : basalamConnected ? <Send size={18} /> : <Store size={18} />}
-          {basalamConnected ? 'ثبت در غرفه باسلام' : 'اتصال غرفه باسلام'}
+        {validationIssues.length > 0 && (
+          <PublishValidationPanel
+            issues={validationIssues}
+            audios={audios}
+            processing={processing}
+            onUploadVoice={onUploadVoice}
+            onReprocessWithVoice={onReprocessWithVoice}
+            onGoToFirstIssue={onGoToFirstIssue}
+          />
+        )}
+        {validationIssues.length === 0 && publishFailed && (
+          <DockPublishProblem job={publishJob} products={publishedProducts} />
+        )}
+        <button className="button primary save-list-button" type="button" onClick={onPublishBasalam} disabled={saving || publishing || processing || hasValidationIssues}>
+          {publishing || processing ? (
+            <Loader2 className="spin" size={18} />
+          ) : hasValidationIssues ? (
+            <AlertTriangle size={18} />
+          ) : basalamConnected ? (
+            <Send size={18} />
+          ) : (
+            <Store size={18} />
+          )}
+          {processing
+            ? 'در حال بازبینی لیست'
+            : hasValidationIssues
+              ? 'اول اطلاعات لازم را کامل کن'
+              : basalamConnected
+                ? 'ثبت در غرفه باسلام'
+                : 'اتصال غرفه باسلام'}
         </button>
       </div>
     </section>
@@ -832,20 +929,22 @@ function BulkPreparationBox({ onApply }: { onApply: (days: number) => void }) {
   const days = parseNullableInt(value);
   return (
     <div className="bulk-prep-box">
-      <button className="icon-dismiss" type="button" aria-label="بستن" onClick={() => setVisible(false)}>
+      <button className="bulk-prep-close" type="button" aria-label="بستن" onClick={() => setVisible(false)}>
         ×
       </button>
-      <span>زمان آماده‌سازی همه محصولات</span>
-      <div className="suffix-input compact">
-        <input
-          value={toPersianDigits(value)}
-          inputMode="numeric"
-          placeholder="مثلا ۲"
-          aria-label="زمان آماده‌سازی همه محصولات"
-          onChange={(event) => setValue(normalizeDigits(event.target.value).replace(/[^\d]/g, ''))}
-        />
-        <span>روز</span>
-      </div>
+      <label className="bulk-prep-field">
+        <span>زمان آماده‌سازی همه محصولات</span>
+        <div className="suffix-input compact">
+          <input
+            value={toPersianDigits(value)}
+            inputMode="numeric"
+            placeholder="مثلا ۲"
+            aria-label="زمان آماده‌سازی همه محصولات"
+            onChange={(event) => setValue(normalizeDigits(event.target.value).replace(/[^\d]/g, ''))}
+          />
+          <span>روز</span>
+        </div>
+      </label>
       <button
         className="prep-apply"
         type="button"
@@ -862,6 +961,129 @@ function BulkPreparationBox({ onApply }: { onApply: (days: number) => void }) {
   );
 }
 
+function PublishValidationPanel({
+  issues,
+  audios,
+  processing,
+  onUploadVoice,
+  onReprocessWithVoice,
+  onGoToFirstIssue,
+}: {
+  issues: PublishValidationIssue[];
+  audios: Asset[];
+  processing: boolean;
+  onUploadVoice: (files: File[]) => void | Promise<void>;
+  onReprocessWithVoice: () => void;
+  onGoToFirstIssue: () => void;
+}) {
+  const firstIssue = issues[0];
+  const issueCount = issues.length;
+  const firstFields = firstIssue ? firstIssue.fields.slice(0, 2).map((field) => REQUIRED_FIELD_LABELS[field]).join('، ') : '';
+  return (
+    <div className="dock-message needs-info" role="alert">
+      <div>
+        <strong>اطلاعات لازم کامل نیست.</strong>
+        {firstIssue && (
+          <span>
+            {toPersianDigits(issueCount)} محصول نیاز به تکمیل دارد؛ اول {firstFields}
+            {firstIssue.fields.length > 2 ? ' و چند مورد دیگر' : ''}.
+          </span>
+        )}
+      </div>
+      <div className="dock-message-actions">
+        <button className="link-button" type="button" onClick={onGoToFirstIssue}>
+          اولین مورد
+        </button>
+        <VoiceRefineControl
+          hasAudio={audios.length > 0}
+          processing={processing}
+          onUpload={onUploadVoice}
+          onReprocess={onReprocessWithVoice}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DockPublishProblem({ job, products }: { job: PublishJob | null; products: PublishedProduct[] }) {
+  const failedProducts = products.filter((product) => product.status === 'failed');
+  const failedCount = failedProducts.length || (job?.status === 'partial_failed' || job?.status === 'failed' ? 1 : 0);
+  if (!job || failedCount === 0) return null;
+  return (
+    <div className="dock-message failed" role="alert">
+      <div>
+        <strong>ثبت کامل انجام نشد.</strong>
+        <span>
+          {toPersianDigits(failedCount)} محصول ثبت نشد. اطلاعات محصول‌ها یا وضعیت غرفه را چک کن.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function VoiceRefineControl({
+  hasAudio,
+  processing,
+  onUpload,
+  onReprocess,
+}: {
+  hasAudio: boolean;
+  processing: boolean;
+  onUpload: (files: File[]) => void | Promise<void>;
+  onReprocess: () => void;
+}) {
+  const [recording, setRecording] = useState(false);
+  const [askingMic, setAskingMic] = useState(false);
+  const [localAudioReady, setLocalAudioReady] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const canReprocess = hasAudio || localAudioReady;
+
+  async function toggleRecording() {
+    if (recording) {
+      recorderRef.current?.stop();
+      setRecording(false);
+      return;
+    }
+    setVoiceError(null);
+    setAskingMic(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (event) => chunksRef.current.push(event.data);
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        await onUpload([new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' })]);
+        setLocalAudioReady(true);
+      };
+      recorder.start();
+      recorderRef.current = recorder;
+      setRecording(true);
+    } catch {
+      setVoiceError('اجازه میکروفون داده نشد.');
+    } finally {
+      setAskingMic(false);
+    }
+  }
+
+  return (
+    <div className="voice-refine">
+      <button className="link-button" type="button" onClick={toggleRecording} disabled={askingMic || processing}>
+        {askingMic ? <Loader2 className="spin" size={15} /> : recording ? <Pause size={15} /> : <Mic size={15} />}
+        {recording ? 'توقف ضبط' : 'ضبط صدا'}
+      </button>
+      <button className="link-button primary-link" type="button" onClick={onReprocess} disabled={!canReprocess || processing || recording}>
+        {processing ? <Loader2 className="spin" size={15} /> : <Sparkles size={15} />}
+        بازبینی
+      </button>
+      {voiceError && <span>{voiceError}</span>}
+    </div>
+  );
+}
+
 function PublishStatusPanel({ job, products, items }: { job: PublishJob; products: PublishedProduct[]; items: ProductItem[] }) {
   const published = products.filter((product) => product.status === 'published').length;
   const failedProducts = products.filter((product) => product.status === 'failed');
@@ -870,6 +1092,7 @@ function PublishStatusPanel({ job, products, items }: { job: PublishJob; product
   const failed = failedProducts.length || (hasFailedState ? Math.max(0, items.length - published) : 0);
   const isRunning = job.status === 'running' || job.status === 'queued';
   const itemTitleById = new Map(items.map((item) => [item.id, item.title]));
+  const visibleFailedProducts = failedProducts.slice(0, 6);
   const title = isRunning
     ? publishLabels[job.step]
     : isFailed
@@ -880,7 +1103,9 @@ function PublishStatusPanel({ job, products, items }: { job: PublishJob; product
   const message = isRunning
     ? 'چند لحظه صبر کن.'
     : isFailed
-      ? `${toPersianDigits(published)} محصول ثبت شد، ${toPersianDigits(failed)} محصول خطا دارد.`
+      ? published > 0
+        ? `${toPersianDigits(published)} محصول ثبت شد، ${toPersianDigits(failed)} محصول ثبت نشد.`
+        : `${toPersianDigits(failed)} محصول ثبت نشد.`
       : `${toPersianDigits(published)} محصول با موفقیت ثبت شد.`;
   return (
     <section className={`publish-status ${isFailed ? 'failed' : ''}`} role="status">
@@ -889,12 +1114,18 @@ function PublishStatusPanel({ job, products, items }: { job: PublishJob; product
         <span>{message}</span>
         {failedProducts.length > 0 && (
           <ul className="publish-errors">
-            {failedProducts.slice(0, 3).map((product) => (
+            {visibleFailedProducts.map((product) => (
               <li key={product.id}>
                 <b>{itemTitleById.get(product.batch_item_id) ?? 'محصول'}</b>
                 <span>{humanizePublishError(product.error)}</span>
               </li>
             ))}
+            {failedProducts.length > visibleFailedProducts.length && (
+              <li>
+                <b>{toPersianDigits(failedProducts.length - visibleFailedProducts.length)} محصول دیگر</b>
+                <span>برای دیدن همه، فیلدهای محصولات ناقص را از روی کارت‌ها کامل کن و دوباره ثبت کن.</span>
+              </li>
+            )}
           </ul>
         )}
       </div>
@@ -907,6 +1138,7 @@ function PublishStatusPanel({ job, products, items }: { job: PublishJob; product
 function ProductCard({
   item,
   draft,
+  missingFields,
   splittingPhotoKey,
   onDraftChange,
   onSelectBasalamCategory,
@@ -914,6 +1146,7 @@ function ProductCard({
 }: {
   item: ProductItem;
   draft: ProductDraft;
+  missingFields: Set<RequiredField>;
   splittingPhotoKey: string | null;
   onDraftChange: (patch: Partial<ProductDraft>) => void;
   onSelectBasalamCategory: (itemId: number, category: BasalamCategory) => void;
@@ -944,7 +1177,7 @@ function ProductCard({
   }
 
   return (
-    <article className="panel product-card">
+    <article className={`panel product-card ${missingFields.size > 0 ? 'needs-info' : ''}`} data-product-id={item.id}>
       <div
         className="product-photos"
         onTouchStart={(event) => {
@@ -1006,7 +1239,7 @@ function ProductCard({
       )}
 
       <div className="product-fields">
-        <label className="field product-title-field">
+        <label className={`field product-title-field ${missingFields.has('title') ? 'missing' : ''}`}>
           <span>نام محصول</span>
           <input value={draft.title} onChange={(event) => onDraftChange({ title: event.target.value })} />
         </label>
@@ -1014,7 +1247,7 @@ function ProductCard({
           <span>توضیح کوتاه</span>
           <textarea value={draft.description} onChange={(event) => onDraftChange({ description: event.target.value })} />
         </label>
-        <label className="field price-field product-price-field">
+        <label className={`field price-field product-price-field ${missingFields.has('price_toman') ? 'missing' : ''}`}>
           <span>قیمت</span>
           <div className="price-input">
             <input
@@ -1026,7 +1259,7 @@ function ProductCard({
           </div>
         </label>
         <div className="product-extra-fields" aria-label="جزئیات ثبت در باسلام">
-          <label className="field">
+          <label className={`field ${missingFields.has('stock') ? 'missing' : ''}`}>
             <span>موجودی</span>
             <input
               value={formatIntegerInput(draft.stock)}
@@ -1035,7 +1268,7 @@ function ProductCard({
               onChange={(event) => onDraftChange({ stock: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
             />
           </label>
-          <label className="field">
+          <label className={`field ${missingFields.has('preparation_days') ? 'missing' : ''}`}>
             <span>آماده‌سازی</span>
             <div className="suffix-input">
               <input
@@ -1047,7 +1280,7 @@ function ProductCard({
               <span>روز</span>
             </div>
           </label>
-          <label className="field">
+          <label className={`field ${missingFields.has('weight_grams') ? 'missing' : ''}`}>
             <span>وزن محصول</span>
             <div className="suffix-input">
               <input
@@ -1059,7 +1292,7 @@ function ProductCard({
               <span>گرم</span>
             </div>
           </label>
-          <label className="field">
+          <label className={`field ${missingFields.has('package_weight_grams') ? 'missing' : ''}`}>
             <span>وزن محصول با بسته‌بندی</span>
             <div className="suffix-input">
               <input
@@ -1071,7 +1304,7 @@ function ProductCard({
               <span>گرم</span>
             </div>
           </label>
-          <label className="field">
+          <label className={`field ${missingFields.has('unit_quantity') ? 'missing' : ''}`}>
             <span>چندتایی می‌فروشی؟</span>
             <div className="suffix-input">
               <input
@@ -1086,6 +1319,7 @@ function ProductCard({
         </div>
         <BasalamCategoryPicker
           item={item}
+          hasValidationError={missingFields.has('category')}
           onSelect={(category) => onSelectBasalamCategory(item.id, category)}
         />
       </div>
@@ -1093,7 +1327,15 @@ function ProductCard({
   );
 }
 
-function BasalamCategoryPicker({ item, onSelect }: { item: ProductItem; onSelect: (category: BasalamCategory) => void }) {
+function BasalamCategoryPicker({
+  item,
+  hasValidationError,
+  onSelect,
+}: {
+  item: ProductItem;
+  hasValidationError: boolean;
+  onSelect: (category: BasalamCategory) => void;
+}) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<BasalamCategory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1142,7 +1384,7 @@ function BasalamCategoryPicker({ item, onSelect }: { item: ProductItem; onSelect
   }
 
   return (
-    <div className={`category-picker ${needsCategory ? 'needs-category' : ''}`}>
+    <div className={`category-picker ${needsCategory ? 'needs-category' : ''} ${hasValidationError ? 'missing' : ''}`}>
       <div className="category-current">
         <span>دسته‌بندی باسلام</span>
         {category?.category_id ? (
@@ -1262,6 +1504,52 @@ function toDraft(item: ProductItem): ProductDraft {
   };
 }
 
+function missingFieldMap(issues: PublishValidationIssue[]): Map<number, Set<RequiredField>> {
+  const map = new Map<number, Set<RequiredField>>();
+  for (const issue of issues) {
+    map.set(issue.itemId, new Set(issue.fields));
+  }
+  return map;
+}
+
+function validateItemsForBasalam(items: ProductItem[], drafts: DraftMap): PublishValidationIssue[] {
+  return items
+    .map((item) => {
+      const draft = drafts[item.id] ?? toDraft(item);
+      const fields: RequiredField[] = [];
+      if (!draft.title.trim()) fields.push('title');
+      if (parsePositivePrice(draft.price_toman) === null) fields.push('price_toman');
+      if (parseStockValue(draft.stock) === null) fields.push('stock');
+      const preparationDays = parsePositiveInt(draft.preparation_days);
+      if (preparationDays === null) fields.push('preparation_days');
+      if (parsePositiveInt(draft.weight_grams) === null) fields.push('weight_grams');
+      if (parsePositiveInt(draft.package_weight_grams) === null) fields.push('package_weight_grams');
+      if (parsePositiveInt(draft.unit_quantity) === null) fields.push('unit_quantity');
+      const category = item.basalam_category;
+      const categoryIsReady = Boolean(
+        category?.category_id &&
+        (category.source === 'user' || (category.confidence ?? 0) >= BASALAM_AUTO_CATEGORY_THRESHOLD),
+      );
+      if (!categoryIsReady) fields.push('category');
+      if (
+        preparationDays !== null &&
+        category?.max_preparation_days &&
+        preparationDays > category.max_preparation_days &&
+        !fields.includes('preparation_days')
+      ) {
+        fields.push('preparation_days');
+      }
+      return fields.length > 0
+        ? {
+            itemId: item.id,
+            title: draft.title.trim() || item.title || 'محصول',
+            fields,
+          }
+        : null;
+    })
+    .filter((issue): issue is PublishValidationIssue => Boolean(issue));
+}
+
 function parsePersianPrice(value: string): number | null {
   const normalized = normalizeDigits(value).replace(/[^\d]/g, '');
   return normalized ? Number(normalized) : null;
@@ -1270,6 +1558,21 @@ function parsePersianPrice(value: string): number | null {
 function parseNullableInt(value: string): number | null {
   const normalized = normalizeDigits(value).replace(/[^\d]/g, '');
   return normalized ? Number(normalized) : null;
+}
+
+function parsePositivePrice(value: string): number | null {
+  const parsed = parsePersianPrice(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+function parsePositiveInt(value: string): number | null {
+  const parsed = parseNullableInt(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+function parseStockValue(value: string): number | null {
+  const parsed = parseNullableInt(value);
+  return parsed !== null && parsed >= 0 ? parsed : null;
 }
 
 function humanizePublishError(error: string | null): string {

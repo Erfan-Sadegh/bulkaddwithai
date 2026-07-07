@@ -196,6 +196,32 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'این عکس محصول جداست' })).toBeInTheDocument();
     expect(screen.getByText('عکس‌های این محصول را چک کن.')).toBeInTheDocument();
   });
+
+  it('blocks Basalam publish until required product info is complete', async () => {
+    const user = userEvent.setup();
+    let publishCalled = false;
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      onPublish: () => {
+        publishCalled = true;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+    await screen.findByDisplayValue(item.title);
+    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
+
+    expect(publishCalled).toBe(false);
+    expect(await screen.findByText('اطلاعات لازم کامل نیست.')).toBeInTheDocument();
+    expect(screen.getByText(/محصول نیاز به تکمیل دارد؛ اول موجودی/)).toBeInTheDocument();
+    expect(container.querySelector('.product-card.needs-info')).toBeInTheDocument();
+  });
+
   it('publishes reviewed products to connected Basalam booth', async () => {
     const user = userEvent.setup();
     const updateBodies: Array<Record<string, unknown>> = [];

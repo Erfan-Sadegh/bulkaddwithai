@@ -222,11 +222,12 @@ def test_publish_requires_seller_operational_fields(client: TestClient, batch: d
 
     assert publish.status_code == 202
     job = client.get(f"/publish-jobs/{publish.json()['job_id']}").json()
-    assert job["status"] == "partial_failed"
+    assert job["status"] == "failed"
     published = client.get(f"/batches/{batch['id']}/published-products").json()
     assert published[0]["status"] == "failed"
     assert "موجودی" in published[0]["error"]
     assert fake.created_products == []
+    assert fake.uploaded_paths == []
 
 
 def test_publish_does_not_guess_category_for_ambiguous_product(client: TestClient, batch: dict):
@@ -263,12 +264,13 @@ def test_publish_does_not_guess_category_for_ambiguous_product(client: TestClien
 
     assert publish.status_code == 202
     job = client.get(f"/publish-jobs/{publish.json()['job_id']}").json()
-    assert job["status"] == "partial_failed"
-    assert "محصول ثبت نشد" in job["error"]
+    assert job["status"] == "failed"
+    assert "اطلاعات کامل ندارد" in job["error"]
     published = client.get(f"/batches/{batch['id']}/published-products").json()
     assert published[0]["status"] == "failed"
     assert "دسته‌بندی" in published[0]["error"]
     assert fake.created_products == []
+    assert fake.uploaded_paths == []
 
 
 def test_empty_optional_basalam_status_is_ignored():

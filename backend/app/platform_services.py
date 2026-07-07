@@ -240,6 +240,27 @@ def run_basalam_publish_job(
         categories = get_basalam_leaf_categories(settings, client)
         _suggest_missing_categories(session, settings, categories, batch.items, replace_low_confidence=False)
         session.commit()
+
+        validation_errors = _publish_validation_errors(settings, batch.items)
+        if validation_errors:
+            for item, error in validation_errors:
+                session.add(
+                    PublishedProduct(
+                        batch_item_id=item.id,
+                        publish_job_id=job.id,
+                        connection_id=connection.id,
+                        platform=BASALAM_PLATFORM,
+                        status="failed",
+                        error=error,
+                    )
+                )
+            job.step = "failed"
+            job.status = "failed"
+            job.error = f"{len(validation_errors)} محصول اطلاعات کامل ندارد"
+            job.finished_at = utc_now()
+            session.commit()
+            return
+
         uploaded_by_asset_id = _upload_batch_photos(session, client, connection, batch.assets)
 
         job.step = "creating_products"
@@ -311,6 +332,43 @@ def _upload_batch_photos(
             lambda: client.upload_product_photo(connection, asset.file_path, asset.mime_type),
         )
     return uploaded
+
+
+def _publish_validation_errors(settings: Settings, items: list[BatchItem]) -> list[tuple[BatchItem, str]]:
+    errors: list[tuple[BatchItem, str]] = []
+    for item in items:
+        error = _publish_validation_error(settings, item)
+        if error:
+            errors.append((item, error))
+    return errors
+
+
+def _publish_validation_error(settings: Settings, item: BatchItem) -> str | None:
+    if item.price_toman is None:
+        return "برای ثبت محصول در باسلام، قیمت لازم است."
+    if item.stock is None:
+        return "برای ثبت محصول در باسلام، موجودی را وارد کن."
+    if item.preparation_days is None:
+        return "برای ثبت محصول در باسلام، زمان آماده‌سازی را وارد کن."
+    if item.weight_grams is None:
+        return "برای ثبت محصول در باسلام، وزن محصول را به گرم وارد کن."
+    if item.package_weight_grams is None:
+        return "برای ثبت محصول در باسلام، وزن محصول با بسته‌بندی را به گرم وارد کن."
+    if item.unit_quantity is None:
+        return "برای ثبت محصول در باسلام، مشخص کن هر فروش چندتا محصول دارد."
+    category_data = _publishable_category_data(settings, item)
+    if not category_data or category_data.category_id is None:
+        return "برای ثبت محصول در باسلام، دسته‌بندی این محصول را انتخاب کن."
+    if (
+        category_data.category_max_preparation_days
+        and item.preparation_days > category_data.category_max_preparation_days
+    ):
+        return f"زمان آماده‌سازی این دسته‌بندی حداکثر {category_data.category_max_preparation_days} روز است."
+    if not category_data.category_unit_type_id:
+        return "برای ثبت محصول در باسلام، واحد فروش این دسته‌بندی مشخص نیست. دسته‌بندی را اصلاح کن."
+    if not item.asset_links:
+        return "برای ثبت محصول در باسلام، حداقل یک عکس لازم است."
+    return None
 
 
 def _publish_item(
