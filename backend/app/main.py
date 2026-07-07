@@ -1,9 +1,9 @@
 from collections.abc import Generator
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -12,6 +12,7 @@ from .ai import get_ai_provider
 from .config import Settings, get_settings
 from .database import create_tables, make_engine, make_session_factory
 from .integrations.basalam import BasalamClient
+from .integrations.torob import TorobClient
 from .models import Asset, Batch, ProcessingJob, PublishJob, Seller
 from .platform_services import (
     create_basalam_oauth_url,
@@ -45,6 +46,13 @@ from .schemas import (
     SellerPatch,
     SellerRead,
     SplitItemRequest,
+    AdminLoginRequest,
+    AdminLoginResponse,
+    TorobPublishRequest,
+    TorobSubmissionCreate,
+    TorobSubmissionPatch,
+    TorobSubmissionRead,
+    TorobSubmissionStartResponse,
 )
 from .services import (
     create_batch,
@@ -61,6 +69,13 @@ from .services import (
     update_item,
     update_seller,
 )
+from .torob_services import (
+    create_torob_submission,
+    get_torob_submission,
+    list_torob_submissions,
+    patch_torob_submission,
+    publish_torob_submission,
+)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -74,6 +89,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.session_factory = session_factory
     app.state.basalam_client_factory = lambda app_settings: BasalamClient(app_settings)
+    app.state.torob_client_factory = lambda app_settings: TorobClient(app_settings)
 
     app.add_middleware(
         CORSMiddleware,
@@ -97,9 +113,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def basalam_client_factory():
         return app.state.basalam_client_factory(settings)
 
+    def torob_client_factory():
+        return app.state.torob_client_factory(settings)
+
+    def require_admin(x_admin_password: str | None = Header(default=None)):
+        if not settings.admin_password:
+            raise HTTPException(status_code=503, detail="Admin password is not configured")
+        if x_admin_password != settings.admin_password:
+            raise HTTPException(status_code=401, detail="Admin password is invalid")
+
     @app.get("/health")
     def health():
         return {"ok": True}
+
+    @app.post("/admin/login", response_model=AdminLoginResponse)
+    def post_admin_login(payload: AdminLoginRequest):
+        if not settings.admin_password:
+            raise HTTPException(status_code=503, detail="Admin password is not configured")
+        if payload.password != settings.admin_password:
+            raise HTTPException(status_code=401, detail="Admin password is invalid")
+        return AdminLoginResponse(ok=True)
 
     @app.post("/sellers", response_model=SellerRead, status_code=201)
     def post_seller(payload: SellerCreate, session: Session = Depends(get_session)):
@@ -294,6 +327,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return PublishStartResponse(job_id=job.id)
 
+    @app.post("/batches/{batch_id}/torob-submissions", response_model=TorobSubmissionStartResponse, status_code=201)
+    def post_torob_submission(
+        batch_id: int, payload: TorobSubmissionCreate, session: Session = Depends(get_session)
+    ):
+        submission = create_torob_submission(session, batch_id, payload.shop_name, payload.contact_mobile)
+        return TorobSubmissionStartResponse(
+            id=submission.id,
+            status=submission.status,
+            message="درخواستت ثبت شد. به زودی برای اضافه شدن محصولات به ترب بررسی می‌شود.",
+        )
+
+    @app.get("/admin/torob-submissions", response_model=list[TorobSubmissionRead], dependencies=[Depends(require_admin)])
+    def get_admin_torob_submissions(status: str | None = None, session: Session = Depends(get_session)):
+        return list_torob_submissions(session, status)
+
+    @app.get("/admin/torob-submissions/{submission_id}", response_model=TorobSubmissionRead, dependencies=[Depends(require_admin)])
+    def get_admin_torob_submission(submission_id: int, session: Session = Depends(get_session)):
+        return get_torob_submission(session, submission_id)
+
+    @app.patch("/admin/torob-submissions/{submission_id}", response_model=TorobSubmissionRead, dependencies=[Depends(require_admin)])
+    def patch_admin_torob_submission(
+        submission_id: int, payload: TorobSubmissionPatch, session: Session = Depends(get_session)
+    ):
+        return patch_torob_submission(session, submission_id, payload)
+
+    @app.post("/admin/torob-submissions/{submission_id}/publish", response_model=TorobSubmissionRead, dependencies=[Depends(require_admin)])
+    def post_admin_torob_publish(
+        submission_id: int, payload: TorobPublishRequest, session: Session = Depends(get_session)
+    ):
+        return publish_torob_submission(session, torob_client_factory(), submission_id, payload)
+
     @app.get("/publish-jobs/{job_id}", response_model=PublishJobRead)
     def get_publish_job(job_id: int, session: Session = Depends(get_session)):
         job = session.get(PublishJob, job_id)
@@ -306,6 +370,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return list_published_products(session, batch_id)
 
     if settings.frontend_dist_dir and settings.frontend_dist_dir.exists():
+        @app.get("/admin")
+        @app.get("/admin/{path:path}")
+        def get_admin_frontend(path: str = ""):
+            return FileResponse(settings.frontend_dist_dir / "index.html")
+
         app.mount("/", StaticFiles(directory=Path(settings.frontend_dist_dir), html=True), name="frontend")
 
     return app

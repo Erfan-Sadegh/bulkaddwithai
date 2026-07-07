@@ -265,6 +265,41 @@ describe('App', () => {
     });
     await waitFor(() => expect(container.querySelector('.publish-status')).toBeInTheDocument());
   });
+
+  it('creates a Torob review request without touching Basalam publish flow', async () => {
+    const user = userEvent.setup();
+    const torobBodies: Array<Record<string, unknown>> = [];
+    let categorySuggestCalled = false;
+    const { container } = renderWithApi({
+      torobBodies,
+      onCategorySuggest: () => {
+        categorySuggestCalled = true;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /ترب/ }));
+    expect(screen.getByText('فروشگاه ترب')).toBeInTheDocument();
+    expect(screen.queryByText('غرفه باسلام')).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('اسم فروشگاه'), 'فروشگاه من');
+    await user.type(screen.getByLabelText('شماره تماس'), '09120000000');
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+
+    expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
+    expect(screen.queryByText('دسته‌بندی باسلام')).not.toBeInTheDocument();
+    expect(categorySuggestCalled).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'ثبت درخواست ترب' }));
+
+    await waitFor(() => expect(torobBodies).toHaveLength(1));
+    expect(torobBodies[0]).toEqual({ shop_name: 'فروشگاه من', contact_mobile: '09120000000' });
+    expect(await screen.findByRole('dialog')).toHaveTextContent('درخواست ترب ثبت شد');
+  });
 });
 
 function renderWithApi({
@@ -275,6 +310,8 @@ function renderWithApi({
   platformConnections = [],
   onProcess,
   onPublish,
+  onCategorySuggest,
+  torobBodies = [],
 }: {
   failProcessing?: boolean;
   uploadAssetCount?: number;
@@ -283,6 +320,8 @@ function renderWithApi({
   platformConnections?: Array<typeof basalamConnection>;
   onProcess?: () => void;
   onPublish?: () => void;
+  onCategorySuggest?: () => void;
+  torobBodies?: Array<Record<string, unknown>>;
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
   vi.stubGlobal(
@@ -305,6 +344,7 @@ function renderWithApi({
       if (path === '/jobs/31') return jsonResponse({ id: 31, batch_id: 10, status: 'failed', step: 'failed', error: 'پردازش کامل نشد.' });
       if (path === '/batches/10/items') return jsonResponse([responseItem]);
       if (path === '/batches/10/categories/basalam/suggest' && method === 'POST') {
+        onCategorySuggest?.();
         return jsonResponse([
           {
             ...responseItem,
@@ -380,6 +420,11 @@ function renderWithApi({
             updated_at: now,
           },
         ]);
+      }
+      if (path === '/batches/10/torob-submissions' && method === 'POST') {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        torobBodies.push(body);
+        return jsonResponse({ id: 701, status: 'pending', message: 'درخواستت ثبت شد. به زودی بررسی می‌شود.' }, 201);
       }
 
       return jsonResponse({});

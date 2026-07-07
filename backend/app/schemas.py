@@ -236,3 +236,79 @@ class PublishedProductRead(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TorobSubmissionCreate(BaseModel):
+    shop_name: str = Field(min_length=1, max_length=220)
+    contact_mobile: str = Field(min_length=5, max_length=32)
+
+
+class TorobSubmissionStartResponse(BaseModel):
+    id: int
+    status: str
+    message: str
+
+
+class TorobSubmissionItemRead(BaseModel):
+    id: int
+    batch_item_id: int
+    title: str
+    description: str
+    price: int | None = None
+    base_product_rk: str | None = None
+    status: str
+    error: str | None = None
+    image_numbers: list[int]
+    image_urls: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class TorobSubmissionRead(BaseModel):
+    id: int
+    seller_id: int
+    batch_id: int
+    shop_name: str
+    contact_mobile: str
+    status: str
+    shop_id: int | None = None
+    admin_note: str | None = None
+    error: str | None = None
+    response_metadata: dict | None = None
+    items: list[TorobSubmissionItemRead]
+    created_at: datetime
+    updated_at: datetime
+
+
+class TorobSubmissionItemPatch(BaseModel):
+    base_product_rk: str | None = Field(default=None, max_length=80)
+    price: int | None = Field(default=None, ge=0)
+
+
+class TorobSubmissionItemPatchWithId(TorobSubmissionItemPatch):
+    id: int
+
+
+class TorobSubmissionPatch(BaseModel):
+    shop_id: int | None = Field(default=None, ge=1)
+    admin_note: str | None = None
+    items: list[TorobSubmissionItemPatchWithId] | None = None
+
+
+class TorobPublishItem(BaseModel):
+    id: int
+    base_product_rk: str = Field(min_length=1, max_length=80)
+    price: int = Field(ge=0)
+
+
+class TorobPublishRequest(BaseModel):
+    shop_id: int = Field(ge=1)
+    items: list[TorobPublishItem] = Field(min_length=1, max_length=100)
+
+
+class AdminLoginResponse(BaseModel):
+    ok: bool
+
+
+class AdminLoginRequest(BaseModel):
+    password: str

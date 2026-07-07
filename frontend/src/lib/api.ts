@@ -1,4 +1,15 @@
-import type { Asset, BasalamCategory, Batch, Job, PlatformConnection, ProductItem, PublishedProduct, PublishJob, Seller } from './types';
+import type {
+  Asset,
+  BasalamCategory,
+  Batch,
+  Job,
+  PlatformConnection,
+  ProductItem,
+  PublishedProduct,
+  PublishJob,
+  Seller,
+  TorobSubmission,
+} from './types';
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '');
 
@@ -99,4 +110,37 @@ export const api = {
     request<{ job_id: number }>(`/batches/${batchId}/publish/basalam`, { method: 'POST', body: JSON.stringify({}) }),
   getPublishJob: (jobId: number) => request<PublishJob>(`/publish-jobs/${jobId}`),
   listPublishedProducts: (batchId: number) => request<PublishedProduct[]>(`/batches/${batchId}/published-products`),
+  createTorobSubmission: (batchId: number, payload: { shop_name: string; contact_mobile: string }) =>
+    request<{ id: number; status: string; message: string }>(`/batches/${batchId}/torob-submissions`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  adminLogin: (password: string) =>
+    request<{ ok: boolean }>('/admin/login', { method: 'POST', body: JSON.stringify({ password }) }),
+  listTorobSubmissions: (password: string) =>
+    request<TorobSubmission[]>('/admin/torob-submissions', { headers: { 'X-Admin-Password': password } }),
+  patchTorobSubmission: (
+    password: string,
+    submissionId: number,
+    payload: {
+      shop_id?: number | null;
+      admin_note?: string | null;
+      items?: Array<{ id: number; base_product_rk?: string | null; price?: number | null }>;
+    },
+  ) =>
+    request<TorobSubmission>(`/admin/torob-submissions/${submissionId}`, {
+      method: 'PATCH',
+      headers: { 'X-Admin-Password': password },
+      body: JSON.stringify(payload),
+    }),
+  publishTorobSubmission: (
+    password: string,
+    submissionId: number,
+    payload: { shop_id: number; items: Array<{ id: number; base_product_rk: string; price: number }> },
+  ) =>
+    request<TorobSubmission>(`/admin/torob-submissions/${submissionId}/publish`, {
+      method: 'POST',
+      headers: { 'X-Admin-Password': password },
+      body: JSON.stringify(payload),
+    }),
 };

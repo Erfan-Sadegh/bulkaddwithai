@@ -62,6 +62,41 @@ a {
   align-items: start;
 }
 
+.platform-chooser {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.platform-card {
+  min-height: 76px;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  text-align: right;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(32, 33, 36, 0.035);
+}
+
+.platform-card span {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.platform-card strong {
+  font-size: 1.03rem;
+}
+
+.platform-card.active {
+  border-color: #b8d6d0;
+  background: #f6fbf9;
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -122,6 +157,39 @@ a {
   align-items: center;
   gap: 6px 14px;
   padding: 14px 16px;
+}
+
+.torob-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.torob-panel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.torob-panel-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.torob-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.torob-form .field {
+  margin: 0;
+}
+
+.torob-form small {
+  color: var(--muted);
+  line-height: 1.7;
 }
 
 .basalam-title,
@@ -551,6 +619,11 @@ a {
   box-shadow: 0 8px 20px rgba(32, 33, 36, 0.045);
   display: grid;
   grid-template-rows: auto auto 1fr;
+}
+
+.product-card.torob-card {
+  max-width: 420px;
+  justify-self: stretch;
 }
 
 .product-card.needs-info {
@@ -1182,6 +1255,145 @@ a {
   margin-top: 18px;
 }
 
+.admin-shell {
+  max-width: 1040px;
+}
+
+.admin-login {
+  width: min(420px, 100%);
+  margin: 80px auto 0;
+  padding: 20px;
+}
+
+.admin-login h1 {
+  margin: 0 0 18px;
+  font-size: 1.35rem;
+}
+
+.admin-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.admin-hero p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.admin-list {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-submission {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.admin-submission.failed {
+  border-color: #f2d8d3;
+}
+
+.admin-submission-head,
+.admin-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-submission-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-submission-head span {
+  color: var(--muted);
+}
+
+.status-pill {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid #dfe8e5;
+  border-radius: 999px;
+  background: #f7fbfa;
+  color: var(--primary) !important;
+  font-size: 0.84rem;
+}
+
+.admin-submission-meta {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.admin-submission-meta .field {
+  margin: 0;
+}
+
+.admin-products {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-product {
+  display: grid;
+  grid-template-columns: 126px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #edf1f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.admin-product-images {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  align-content: start;
+}
+
+.admin-product-images img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: #f5f6f5;
+}
+
+.admin-product-images img:first-child {
+  grid-column: 1 / -1;
+}
+
+.admin-product-body {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.admin-product-body p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.admin-product-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 10px;
+}
+
+.admin-product-fields .field {
+  margin: 0;
+}
+
 .spin {
   animation: spin 1s linear infinite;
 }
@@ -1224,6 +1436,30 @@ a {
     grid-row: auto;
     width: 100%;
     min-width: 0;
+  }
+
+  .torob-form,
+  .admin-submission-meta,
+  .admin-product,
+  .admin-product-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-hero {
+    display: grid;
+    text-align: right;
+  }
+
+  .admin-hero .button {
+    width: 100%;
+  }
+
+  .admin-product-images {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-product-images img:first-child {
+    grid-column: auto;
   }
 
   .upload-panel {

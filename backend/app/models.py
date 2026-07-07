@@ -26,6 +26,7 @@ class Seller(Base):
     platform_connections: Mapped[list["PlatformConnection"]] = relationship(
         back_populates="seller", cascade="all, delete-orphan"
     )
+    torob_submissions: Mapped[list["TorobSubmission"]] = relationship(back_populates="seller")
 
 
 class Batch(Base):
@@ -47,6 +48,7 @@ class Batch(Base):
     )
     jobs: Mapped[list["ProcessingJob"]] = relationship(back_populates="batch")
     publish_jobs: Mapped[list["PublishJob"]] = relationship(back_populates="batch")
+    torob_submissions: Mapped[list["TorobSubmission"]] = relationship(back_populates="batch")
     items: Mapped[list["BatchItem"]] = relationship(
         back_populates="batch", cascade="all, delete-orphan"
     )
@@ -113,6 +115,53 @@ class BatchItem(Base):
         back_populates="batch_item", cascade="all, delete-orphan"
     )
     published_products: Mapped[list["PublishedProduct"]] = relationship(back_populates="batch_item")
+    torob_submission_items: Mapped[list["TorobSubmissionItem"]] = relationship(back_populates="batch_item")
+
+
+class TorobSubmission(Base):
+    __tablename__ = "torob_submissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    seller_id: Mapped[int] = mapped_column(ForeignKey("sellers.id"), nullable=False, index=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), nullable=False, index=True)
+    shop_name: Mapped[str] = mapped_column(String(220), nullable=False)
+    contact_mobile: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    shop_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    admin_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    seller: Mapped[Seller] = relationship(back_populates="torob_submissions")
+    batch: Mapped[Batch] = relationship(back_populates="torob_submissions")
+    items: Mapped[list["TorobSubmissionItem"]] = relationship(
+        back_populates="submission", cascade="all, delete-orphan", order_by="TorobSubmissionItem.id"
+    )
+
+
+class TorobSubmissionItem(Base):
+    __tablename__ = "torob_submission_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("torob_submissions.id"), nullable=False, index=True)
+    batch_item_id: Mapped[int] = mapped_column(ForeignKey("batch_items.id"), nullable=False, index=True)
+    base_product_rk: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    submission: Mapped[TorobSubmission] = relationship(back_populates="items")
+    batch_item: Mapped[BatchItem] = relationship(back_populates="torob_submission_items")
 
 
 class BatchItemAsset(Base):

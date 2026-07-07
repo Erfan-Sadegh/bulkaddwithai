@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     basalam_category_suggestion_threshold: float = Field(
         default=0.62, validation_alias="BASALAM_CATEGORY_SUGGESTION_THRESHOLD"
     )
+    admin_password: str | None = Field(default=None, validation_alias="ADMIN_PASSWORD")
+    torob_bulk_add_url: str = Field(
+        default="https://api.torob.com/panel/offline-shop/product-in-store/searched/bulk-add/",
+        validation_alias="TOROB_BULK_ADD_URL",
+    )
+    torob_bulk_add_key: str | None = Field(default=None, validation_alias="TOROB_BULK_ADD_KEY")
+    torob_auth_header_name: str = Field(default="Authorization", validation_alias="TOROB_AUTH_HEADER_NAME")
+    torob_auth_header_value: str | None = Field(default=None, validation_alias="TOROB_AUTH_HEADER_VALUE")
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     @field_validator("basalam_default_status", mode="before")

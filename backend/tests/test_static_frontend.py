@@ -22,9 +22,12 @@ def test_frontend_static_files_are_served_after_api_routes(tmp_path: Path):
     client = TestClient(app)
 
     root = client.get("/")
+    admin = client.get("/admin")
     health = client.get("/health")
 
     assert root.status_code == 200
     assert '<div id="root"></div>' in root.text
+    assert admin.status_code == 200
+    assert '<div id="root"></div>' in admin.text
     assert health.status_code == 200
     assert health.json() == {"ok": True}

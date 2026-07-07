@@ -124,3 +124,34 @@ export type PublishedProduct = {
   created_at: string;
   updated_at: string;
 };
+
+export type TorobSubmissionItem = {
+  id: number;
+  batch_item_id: number;
+  title: string;
+  description: string;
+  price: number | null;
+  base_product_rk: string | null;
+  status: 'pending' | 'submitted' | 'failed' | string;
+  error: string | null;
+  image_numbers: number[];
+  image_urls: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type TorobSubmission = {
+  id: number;
+  seller_id: number;
+  batch_id: number;
+  shop_name: string;
+  contact_mobile: string;
+  status: 'pending' | 'submitting' | 'submitted' | 'failed' | string;
+  shop_id: number | null;
+  admin_note: string | null;
+  error: string | null;
+  response_metadata: Record<string, unknown> | null;
+  items: TorobSubmissionItem[];
+  created_at: string;
+  updated_at: string;
+};

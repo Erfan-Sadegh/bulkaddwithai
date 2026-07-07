@@ -17,8 +17,20 @@ import type { ChangeEvent, MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { API_BASE, api } from './lib/api';
-import type { Asset, BasalamCategory, Batch, Job, PlatformConnection, ProductItem, PublishedProduct, PublishJob, Seller } from './lib/types';
+import type {
+  Asset,
+  BasalamCategory,
+  Batch,
+  Job,
+  PlatformConnection,
+  ProductItem,
+  PublishedProduct,
+  PublishJob,
+  Seller,
+  TorobSubmission,
+} from './lib/types';
 
+type Platform = 'basalam' | 'torob';
 type ProductDraft = Pick<ProductItem, 'title' | 'description'> & {
   price_toman: string;
   stock: string;
@@ -72,7 +84,13 @@ const publishLabels: Record<PublishJob['step'], string> = {
 };
 
 export function App() {
+  if (window.location.pathname.startsWith('/admin')) return <AdminApp />;
+  return <MainApp />;
+}
+
+function MainApp() {
   const [seller, setSeller] = useState<Seller | null>(null);
+  const [platform, setPlatform] = useState<Platform>('basalam');
   const [batch, setBatch] = useState<Batch | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [items, setItems] = useState<ProductItem[]>([]);
@@ -88,6 +106,11 @@ export function App() {
   const [suggestingCategories, setSuggestingCategories] = useState(false);
   const [connectingBasalam, setConnectingBasalam] = useState(false);
   const [publishingBasalam, setPublishingBasalam] = useState(false);
+  const [torobShopName, setTorobShopName] = useState('');
+  const [torobContactMobile, setTorobContactMobile] = useState('');
+  const [submittingTorob, setSubmittingTorob] = useState(false);
+  const [torobInfoTouched, setTorobInfoTouched] = useState(false);
+  const [torobSuccessMessage, setTorobSuccessMessage] = useState<string | null>(null);
   const [splittingPhotoKey, setSplittingPhotoKey] = useState<string | null>(null);
   const [freshConfirmOpen, setFreshConfirmOpen] = useState(false);
   const [showPublishValidation, setShowPublishValidation] = useState(false);
@@ -106,6 +129,7 @@ export function App() {
     [connections],
   );
   const publishValidationIssues = useMemo(() => validateItemsForBasalam(items, drafts), [drafts, items]);
+  const activeValidationIssues = platform === 'basalam' && showPublishValidation ? publishValidationIssues : [];
 
   useEffect(() => {
     bootstrapWorkspace();
@@ -118,7 +142,7 @@ export function App() {
         const nextJob = await api.getJob(job.id);
         setJob(nextJob);
         if (nextJob.status === 'succeeded' && batch) {
-          await loadItemsWithCategorySuggestions(batch.id);
+          await loadItemsForPlatform(batch.id, platform);
           setProcessing(false);
         }
         if (nextJob.status === 'failed') {
@@ -130,7 +154,7 @@ export function App() {
       }
     }, 900);
     return () => window.clearInterval(timer);
-  }, [batch, job]);
+  }, [batch, job, platform]);
 
   useEffect(() => {
     if (!publishJob || ['succeeded', 'partial_failed', 'failed'].includes(publishJob.status)) return;
@@ -192,6 +216,7 @@ export function App() {
       setPublishJob(null);
       setJob(null);
       setShowPublishValidation(false);
+      setTorobSuccessMessage(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'صفحه آماده نشد. دوباره تلاش کن.');
     } finally {
@@ -216,6 +241,7 @@ export function App() {
       setPublishJob(null);
       setJob(null);
       setShowPublishValidation(false);
+      setTorobSuccessMessage(null);
       showToast('صفحه برای محصولات جدید آماده شد.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
@@ -256,7 +282,7 @@ export function App() {
       const firstJob = await api.getJob(result.job_id);
       setJob(firstJob);
       if (firstJob.status === 'succeeded') {
-        await loadItemsWithCategorySuggestions(batch.id);
+        await loadItemsForPlatform(batch.id, platform);
         setShowPublishValidation(false);
         setProcessing(false);
       }
@@ -297,6 +323,15 @@ export function App() {
     } finally {
       setSavingList(false);
     }
+  }
+
+  async function loadItemsForPlatform(batchId: number, targetPlatform: Platform) {
+    if (targetPlatform === 'torob') {
+      setSuggestingCategories(false);
+      setItems(await api.listItems(batchId));
+      return;
+    }
+    await loadItemsWithCategorySuggestions(batchId);
   }
 
   async function loadItemsWithCategorySuggestions(batchId: number) {
@@ -370,6 +405,39 @@ export function App() {
     }
   }
 
+  async function submitToTorob() {
+    if (!batch) return;
+    setTorobInfoTouched(true);
+    setPublishJob(null);
+    setPublishedProducts([]);
+    const shopName = torobShopName.trim();
+    const contactMobile = torobContactMobile.trim();
+    if (!shopName || !contactMobile) {
+      setError('برای ترب، اسم فروشگاه و شماره تماس را وارد کن.');
+      document.querySelector('.torob-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    setSubmittingTorob(true);
+    setError(null);
+    try {
+      const saved = await persistDrafts();
+      if (!saved) {
+        setSubmittingTorob(false);
+        return;
+      }
+      const created = await api.createTorobSubmission(batch.id, {
+        shop_name: shopName,
+        contact_mobile: contactMobile,
+      });
+      setTorobSuccessMessage(created.message);
+      showToast('درخواست ترب ثبت شد.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'درخواست ترب ثبت نشد. دوباره تلاش کن.');
+    } finally {
+      setSubmittingTorob(false);
+    }
+  }
+
   async function splitPhoto(itemId: number, assetId: number) {
     if (!batch) return;
     const key = `${itemId}-${assetId}`;
@@ -388,6 +456,14 @@ export function App() {
 
   function updateDraft(itemId: number, patch: Partial<ProductDraft>) {
     setDrafts((current) => ({ ...current, [itemId]: { ...current[itemId], ...patch } }));
+  }
+
+  function selectPlatform(nextPlatform: Platform) {
+    setPlatform(nextPlatform);
+    setError(null);
+    setShowPublishValidation(false);
+    setPublishJob(null);
+    setPublishedProducts([]);
   }
 
   function scrollToFirstIssue() {
@@ -425,11 +501,23 @@ export function App() {
         <LoadingPanel label="در حال آماده‌سازی صفحه" />
       ) : (
         <section className="workspace">
-          {seller && (
+          <PlatformChooser platform={platform} onChange={selectPlatform} />
+
+          {seller && platform === 'basalam' && (
             <BasalamPanel
               connection={basalamConnection}
               connecting={connectingBasalam}
               onConnect={connectBasalam}
+            />
+          )}
+
+          {platform === 'torob' && (
+            <TorobPanel
+              shopName={torobShopName}
+              contactMobile={torobContactMobile}
+              touched={torobInfoTouched}
+              onShopNameChange={setTorobShopName}
+              onContactMobileChange={setTorobContactMobile}
             />
           )}
 
@@ -465,15 +553,15 @@ export function App() {
             batch={batch}
             items={items}
             drafts={drafts}
+            platform={platform}
             saving={savingList}
             suggestingCategories={suggestingCategories}
-            publishing={publishingBasalam}
+            publishing={platform === 'basalam' ? publishingBasalam : submittingTorob}
             basalamConnected={Boolean(basalamConnection)}
             publishJob={publishJob}
             publishedProducts={publishedProducts}
             audios={audioAssets}
             processing={processing}
-            validationIssues={showPublishValidation ? publishValidationIssues : []}
             splittingPhotoKey={splittingPhotoKey}
             onDraftChange={updateDraft}
             onUploadVoice={upload}
@@ -494,8 +582,10 @@ export function App() {
             }}
             onSelectBasalamCategory={selectBasalamCategory}
             onPublishBasalam={publishToBasalam}
+            onSubmitTorob={submitToTorob}
             onSplitPhoto={splitPhoto}
             onAskStartFresh={() => setFreshConfirmOpen(true)}
+            validationIssues={activeValidationIssues}
           />
         </section>
       )}
@@ -511,7 +601,370 @@ export function App() {
         />
       )}
 
+      {torobSuccessMessage && (
+        <ConfirmDialog
+          title="درخواست ترب ثبت شد"
+          body={torobSuccessMessage}
+          confirmLabel="باشه"
+          onConfirm={() => setTorobSuccessMessage(null)}
+        />
+      )}
+
     </main>
+  );
+}
+
+function AdminApp() {
+  const [password, setPassword] = useState(() => window.sessionStorage.getItem('bulkadd_admin_password') ?? '');
+  const [loggedIn, setLoggedIn] = useState(() => Boolean(window.sessionStorage.getItem('bulkadd_admin_password')));
+  const [submissions, setSubmissions] = useState<TorobSubmission[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (loggedIn) loadSubmissions();
+  }, [loggedIn]);
+
+  async function login() {
+    setLoading(true);
+    setError(null);
+    try {
+      await api.adminLogin(password);
+      window.sessionStorage.setItem('bulkadd_admin_password', password);
+      setLoggedIn(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ورود انجام نشد.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadSubmissions() {
+    setLoading(true);
+    setError(null);
+    try {
+      setSubmissions(await api.listTorobSubmissions(password));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'درخواست‌های ترب خوانده نشد.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function updateSubmission(nextSubmission: TorobSubmission) {
+    setSubmissions((current) => current.map((submission) => (submission.id === nextSubmission.id ? nextSubmission : submission)));
+  }
+
+  function showToast(message: string) {
+    setToast(message);
+    window.setTimeout(() => setToast(null), 1800);
+  }
+
+  if (!loggedIn) {
+    return (
+      <main className="app-shell admin-shell">
+        <section className="panel admin-login">
+          <h1>ادمین درخواست‌های ترب</h1>
+          <label className="field">
+            <span>رمز ورود</span>
+            <input value={password} type="password" onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') login(); }} />
+          </label>
+          {error && <div className="error inline">{error}</div>}
+          <button className="button primary full" type="button" onClick={login} disabled={loading || !password.trim()}>
+            {loading ? <Loader2 className="spin" size={17} /> : <Store size={17} />}
+            ورود
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="app-shell admin-shell">
+      <header className="hero admin-hero">
+        <div>
+          <h1>درخواست‌های ترب</h1>
+          <p>shop_id و شناسه محصول ترب را وارد کن، بعد ارسال کن.</p>
+        </div>
+        <button className="button secondary" type="button" onClick={loadSubmissions} disabled={loading}>
+          {loading ? <Loader2 className="spin" size={17} /> : <RotateCcw size={17} />}
+          به‌روزرسانی
+        </button>
+      </header>
+      {error && (
+        <div className="error" role="alert">
+          <strong>مشکلی پیش آمد.</strong>
+          <span>{error}</span>
+        </div>
+      )}
+      {toast && <div className="toast">{toast}</div>}
+      {loading && submissions.length === 0 ? (
+        <LoadingPanel label="در حال خواندن درخواست‌ها" />
+      ) : (
+        <section className="admin-list">
+          {submissions.length === 0 && <div className="panel compact-panel">درخواستی برای ترب ثبت نشده است.</div>}
+          {submissions.map((submission) => (
+            <AdminTorobSubmissionCard
+              key={submission.id}
+              password={password}
+              submission={submission}
+              onUpdated={updateSubmission}
+              onToast={showToast}
+            />
+          ))}
+        </section>
+      )}
+    </main>
+  );
+}
+
+function AdminTorobSubmissionCard({
+  password,
+  submission,
+  onUpdated,
+  onToast,
+}: {
+  password: string;
+  submission: TorobSubmission;
+  onUpdated: (submission: TorobSubmission) => void;
+  onToast: (message: string) => void;
+}) {
+  const [shopId, setShopId] = useState(submission.shop_id?.toString() ?? '');
+  const [note, setNote] = useState(submission.admin_note ?? '');
+  const [itemDrafts, setItemDrafts] = useState(() => torobItemDrafts(submission));
+  const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setShopId(submission.shop_id?.toString() ?? '');
+    setNote(submission.admin_note ?? '');
+    setItemDrafts(torobItemDrafts(submission));
+  }, [submission]);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await api.patchTorobSubmission(password, submission.id, {
+        shop_id: parseNullableInt(shopId),
+        admin_note: note,
+        items: submission.items.map((item) => ({
+          id: item.id,
+          base_product_rk: itemDrafts[item.id]?.base_product_rk.trim() || null,
+          price: parseNullableInt(itemDrafts[item.id]?.price ?? ''),
+        })),
+      });
+      onUpdated(updated);
+      onToast('درخواست ترب ذخیره شد.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'درخواست ذخیره نشد.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function publish() {
+    const parsedShopId = parseNullableInt(shopId);
+    const publishItems = submission.items
+      .map((item) => {
+        const draft = itemDrafts[item.id];
+        const price = parsePositivePrice(draft?.price ?? '');
+        const baseProductRk = draft?.base_product_rk.trim() ?? '';
+        return price !== null && baseProductRk ? { id: item.id, base_product_rk: baseProductRk, price } : null;
+      })
+      .filter((item): item is { id: number; base_product_rk: string; price: number } => Boolean(item));
+    if (!parsedShopId) {
+      setError('shop_id را وارد کن.');
+      return;
+    }
+    if (publishItems.length === 0) {
+      setError('برای حداقل یک محصول، شناسه محصول ترب و قیمت را وارد کن.');
+      return;
+    }
+    setPublishing(true);
+    setError(null);
+    try {
+      const updated = await api.publishTorobSubmission(password, submission.id, {
+        shop_id: parsedShopId,
+        items: publishItems,
+      });
+      onUpdated(updated);
+      onToast('محصول‌ها به ترب ارسال شدند.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ارسال به ترب انجام نشد.');
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  return (
+    <article className={`panel admin-submission ${submission.status === 'failed' ? 'failed' : ''}`}>
+      <header className="admin-submission-head">
+        <div>
+          <strong>{submission.shop_name}</strong>
+          <span>{toPersianDigits(submission.contact_mobile)}</span>
+        </div>
+        <span className="status-pill">{torobStatusLabel(submission.status)}</span>
+      </header>
+      <div className="admin-submission-meta">
+        <label className="field">
+          <span>shop_id ترب</span>
+          <input value={toPersianDigits(shopId)} inputMode="numeric" onChange={(event) => setShopId(normalizeDigits(event.target.value).replace(/[^\d]/g, ''))} />
+        </label>
+        <label className="field">
+          <span>یادداشت</span>
+          <input value={note} onChange={(event) => setNote(event.target.value)} />
+        </label>
+      </div>
+      <div className="admin-products">
+        {submission.items.map((item) => {
+          const draft = itemDrafts[item.id] ?? { base_product_rk: '', price: '' };
+          return (
+            <section className="admin-product" key={item.id}>
+              <div className="admin-product-images">
+                {item.image_urls.slice(0, 3).map((url, index) => (
+                  <img key={`${url}-${index}`} src={`${API_BASE}${url}`} alt={`عکس شماره ${toPersianDigits(item.image_numbers[index] ?? index + 1)}`} />
+                ))}
+              </div>
+              <div className="admin-product-body">
+                <strong>{item.title}</strong>
+                <p>{item.description}</p>
+                <div className="admin-product-fields">
+                  <label className="field">
+                    <span>شناسه محصول ترب</span>
+                    <input
+                      dir="ltr"
+                      value={draft.base_product_rk}
+                      onChange={(event) =>
+                        setItemDrafts((current) => ({
+                          ...current,
+                          [item.id]: { ...draft, base_product_rk: event.target.value },
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="field price-field">
+                    <span>قیمت</span>
+                    <div className="price-input">
+                      <input
+                        value={formatPriceInput(draft.price)}
+                        inputMode="numeric"
+                        onChange={(event) =>
+                          setItemDrafts((current) => ({
+                            ...current,
+                            [item.id]: { ...draft, price: normalizeDigits(event.target.value).replace(/[^\d]/g, '') },
+                          }))
+                        }
+                      />
+                      <span>تومان</span>
+                    </div>
+                  </label>
+                </div>
+                {item.error && <small className="field-error">{item.error}</small>}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+      {error && <div className="error inline">{error}</div>}
+      {submission.error && <div className="error inline">{submission.error}</div>}
+      <div className="admin-actions">
+        <button className="button secondary" type="button" onClick={save} disabled={saving || publishing}>
+          {saving ? <Loader2 className="spin" size={17} /> : <Check size={17} />}
+          ذخیره
+        </button>
+        <button className="button primary" type="button" onClick={publish} disabled={saving || publishing}>
+          {publishing ? <Loader2 className="spin" size={17} /> : <Send size={17} />}
+          ارسال به ترب
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function torobItemDrafts(submission: TorobSubmission): Record<number, { base_product_rk: string; price: string }> {
+  return Object.fromEntries(
+    submission.items.map((item) => [
+      item.id,
+      {
+        base_product_rk: item.base_product_rk ?? '',
+        price: item.price?.toString() ?? '',
+      },
+    ]),
+  );
+}
+
+function torobStatusLabel(status: string): string {
+  if (status === 'submitted') return 'ارسال شده';
+  if (status === 'failed') return 'ناموفق';
+  if (status === 'submitting') return 'در حال ارسال';
+  return 'در انتظار بررسی';
+}
+
+function PlatformChooser({ platform, onChange }: { platform: Platform; onChange: (platform: Platform) => void }) {
+  return (
+    <section className="platform-chooser" aria-label="انتخاب مسیر فروشگاه">
+      <button
+        className={`platform-card ${platform === 'basalam' ? 'active' : ''}`}
+        type="button"
+        onClick={() => onChange('basalam')}
+      >
+        <span>باسلام</span>
+        <strong>ثبت مستقیم در غرفه</strong>
+      </button>
+      <button
+        className={`platform-card ${platform === 'torob' ? 'active' : ''}`}
+        type="button"
+        onClick={() => onChange('torob')}
+      >
+        <span>ترب</span>
+        <strong>آماده‌سازی برای اضافه شدن</strong>
+      </button>
+    </section>
+  );
+}
+
+function TorobPanel({
+  shopName,
+  contactMobile,
+  touched,
+  onShopNameChange,
+  onContactMobileChange,
+}: {
+  shopName: string;
+  contactMobile: string;
+  touched: boolean;
+  onShopNameChange: (value: string) => void;
+  onContactMobileChange: (value: string) => void;
+}) {
+  return (
+    <section className="panel torob-panel">
+      <div className="torob-panel-head">
+        <Store size={18} />
+        <div>
+          <strong>فروشگاه ترب</strong>
+          <p>اسم فروشگاهت رو بگو تا درخواستت درست پیگیری شود.</p>
+        </div>
+      </div>
+      <div className="torob-form">
+        <label className={`field ${touched && !shopName.trim() ? 'missing' : ''}`}>
+          <span>اسم فروشگاه</span>
+          <input aria-label="اسم فروشگاه" value={shopName} onChange={(event) => onShopNameChange(event.target.value)} />
+        </label>
+        <label className={`field ${touched && !contactMobile.trim() ? 'missing' : ''}`}>
+          <span>شماره تماس</span>
+          <input
+            aria-label="شماره تماس"
+            value={toPersianDigits(contactMobile)}
+            inputMode="tel"
+            onChange={(event) => onContactMobileChange(normalizeDigits(event.target.value).replace(/[^\d+]/g, ''))}
+          />
+          <small>اگر مشکلی پیش آمد، با همین شماره هماهنگ می‌کنیم.</small>
+        </label>
+      </div>
+    </section>
   );
 }
 
@@ -727,6 +1180,7 @@ function PreviewPanel({
   batch,
   items,
   drafts,
+  platform,
   saving,
   suggestingCategories,
   publishing,
@@ -744,6 +1198,7 @@ function PreviewPanel({
   onApplyPreparationDays,
   onSelectBasalamCategory,
   onPublishBasalam,
+  onSubmitTorob,
   onSplitPhoto,
   onAskStartFresh,
 }: {
@@ -751,6 +1206,7 @@ function PreviewPanel({
   batch: Batch | null;
   items: ProductItem[];
   drafts: DraftMap;
+  platform: Platform;
   saving: boolean;
   suggestingCategories: boolean;
   publishing: boolean;
@@ -768,6 +1224,7 @@ function PreviewPanel({
   onApplyPreparationDays: (days: number) => void;
   onSelectBasalamCategory: (itemId: number, category: BasalamCategory) => void;
   onPublishBasalam: () => void;
+  onSubmitTorob: () => void;
   onSplitPhoto: (itemId: number, assetId: number) => void;
   onAskStartFresh: () => void;
 }) {
@@ -783,7 +1240,7 @@ function PreviewPanel({
       <div className="preview-head">
         <div>
           <h2>لیست آماده شد</h2>
-          <p>چک کن، اصلاح کن، بعد محصول‌ها را در غرفه ثبت کن.</p>
+          <p>{platform === 'basalam' ? 'چک کن، اصلاح کن، بعد محصول‌ها را در غرفه ثبت کن.' : 'چک کن، اصلاح کن، بعد درخواست ترب را ثبت کن.'}</p>
         </div>
         <div className="actions">
           <button className="button secondary" type="button" onClick={onAskStartFresh}>
@@ -793,15 +1250,15 @@ function PreviewPanel({
         </div>
       </div>
 
-      {publishJob && <PublishStatusPanel job={publishJob} products={publishedProducts} items={items} />}
-      {suggestingCategories && (
+      {platform === 'basalam' && publishJob && <PublishStatusPanel job={publishJob} products={publishedProducts} items={items} />}
+      {platform === 'basalam' && suggestingCategories && (
         <div className="category-loading" role="status">
           <Loader2 className="spin" size={17} />
           در حال حدس دسته‌بندی باسلام
         </div>
       )}
 
-      <BulkPreparationBox onApply={onApplyPreparationDays} />
+      {platform === 'basalam' && <BulkPreparationBox onApply={onApplyPreparationDays} />}
 
       <div className="item-list">
         {items.map((item) => (
@@ -809,6 +1266,7 @@ function PreviewPanel({
             key={item.id}
             item={item}
             draft={drafts[item.id] ?? toDraft(item)}
+            platform={platform}
             missingFields={missingByItemId.get(item.id) ?? noMissingFields}
             splittingPhotoKey={splittingPhotoKey}
             onDraftChange={(patch) => onDraftChange(item.id, patch)}
@@ -832,11 +1290,18 @@ function PreviewPanel({
         {validationIssues.length === 0 && publishFailed && (
           <DockPublishProblem job={publishJob} products={publishedProducts} />
         )}
-        <button className="button primary save-list-button" type="button" onClick={onPublishBasalam} disabled={saving || publishing || processing || hasValidationIssues}>
+        <button
+          className="button primary save-list-button"
+          type="button"
+          onClick={platform === 'basalam' ? onPublishBasalam : onSubmitTorob}
+          disabled={saving || publishing || processing || hasValidationIssues}
+        >
           {publishing || processing ? (
             <Loader2 className="spin" size={18} />
           ) : hasValidationIssues ? (
             <AlertTriangle size={18} />
+          ) : platform === 'torob' ? (
+            <Send size={18} />
           ) : basalamConnected ? (
             <Send size={18} />
           ) : (
@@ -846,9 +1311,11 @@ function PreviewPanel({
             ? 'در حال بازبینی لیست'
             : hasValidationIssues
               ? 'اول اطلاعات لازم را کامل کن'
-              : basalamConnected
-                ? 'ثبت در غرفه باسلام'
-                : 'اتصال غرفه باسلام'}
+              : platform === 'torob'
+                ? 'ثبت درخواست ترب'
+                : basalamConnected
+                  ? 'ثبت در غرفه باسلام'
+                  : 'اتصال غرفه باسلام'}
         </button>
       </div>
     </section>
@@ -1071,6 +1538,7 @@ function PublishStatusPanel({ job, products, items }: { job: PublishJob; product
 function ProductCard({
   item,
   draft,
+  platform,
   missingFields,
   splittingPhotoKey,
   onDraftChange,
@@ -1079,6 +1547,7 @@ function ProductCard({
 }: {
   item: ProductItem;
   draft: ProductDraft;
+  platform: Platform;
   missingFields: Set<RequiredField>;
   splittingPhotoKey: string | null;
   onDraftChange: (patch: Partial<ProductDraft>) => void;
@@ -1110,7 +1579,7 @@ function ProductCard({
   }
 
   return (
-    <article className={`panel product-card ${missingFields.size > 0 ? 'needs-info' : ''}`} data-product-id={item.id}>
+    <article className={`panel product-card ${platform === 'torob' ? 'torob-card' : ''} ${missingFields.size > 0 ? 'needs-info' : ''}`} data-product-id={item.id}>
       <div
         className="product-photos"
         onTouchStart={(event) => {
@@ -1191,70 +1660,74 @@ function ProductCard({
             <span>تومان</span>
           </div>
         </label>
-        <div className="product-extra-fields" aria-label="جزئیات ثبت در باسلام">
-          <label className={`field ${missingFields.has('stock') ? 'missing' : ''}`}>
-            <span>موجودی</span>
-            <input
-              value={formatIntegerInput(draft.stock)}
-              inputMode="numeric"
-              placeholder="مثلا ۵"
-              onChange={(event) => onDraftChange({ stock: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+        {platform === 'basalam' && (
+          <>
+            <div className="product-extra-fields" aria-label="جزئیات ثبت در باسلام">
+              <label className={`field ${missingFields.has('stock') ? 'missing' : ''}`}>
+                <span>موجودی</span>
+                <input
+                  value={formatIntegerInput(draft.stock)}
+                  inputMode="numeric"
+                  placeholder="مثلا ۵"
+                  onChange={(event) => onDraftChange({ stock: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+                />
+              </label>
+              <label className={`field ${missingFields.has('preparation_days') ? 'missing' : ''}`}>
+                <span>آماده‌سازی</span>
+                <div className="suffix-input">
+                  <input
+                    value={formatIntegerInput(draft.preparation_days)}
+                    inputMode="numeric"
+                    placeholder="مثلا ۲"
+                    onChange={(event) => onDraftChange({ preparation_days: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+                  />
+                  <span>روز</span>
+                </div>
+              </label>
+              <label className={`field ${missingFields.has('weight_grams') ? 'missing' : ''}`}>
+                <span>وزن محصول</span>
+                <div className="suffix-input">
+                  <input
+                    value={formatIntegerInput(draft.weight_grams)}
+                    inputMode="numeric"
+                    placeholder="مثلا ۳۰۰"
+                    onChange={(event) => onDraftChange({ weight_grams: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+                  />
+                  <span>گرم</span>
+                </div>
+              </label>
+              <label className={`field ${missingFields.has('package_weight_grams') ? 'missing' : ''}`}>
+                <span>وزن محصول با بسته‌بندی</span>
+                <div className="suffix-input">
+                  <input
+                    value={formatIntegerInput(draft.package_weight_grams)}
+                    inputMode="numeric"
+                    placeholder="مثلا ۵۰۰"
+                    onChange={(event) => onDraftChange({ package_weight_grams: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+                  />
+                  <span>گرم</span>
+                </div>
+              </label>
+              <label className={`field ${missingFields.has('unit_quantity') ? 'missing' : ''}`}>
+                <span>چندتایی می‌فروشی؟</span>
+                <div className="suffix-input">
+                  <input
+                    value={formatIntegerInput(draft.unit_quantity)}
+                    inputMode="numeric"
+                    placeholder="مثلا ۱"
+                    onChange={(event) => onDraftChange({ unit_quantity: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
+                  />
+                  <span>{unitLabel}</span>
+                </div>
+              </label>
+            </div>
+            <BasalamCategoryPicker
+              item={item}
+              hasValidationError={missingFields.has('category')}
+              onSelect={(category) => onSelectBasalamCategory(item.id, category)}
             />
-          </label>
-          <label className={`field ${missingFields.has('preparation_days') ? 'missing' : ''}`}>
-            <span>آماده‌سازی</span>
-            <div className="suffix-input">
-              <input
-                value={formatIntegerInput(draft.preparation_days)}
-                inputMode="numeric"
-                placeholder="مثلا ۲"
-                onChange={(event) => onDraftChange({ preparation_days: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
-              />
-              <span>روز</span>
-            </div>
-          </label>
-          <label className={`field ${missingFields.has('weight_grams') ? 'missing' : ''}`}>
-            <span>وزن محصول</span>
-            <div className="suffix-input">
-              <input
-                value={formatIntegerInput(draft.weight_grams)}
-                inputMode="numeric"
-                placeholder="مثلا ۳۰۰"
-                onChange={(event) => onDraftChange({ weight_grams: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
-              />
-              <span>گرم</span>
-            </div>
-          </label>
-          <label className={`field ${missingFields.has('package_weight_grams') ? 'missing' : ''}`}>
-            <span>وزن محصول با بسته‌بندی</span>
-            <div className="suffix-input">
-              <input
-                value={formatIntegerInput(draft.package_weight_grams)}
-                inputMode="numeric"
-                placeholder="مثلا ۵۰۰"
-                onChange={(event) => onDraftChange({ package_weight_grams: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
-              />
-              <span>گرم</span>
-            </div>
-          </label>
-          <label className={`field ${missingFields.has('unit_quantity') ? 'missing' : ''}`}>
-            <span>چندتایی می‌فروشی؟</span>
-            <div className="suffix-input">
-              <input
-                value={formatIntegerInput(draft.unit_quantity)}
-                inputMode="numeric"
-                placeholder="مثلا ۱"
-                onChange={(event) => onDraftChange({ unit_quantity: normalizeDigits(event.target.value).replace(/[^\d]/g, '') })}
-              />
-              <span>{unitLabel}</span>
-            </div>
-          </label>
-        </div>
-        <BasalamCategoryPicker
-          item={item}
-          hasValidationError={missingFields.has('category')}
-          onSelect={(category) => onSelectBasalamCategory(item.id, category)}
-        />
+          </>
+        )}
       </div>
     </article>
   );
