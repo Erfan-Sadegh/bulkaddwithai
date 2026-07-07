@@ -522,14 +522,14 @@ a {
 
 .item-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(218px, 252px));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 16px;
   justify-content: start;
   align-items: stretch;
 }
 
 .product-card {
-  padding: 8px;
+  padding: 10px;
   overflow: hidden;
   box-shadow: 0 8px 20px rgba(32, 33, 36, 0.045);
   display: grid;
@@ -725,8 +725,11 @@ a {
 }
 
 .bulk-prep-box {
-  display: inline-flex;
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   width: fit-content;
   max-width: 100%;
@@ -742,6 +745,7 @@ a {
 .bulk-prep-field {
   display: inline-flex;
   align-items: center;
+  flex: 1 1 260px;
   gap: 8px;
 }
 
@@ -757,6 +761,7 @@ a {
 }
 
 .prep-apply {
+  flex: 0 0 auto;
   min-height: 34px;
   padding: 0 11px;
   border: 1px solid #dfe8e5;
@@ -1238,28 +1243,40 @@ a {
   .bulk-prep-box {
     width: 100%;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-    gap: 8px;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
   }
 
   .bulk-prep-field {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
+    padding-inline-end: 30px;
   }
 
   .bulk-prep-field > span {
     white-space: normal;
+    text-align: right;
+    line-height: 1.7;
   }
 
   .bulk-prep-box .suffix-input.compact {
     width: 100%;
+    min-height: 42px;
   }
 
   .prep-apply {
     grid-column: 1 / -1;
     width: 100%;
+    min-height: 40px;
+  }
+
+  .bulk-prep-close {
+    position: absolute;
+    top: 12px;
+    inset-inline-end: 12px;
   }
 
   .product-extra-fields {
