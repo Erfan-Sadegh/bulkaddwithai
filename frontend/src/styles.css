@@ -162,35 +162,30 @@ a {
 
 .torob-panel {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   padding: 16px;
 }
 
 .torob-panel-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.torob-panel-head > div {
-  min-width: 0;
-  flex: 1;
-}
-
-.torob-panel-head p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  line-height: 1.7;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
 }
 
 .torob-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  align-items: start;
+  gap: 12px;
 }
 
 .torob-form .field {
   margin: 0;
+}
+
+.torob-form .field input {
+  min-height: 42px;
 }
 
 .torob-form small {
@@ -242,6 +237,10 @@ a {
 .change-platform-button {
   justify-self: end;
   min-height: 32px;
+}
+
+.torob-panel .change-platform-button {
+  justify-self: end;
 }
 
 .basalam-panel .change-platform-button {

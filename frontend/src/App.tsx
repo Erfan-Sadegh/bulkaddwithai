@@ -953,10 +953,7 @@ function TorobPanel({
     <section className="panel torob-panel">
       <div className="torob-panel-head">
         <Store size={18} />
-        <div>
-          <strong>فروشگاه ترب</strong>
-          <p>اسم فروشگاهت رو بگو تا درخواستت درست پیگیری شود.</p>
-        </div>
+        <strong>فروشگاه ترب</strong>
         <button className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
           تغییر مسیر
         </button>
