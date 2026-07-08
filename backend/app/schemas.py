@@ -249,6 +249,16 @@ class TorobSubmissionStartResponse(BaseModel):
     message: str
 
 
+class TorobCandidateRead(BaseModel):
+    base_product_rk: str
+    title: str
+    subtitle: str | None = None
+    image_url: str | None = None
+    price_text: str | None = None
+    source: str = "torob"
+    score: float | None = None
+
+
 class TorobSubmissionItemRead(BaseModel):
     id: int
     batch_item_id: int
@@ -256,6 +266,7 @@ class TorobSubmissionItemRead(BaseModel):
     description: str
     price: int | None = None
     base_product_rk: str | None = None
+    candidates: list[TorobCandidateRead] = Field(default_factory=list)
     status: str
     error: str | None = None
     image_numbers: list[int]

@@ -56,6 +56,7 @@ type PublishValidationIssue = {
 };
 const BASALAM_AUTO_CATEGORY_THRESHOLD = 0.62;
 const PHOTO_GROUP_WARNING_THRESHOLD = 0.65;
+const SELLER_STORAGE_KEY = 'bulkadd_seller_id';
 const REQUIRED_FIELD_LABELS: Record<RequiredField, string> = {
   title: 'نام محصول',
   price_toman: 'قیمت',
@@ -196,11 +197,7 @@ function MainApp() {
     setError(null);
     try {
       const oauthResult = readBasalamReturn();
-      const sellers = await api.listSellers();
-      const oauthSeller = oauthResult?.sellerId
-        ? sellers.find((candidate) => candidate.id === oauthResult.sellerId)
-        : null;
-      const currentSeller = oauthSeller ?? sellers[0] ?? (await api.createSeller({}));
+      const currentSeller = await resolveSellerForThisBrowser(oauthResult?.sellerId ?? null);
       if (oauthResult?.status === 'success') showToast('غرفه باسلام وصل شد.');
       if (oauthResult?.status === 'failed') setError('اتصال غرفه باسلام انجام نشد. دوباره تلاش کن.');
       const currentBatch = await api.createBatch(currentSeller.id);
@@ -693,7 +690,7 @@ function AdminApp() {
       <header className="hero admin-hero">
         <div>
           <h1>درخواست‌های ترب</h1>
-          <p>shop_id و شناسه محصول ترب را وارد کن، بعد ارسال کن.</p>
+          <p>shop_id را وارد کن، نتیجه درست ترب را برای هر محصول انتخاب کن، بعد ارسال کن.</p>
         </div>
         <button className="button secondary" type="button" onClick={loadSubmissions} disabled={loading}>
           {loading ? <Loader2 className="spin" size={17} /> : <RotateCcw size={17} />}
@@ -788,7 +785,7 @@ function AdminTorobSubmissionCard({
       return;
     }
     if (publishItems.length === 0) {
-      setError('برای حداقل یک محصول، شناسه محصول ترب و قیمت را وارد کن.');
+      setError('برای حداقل یک محصول، نتیجه ترب و قیمت را مشخص کن.');
       return;
     }
     setPublishing(true);
@@ -829,6 +826,8 @@ function AdminTorobSubmissionCard({
       <div className="admin-products">
         {submission.items.map((item) => {
           const draft = itemDrafts[item.id] ?? { base_product_rk: '', price: '' };
+          const candidates = item.candidates ?? [];
+          const selectedCandidate = candidates.find((candidate) => candidate.base_product_rk === draft.base_product_rk);
           return (
             <section className="admin-product" key={item.id}>
               <div className="admin-product-images">
@@ -839,11 +838,48 @@ function AdminTorobSubmissionCard({
               <div className="admin-product-body">
                 <strong>{item.title}</strong>
                 <p>{item.description}</p>
-                <div className="admin-product-fields">
-                  <label className="field">
-                    <span>شناسه محصول ترب</span>
+                <div className="torob-match-box">
+                  <div className="torob-match-head">
+                    <span>محصول متناظر در ترب</span>
+                    <strong>{selectedCandidate?.title ?? (draft.base_product_rk ? 'شناسه دستی وارد شده' : 'هنوز انتخاب نشده')}</strong>
+                  </div>
+                  {candidates.length > 0 ? (
+                    <div className="torob-candidates" aria-label="نتیجه‌های پیشنهادی ترب">
+                      {candidates.map((candidate) => (
+                        <button
+                          className={`${candidate.base_product_rk === draft.base_product_rk ? 'selected' : ''} ${candidate.image_url ? '' : 'no-image'}`}
+                          key={candidate.base_product_rk}
+                          type="button"
+                          onClick={() =>
+                            setItemDrafts((current) => ({
+                              ...current,
+                              [item.id]: { ...draft, base_product_rk: candidate.base_product_rk },
+                            }))
+                          }
+                        >
+                          {candidate.image_url && <img src={candidateImageSrc(candidate.image_url)} alt="" />}
+                          <span>
+                            <b>{candidate.title}</b>
+                            {candidate.subtitle && <small>{candidate.subtitle}</small>}
+                            {(candidate.price_text || candidate.score !== null) && (
+                              <small>
+                                {[candidate.price_text, candidateScoreLabel(candidate.score)].filter(Boolean).join(' · ')}
+                              </small>
+                            )}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <small>
+                      هنوز نتیجه‌ای از سرچ ترب برای این محصول ذخیره نشده. وقتی سرچ تصویری/متنی وصل شود، نتیجه‌ها همین‌جا برای انتخاب می‌آیند.
+                    </small>
+                  )}
+                  <details className="manual-rk">
+                    <summary>ورود دستی فقط در حالت اضطراری</summary>
                     <input
                       dir="ltr"
+                      placeholder="base_product_rk"
                       value={draft.base_product_rk}
                       onChange={(event) =>
                         setItemDrafts((current) => ({
@@ -852,7 +888,9 @@ function AdminTorobSubmissionCard({
                         }))
                       }
                     />
-                  </label>
+                  </details>
+                </div>
+                <div className="admin-product-fields single-field">
                   <label className="field price-field">
                     <span>قیمت</span>
                     <div className="price-input">
@@ -909,6 +947,17 @@ function torobStatusLabel(status: string): string {
   if (status === 'failed') return 'ناموفق';
   if (status === 'submitting') return 'در حال ارسال';
   return 'در انتظار بررسی';
+}
+
+function candidateImageSrc(imageUrl: string): string {
+  if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
+  return `${API_BASE}${imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`}`;
+}
+
+function candidateScoreLabel(score: number | null): string | null {
+  if (score === null) return null;
+  const normalized = score <= 1 ? score * 100 : score;
+  return `${toPersianDigits(Math.round(normalized).toString())}٪ شباهت`;
 }
 
 function PlatformChooser({ platform, onChange }: { platform: Platform | null; onChange: (platform: Platform) => void }) {
@@ -1275,7 +1324,7 @@ function PreviewPanel({
 
       {platform === 'basalam' && <BulkPreparationBox onApply={onApplyPreparationDays} />}
 
-      <div className="item-list">
+      <div className={`item-list ${platform === 'torob' ? 'torob-item-list' : ''}`}>
         {items.map((item) => (
           <ProductCard
             key={item.id}
@@ -1896,6 +1945,40 @@ function LoadingPanel({ label }: { label: string }) {
       {label}
     </div>
   );
+}
+
+async function resolveSellerForThisBrowser(oauthSellerId: number | null): Promise<Seller> {
+  if (oauthSellerId) {
+    const seller = await api.getSeller(oauthSellerId);
+    rememberSellerId(seller.id);
+    return seller;
+  }
+
+  const storedSellerId = readStoredSellerId();
+  if (storedSellerId) {
+    try {
+      const seller = await api.getSeller(storedSellerId);
+      rememberSellerId(seller.id);
+      return seller;
+    } catch {
+      window.localStorage.removeItem(SELLER_STORAGE_KEY);
+    }
+  }
+
+  const seller = await api.createSeller({});
+  rememberSellerId(seller.id);
+  return seller;
+}
+
+function readStoredSellerId(): number | null {
+  const raw = window.localStorage.getItem(SELLER_STORAGE_KEY);
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function rememberSellerId(sellerId: number) {
+  window.localStorage.setItem(SELLER_STORAGE_KEY, String(sellerId));
 }
 
 function readBasalamReturn(): { status: 'success' | 'failed'; sellerId: number | null } | null {

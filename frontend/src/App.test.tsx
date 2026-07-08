@@ -91,6 +91,8 @@ const basalamConnection = {
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
     Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
       configurable: true,
       value: vi.fn(),
@@ -124,6 +126,33 @@ describe('App', () => {
     expect(await screen.findByText('۱ عکس اضافه شده')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ })).toBeInTheDocument();
     expect(await screen.findByAltText('عکس شماره ۱')).toBeInTheDocument();
+  });
+
+  it('creates a browser-local seller instead of reusing another connected seller', async () => {
+    const user = userEvent.setup();
+    const onCreateSeller = vi.fn();
+    const onListSellers = vi.fn();
+    renderWithApi({
+      listedSellers: [
+        {
+          ...seller,
+          id: 99,
+          shop_name: 'غرفه ساز',
+        },
+      ],
+      onCreateSeller,
+      onListSellers,
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await waitFor(() => expect(onCreateSeller).toHaveBeenCalledTimes(1));
+    expect(onListSellers).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem('bulkadd_seller_id')).toBe('1');
+
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    expect(screen.getByText('غرفه باسلام')).toBeInTheDocument();
+    expect(screen.queryByText('غرفه ساز')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'اتصال غرفه' })).toBeInTheDocument();
   });
 
   it('shows results, formats Persian price, and confirms starting over', async () => {
@@ -323,6 +352,9 @@ function renderWithApi({
   onPublish,
   onCategorySuggest,
   torobBodies = [],
+  listedSellers = [],
+  onCreateSeller,
+  onListSellers,
 }: {
   failProcessing?: boolean;
   uploadAssetCount?: number;
@@ -333,6 +365,9 @@ function renderWithApi({
   onPublish?: () => void;
   onCategorySuggest?: () => void;
   torobBodies?: Array<Record<string, unknown>>;
+  listedSellers?: Array<typeof seller>;
+  onCreateSeller?: () => void;
+  onListSellers?: () => void;
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
   vi.stubGlobal(
@@ -341,9 +376,16 @@ function renderWithApi({
       const path = getPath(input);
       const method = init?.method ?? 'GET';
 
-      if (path === '/sellers' && method === 'POST') return jsonResponse(seller, 201);
-      if (path === '/sellers' && method === 'GET') return jsonResponse([]);
+      if (path === '/sellers' && method === 'POST') {
+        onCreateSeller?.();
+        return jsonResponse(seller, 201);
+      }
+      if (path === '/sellers' && method === 'GET') {
+        onListSellers?.();
+        return jsonResponse(listedSellers);
+      }
       if (path === '/sellers/1/platform-connections') return jsonResponse(platformConnections);
+      if (path === '/sellers/1' && method === 'GET') return jsonResponse(seller);
       if (path === '/sellers/1' && method === 'PATCH') return jsonResponse(seller);
       if (path === '/batches' && method === 'POST') return jsonResponse(batch, 201);
       if (path === '/batches/10/assets' && method === 'POST') return jsonResponse(imageAssets.slice(0, uploadAssetCount), 201);

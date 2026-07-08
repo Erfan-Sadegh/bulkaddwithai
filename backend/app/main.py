@@ -140,7 +140,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/sellers", response_model=list[SellerRead])
     def get_sellers(session: Session = Depends(get_session)):
-        return session.scalars(select(Seller).order_by(Seller.created_at.desc())).all()
+        return []
+
+    @app.get("/sellers/{seller_id}", response_model=SellerRead)
+    def get_seller(seller_id: int, session: Session = Depends(get_session)):
+        seller = session.get(Seller, seller_id)
+        if not seller:
+            raise HTTPException(status_code=404, detail="Seller not found")
+        return seller
 
     @app.patch("/sellers/{seller_id}", response_model=SellerRead)
     def patch_seller(seller_id: int, payload: SellerPatch, session: Session = Depends(get_session)):

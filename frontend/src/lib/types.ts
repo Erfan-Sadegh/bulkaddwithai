@@ -132,12 +132,23 @@ export type TorobSubmissionItem = {
   description: string;
   price: number | null;
   base_product_rk: string | null;
+  candidates: TorobCandidate[];
   status: 'pending' | 'submitted' | 'failed' | string;
   error: string | null;
   image_numbers: number[];
   image_urls: string[];
   created_at: string;
   updated_at: string;
+};
+
+export type TorobCandidate = {
+  base_product_rk: string;
+  title: string;
+  subtitle: string | null;
+  image_url: string | null;
+  price_text: string | null;
+  source: string;
+  score: number | null;
 };
 
 export type TorobSubmission = {

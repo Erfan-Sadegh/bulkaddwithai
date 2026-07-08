@@ -622,10 +622,15 @@ a {
 
 .item-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 420px));
   gap: 16px;
-  justify-content: start;
+  justify-content: center;
   align-items: stretch;
+}
+
+.item-list.torob-item-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 420px));
+  justify-content: center;
 }
 
 .product-card {
@@ -637,8 +642,8 @@ a {
 }
 
 .product-card.torob-card {
-  max-width: 420px;
-  justify-self: stretch;
+  width: 100%;
+  justify-self: center;
 }
 
 .product-card.needs-info {
@@ -1399,10 +1404,108 @@ a {
   line-height: 1.7;
 }
 
+.torob-match-box {
+  display: grid;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid #e2ece9;
+  border-radius: 8px;
+  background: #f8fbfa;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.65;
+}
+
+.torob-match-head {
+  display: grid;
+  gap: 2px;
+}
+
+.torob-match-head strong {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.torob-candidates {
+  display: grid;
+  gap: 7px;
+}
+
+.torob-candidates button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid #dfe8e5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+
+.torob-candidates button.no-image {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.torob-candidates button.selected {
+  border-color: var(--primary);
+  background: #f2faf7;
+}
+
+.torob-candidates img {
+  width: 52px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: #f5f6f5;
+}
+
+.torob-candidates span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.torob-candidates b,
+.torob-candidates small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.torob-candidates small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.manual-rk {
+  border-top: 1px solid #edf1f0;
+  padding-top: 6px;
+}
+
+.manual-rk summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.manual-rk input {
+  margin-top: 7px;
+}
+
 .admin-product-fields {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 180px;
   gap: 10px;
+}
+
+.admin-product-fields.single-field {
+  grid-template-columns: minmax(0, 220px);
 }
 
 .admin-product-fields .field {

@@ -44,6 +44,21 @@ def test_seller_data_is_isolated_by_seller(client: TestClient, seller: dict):
     assert [batch["id"] for batch in second_list] == [second_batch["id"]]
 
 
+def test_seller_can_be_loaded_by_id(client: TestClient, seller: dict):
+    client.post(
+        "/sellers",
+        json={"name": "مریم", "mobile": "09121111111", "shop_name": "فروشگاه دوم"},
+    )
+
+    assert client.get("/sellers").json() == []
+
+    loaded = client.get(f"/sellers/{seller['id']}")
+
+    assert loaded.status_code == 200
+    assert loaded.json()["id"] == seller["id"]
+    assert client.get("/sellers/999999").status_code == 404
+
+
 def test_upload_order_stays_stable_for_images(client: TestClient, batch: dict):
     response = client.post(
         f"/batches/{batch['id']}/assets",

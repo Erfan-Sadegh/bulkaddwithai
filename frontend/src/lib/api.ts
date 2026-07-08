@@ -59,6 +59,7 @@ function extractDetail(text: string): string {
 
 export const api = {
   listSellers: () => request<Seller[]>('/sellers'),
+  getSeller: (sellerId: number) => request<Seller>(`/sellers/${sellerId}`),
   createSeller: (payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) =>
     request<Seller>('/sellers', { method: 'POST', body: JSON.stringify(payload) }),
   updateSeller: (sellerId: number, payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) =>

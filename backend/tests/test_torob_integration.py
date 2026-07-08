@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.integrations.torob import TorobBulkItem
+from app.models import TorobSubmissionItem
 from helpers import image_file
 
 
@@ -61,7 +62,7 @@ def test_torob_submission_is_created_for_admin_review(client: TestClient, batch:
     assert submission["items"][0]["price"] == items[0]["price_toman"]
 
 
-def test_admin_can_publish_torob_submission_with_manual_product_ids(client: TestClient, batch: dict):
+def test_admin_can_review_torob_candidate_and_publish_submission(client: TestClient, batch: dict):
     client.app.state.settings.admin_password = "admin-pass"
     fake = FakeTorobClient()
     client.app.state.torob_client_factory = lambda _settings: fake
@@ -74,6 +75,30 @@ def test_admin_can_publish_torob_submission_with_manual_product_ids(client: Test
         f"/admin/torob-submissions/{submission['id']}",
         headers={"X-Admin-Password": "admin-pass"},
     ).json()["items"][0]
+
+    candidate_metadata = {
+        "candidates": [
+            {
+                "base_product_rk": "2809dddc-a7d8-4d71-b28e-0591b146b6c7",
+                "title": "محصول متناظر ترب",
+                "subtitle": "نتیجه سرچ تصویری",
+                "score": 0.92,
+            }
+        ]
+    }
+    session = client.app.state.session_factory()
+    try:
+        torob_item = session.get(TorobSubmissionItem, first_item["id"])
+        torob_item.response_metadata = candidate_metadata
+        session.commit()
+    finally:
+        session.close()
+
+    reviewed = client.get(
+        f"/admin/torob-submissions/{submission['id']}",
+        headers={"X-Admin-Password": "admin-pass"},
+    ).json()["items"][0]
+    assert reviewed["candidates"][0]["title"] == "محصول متناظر ترب"
 
     published = client.post(
         f"/admin/torob-submissions/{submission['id']}/publish",

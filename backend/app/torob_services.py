@@ -188,6 +188,7 @@ def _submission_item_to_read(item: TorobSubmissionItem) -> TorobSubmissionItemRe
         description=batch_item.description,
         price=item.price,
         base_product_rk=item.base_product_rk,
+        candidates=_torob_candidates(item),
         status=item.status,
         error=item.error,
         image_numbers=[link.asset.upload_order for link in links],
@@ -195,6 +196,34 @@ def _submission_item_to_read(item: TorobSubmissionItem) -> TorobSubmissionItemRe
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
+
+
+def _torob_candidates(item: TorobSubmissionItem) -> list[dict]:
+    metadata = item.response_metadata or {}
+    raw_candidates = metadata.get("candidates", []) if isinstance(metadata, dict) else []
+    if not isinstance(raw_candidates, list):
+        return []
+    candidates: list[dict] = []
+    for candidate in raw_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        base_product_rk = str(candidate.get("base_product_rk") or "").strip()
+        title = str(candidate.get("title") or "").strip()
+        if not base_product_rk or not title:
+            continue
+        score = candidate.get("score")
+        candidates.append(
+            {
+                "base_product_rk": base_product_rk,
+                "title": title,
+                "subtitle": candidate.get("subtitle"),
+                "image_url": candidate.get("image_url"),
+                "price_text": candidate.get("price_text"),
+                "source": str(candidate.get("source") or "torob"),
+                "score": float(score) if isinstance(score, (int, float)) and not isinstance(score, bool) else None,
+            }
+        )
+    return candidates[:8]
 
 
 def _asset_url(asset) -> str:
