@@ -454,6 +454,38 @@ describe('App', () => {
     expect(processCalls).toBe(2);
   });
 
+  it('shows a running processing state while polling the AI list job', async () => {
+    const user = userEvent.setup();
+    let processCalls = 0;
+    const { container } = renderWithApi({
+      onProcess: () => {
+        processCalls += 1;
+      },
+      jobResponses: [
+        { id: 30, batch_id: 10, status: 'running', step: 'vision_extracting', error: null },
+        { id: 30, batch_id: 10, status: 'succeeded', step: 'ready', error: null },
+      ],
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    const processButton = await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ });
+
+    await user.click(processButton);
+
+    expect(processCalls).toBe(1);
+    expect(await screen.findByText('در حال بررسی عکس‌ها')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /در حال ساخت لیست/ })).toBeDisabled();
+    expect(screen.queryByText(/AI provider|timeout|503|Failed to fetch/i)).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByDisplayValue(item.title)).toBeInTheDocument(), { timeout: 3000 });
+    expect(screen.getByText('دسته‌بندی باسلام', { exact: true })).toBeInTheDocument();
+  });
+
   it('does not show split action when grouped photos are confident', async () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({ itemOverride: { confidence: 0.93 } });
@@ -1050,6 +1082,7 @@ function renderWithApi({
   onProcess,
   onPublish,
   onCategorySuggest,
+  jobResponses,
   torobBodies = [],
   listedSellers = [],
   onCreateSeller,
@@ -1078,6 +1111,7 @@ function renderWithApi({
   onProcess?: () => void;
   onPublish?: () => void;
   onCategorySuggest?: () => void;
+  jobResponses?: Array<Record<string, unknown>>;
   torobBodies?: Array<Record<string, unknown>>;
   listedSellers?: Array<typeof seller>;
   onCreateSeller?: () => void;
@@ -1099,6 +1133,7 @@ function renderWithApi({
   createdBatch?: typeof batch;
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
+  let jobResponseIndex = 0;
   let publishJobResponseIndex = 0;
   vi.stubGlobal(
     'fetch',
@@ -1148,7 +1183,14 @@ function renderWithApi({
         onProcess?.();
         return jsonResponse({ job_id: failProcessing ? 31 : 30 }, 202);
       }
-      if (path === '/jobs/30') return jsonResponse({ id: 30, batch_id: 10, status: 'succeeded', step: 'ready', error: null });
+      if (path === '/jobs/30') {
+        if (jobResponses) {
+          const response = jobResponses[Math.min(jobResponseIndex, jobResponses.length - 1)];
+          jobResponseIndex += 1;
+          return jsonResponse(response);
+        }
+        return jsonResponse({ id: 30, batch_id: 10, status: 'succeeded', step: 'ready', error: null });
+      }
       if (path === '/jobs/31') return jsonResponse({ id: 31, batch_id: 10, status: 'failed', step: 'failed', error: 'پردازش کامل نشد.' });
       if (path === '/batches/10/items') return jsonResponse([responseItem]);
       if (path === '/batches/10/categories/basalam/suggest' && method === 'POST') {
