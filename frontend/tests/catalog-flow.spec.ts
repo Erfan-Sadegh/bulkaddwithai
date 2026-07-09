@@ -490,3 +490,95 @@ test('Basalam booth can be connected after reviewing the generated list', async 
     unit_quantity: 1,
   });
 });
+
+test('Basalam reviewed product grid stays readable and multi-photo items use a carousel', async ({ page }) => {
+  const manyAssets = Array.from({ length: 6 }, (_, index) => ({
+    ...assets[0],
+    id: 101 + index,
+    upload_order: index + 1,
+    original_filename: `${index + 1}.jpg`,
+    url: `/files/7/image/000${index + 1}.jpg`,
+  }));
+  const product = (id: number, imageNumbers: number[], confidence = 0.91) => ({
+    ...item,
+    id,
+    title: `محصول ${id}`,
+    confidence,
+    photos: imageNumbers.map((imageNumber, index) => ({
+      asset_id: 100 + imageNumber,
+      upload_order: imageNumber,
+      url: `/files/7/image/000${imageNumber}.jpg`,
+      role: 'product_photo',
+      sort_order: index + 1,
+    })),
+    basalam_category: basalamCategory,
+  });
+  const manyItems = [
+    product(201, [1, 2]),
+    product(202, [3]),
+    product(203, [4]),
+    product(204, [5, 6], 0.52),
+  ];
+
+  await page.route('**/files/**', async (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="#eef3f2"/><circle cx="400" cy="300" r="90" fill="#7fb4aa"/></svg>',
+    }),
+  );
+  await page.route('**/sellers', async (route) => {
+    if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
+    return route.fulfill({ json: [] });
+  });
+  await page.route('**/sellers/1/platform-connections', async (route) => route.fulfill({ json: [basalamConnection] }));
+  await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
+  await page.route('**/batches', async (route) => route.fulfill({ json: batch, status: 201 }));
+  await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: manyAssets, status: 201 }));
+  await page.route('**/batches/7/process', async (route) => route.fulfill({ json: { job_id: 30 }, status: 202 }));
+  await page.route('**/jobs/30', async (route) => route.fulfill({ json: { id: 30, batch_id: 7, status: 'succeeded', step: 'ready', error: null } }));
+  await page.route('**/batches/7/items', async (route) => route.fulfill({ json: manyItems }));
+  await page.route('**/batches/7/categories/basalam/suggest', async (route) => route.fulfill({ json: manyItems }));
+
+  await page.goto('/');
+  await page.locator('.platform-card').first().click();
+  await page.locator('input[accept="image/*"]').first().setInputFiles({
+    name: 'a.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('aaa'),
+  });
+  await page.locator('.action-button').click();
+  await expect(page.locator('.product-card')).toHaveCount(4);
+
+  const metrics = await page.evaluate(() => {
+    const viewport = window.innerWidth;
+    const cards = [...document.querySelectorAll('.product-card')].map((node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        width: rect.width,
+        resultPhotos: node.querySelectorAll('.result-photo').length,
+        hasGallery: node.querySelectorAll('.gallery-dots button').length > 1,
+      };
+    });
+    return {
+      viewport,
+      overflow: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - viewport,
+      cards,
+      splitButtons: document.querySelectorAll('.split-photo-button').length,
+    };
+  });
+
+  expect(metrics.overflow).toBeLessThanOrEqual(1);
+  expect(metrics.cards.every((card) => card.resultPhotos === 1)).toBe(true);
+  expect(metrics.cards.filter((card) => card.hasGallery)).toHaveLength(2);
+  expect(metrics.splitButtons).toBe(1);
+  if (metrics.viewport >= 900) {
+    expect(metrics.cards.every((card) => card.width >= 480)).toBe(true);
+    expect(new Set(metrics.cards.slice(0, 2).map((card) => Math.round(card.top))).size).toBe(1);
+  } else {
+    expect(metrics.cards.every((card) => card.left >= 12 && card.right <= metrics.viewport - 12)).toBe(true);
+    expect(new Set(metrics.cards.map((card) => Math.round(card.left))).size).toBe(1);
+  }
+});
