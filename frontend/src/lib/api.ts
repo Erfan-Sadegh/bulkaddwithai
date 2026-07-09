@@ -14,10 +14,15 @@ import type {
 export const API_BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '');
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: init?.body instanceof FormData ? init.headers : { 'Content-Type': 'application/json', ...init?.headers },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: init?.body instanceof FormData ? init.headers : { 'Content-Type': 'application/json', ...init?.headers },
+    });
+  } catch {
+    throw new Error('ارتباط برقرار نشد. چند لحظه بعد دوباره تلاش کن.');
+  }
   if (!response.ok) {
     const text = await response.text();
     throw new Error(toFriendlyApiError(text, response.status));
@@ -34,6 +39,9 @@ function toFriendlyApiError(text: string, status: number): string {
   if (normalized.includes('no ready products found')) return 'هنوز محصول آماده‌ای برای ثبت وجود ندارد.';
   if (normalized.includes('basalam booth is not connected')) return 'غرفه باسلام هنوز وصل نیست.';
   if (normalized.includes('basalam category was not found')) return 'این دسته‌بندی در باسلام پیدا نشد. دسته دیگری انتخاب کن.';
+  if (normalized.includes('only image and audio uploads are supported')) return 'فقط عکس و صدای ضبط‌شده قابل اضافه کردن است.';
+  if (normalized.includes('one or more items were not found')) return 'یکی از محصول‌ها پیدا نشد. صفحه را دوباره باز کن.';
+  if (normalized.includes('torob submission not found')) return 'درخواست ترب پیدا نشد. صفحه را دوباره باز کن.';
   if (detail && !/[{}[\]":]/.test(detail) && !/[A-Za-z]{3,}/.test(detail)) return detail;
   if (status === 404) return 'مورد موردنظر پیدا نشد. صفحه را دوباره باز کن.';
   if (status === 422) return 'یکی از اطلاعات لازم کامل نیست. فیلدها را چک کن.';
@@ -71,6 +79,7 @@ export const api = {
     request<BasalamCategory[]>(`/integrations/basalam/categories?query=${encodeURIComponent(query)}&limit=12`),
   createBatch: (sellerId: number) => request<Batch>('/batches', { method: 'POST', body: JSON.stringify({ seller_id: sellerId }) }),
   listBatches: (sellerId: number) => request<Batch[]>(`/batches?seller_id=${sellerId}`),
+  getBatch: (batchId: number) => request<Batch>(`/batches/${batchId}`),
   uploadAssets: (batchId: number, files: File[]) => {
     const body = new FormData();
     files.forEach((file) => body.append('files', file));

@@ -269,7 +269,16 @@ def run_basalam_publish_job(
         success_count = 0
         failure_count = 0
         for item in batch.items:
-            published = _publish_item(session, settings, client, connection, job, item, uploaded_by_asset_id)
+            published = _publish_item(
+                session,
+                settings,
+                client,
+                connection,
+                job,
+                item,
+                uploaded_by_asset_id,
+                categories,
+            )
             if published.status == "published":
                 success_count += 1
             else:
@@ -379,6 +388,7 @@ def _publish_item(
     job: PublishJob,
     item: BatchItem,
     uploaded_by_asset_id: dict[int, BasalamUploadedFile],
+    categories: list[BasalamCategory],
 ) -> PublishedProduct:
     published = PublishedProduct(
         batch_item_id=item.id,
@@ -390,8 +400,15 @@ def _publish_item(
     session.add(published)
     session.flush()
     try:
-        payload = _item_to_basalam_payload(settings, item, uploaded_by_asset_id)
-        response = _with_refresh(session, client, connection, lambda: client.create_product(connection, payload))
+        response = _create_product_with_category_retries(
+            session,
+            settings,
+            client,
+            connection,
+            item,
+            uploaded_by_asset_id,
+            categories,
+        )
         external_id = response.get("id") or response.get("product_id") or response.get("data", {}).get("id")
         published.external_product_id = str(external_id) if external_id is not None else None
         published.external_url = response.get("url") or response.get("data", {}).get("url")
@@ -403,6 +420,140 @@ def _publish_item(
     session.commit()
     session.refresh(published)
     return published
+
+
+def _create_product_with_category_retries(
+    session: Session,
+    settings: Settings,
+    client: BasalamClient,
+    connection: PlatformConnection,
+    item: BatchItem,
+    uploaded_by_asset_id: dict[int, BasalamUploadedFile],
+    categories: list[BasalamCategory],
+) -> dict:
+    category_data = _basalam_platform_data(item)
+    original_category = _category_data_snapshot(category_data)
+    last_error: Exception | None = None
+    tried_category_ids: set[int] = set()
+
+    for alternative in [None, *_category_retry_candidates(settings, categories, item)]:
+        if alternative:
+            _upsert_category_data(
+                item,
+                alternative,
+                source="auto",
+                confidence=max(alternative.confidence or 0.0, settings.basalam_category_suggestion_threshold),
+                metadata={
+                    "strategy": "publish_retry",
+                    "reason": "previous_category_rejected",
+                    "candidate_id": alternative.id,
+                },
+            )
+            session.flush()
+
+        current_category = _basalam_platform_data(item)
+        if current_category and current_category.category_id:
+            if current_category.category_id in tried_category_ids:
+                continue
+            tried_category_ids.add(current_category.category_id)
+
+        try:
+            payload = _item_to_basalam_payload(settings, item, uploaded_by_asset_id)
+            return _with_refresh(session, client, connection, lambda: client.create_product(connection, payload))
+        except Exception as exc:
+            last_error = exc
+            if not _can_retry_with_another_category(exc, category_data):
+                _restore_category_data(item, original_category)
+                raise
+
+    _restore_category_data(item, original_category)
+    if last_error:
+        raise last_error
+    raise RuntimeError("Basalam product create failed")
+
+
+def _category_retry_candidates(
+    settings: Settings,
+    categories: list[BasalamCategory],
+    item: BatchItem,
+    limit: int = 3,
+) -> list[BasalamCategory]:
+    data = _basalam_platform_data(item)
+    if not data or data.category_source != "auto" or not data.category_id:
+        return []
+
+    metadata = data.platform_metadata or {}
+    candidate_ids = metadata.get("candidate_ids")
+    candidates_by_id = {category.id: category for category in categories}
+    retry_candidates: list[BasalamCategory] = []
+    metadata_candidate_ids: set[int] = set()
+
+    if isinstance(candidate_ids, list):
+        for raw_id in candidate_ids:
+            try:
+                candidate_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            candidate = candidates_by_id.get(candidate_id)
+            if candidate and candidate.id != data.category_id:
+                metadata_candidate_ids.add(candidate.id)
+                retry_candidates.append(candidate)
+
+    scored_candidates = search_categories(categories, f"{item.title} {item.description}", limit=8)
+    retry_candidates.extend(scored_candidates)
+
+    unique: list[BasalamCategory] = []
+    seen: set[int] = {data.category_id}
+    for candidate in retry_candidates:
+        if candidate.id in seen:
+            continue
+        if not candidate.unit_type_id:
+            continue
+        if (
+            candidate.id not in metadata_candidate_ids
+            and (candidate.confidence or 0) < max(0.45, settings.basalam_category_suggestion_threshold - 0.18)
+        ):
+            continue
+        seen.add(candidate.id)
+        unique.append(candidate)
+        if len(unique) >= limit:
+            break
+    return unique
+
+
+def _can_retry_with_another_category(exc: Exception, category_data: BatchItemPlatformData | None) -> bool:
+    if not category_data or category_data.category_source != "auto":
+        return False
+    normalized = str(exc).lower()
+    if any(token in normalized for token in ("stock", "inventory", "price", "preparation", "weight", "unit_quantity")):
+        return False
+    return any(token in normalized for token in ("category", "attribute", "product(s) failed", "422", "دسته", "ویژگی"))
+
+
+def _category_data_snapshot(data: BatchItemPlatformData | None) -> dict | None:
+    if not data:
+        return None
+    return {
+        "category_id": data.category_id,
+        "category_title": data.category_title,
+        "category_path": data.category_path,
+        "category_confidence": data.category_confidence,
+        "category_source": data.category_source,
+        "category_unit_type_id": data.category_unit_type_id,
+        "category_unit_type_title": data.category_unit_type_title,
+        "category_max_preparation_days": data.category_max_preparation_days,
+        "platform_metadata": data.platform_metadata,
+    }
+
+
+def _restore_category_data(item: BatchItem, snapshot: dict | None) -> None:
+    if snapshot is None:
+        return
+    data = _basalam_platform_data(item)
+    if not data:
+        return
+    for key, value in snapshot.items():
+        setattr(data, key, value)
 
 
 def _item_to_basalam_payload(

@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from './App';
+import type { ProductItem } from './lib/types';
 
 const now = new Date().toISOString();
 
@@ -52,7 +53,20 @@ const imageAssets = [
   },
 ];
 
-const item = {
+const audioAsset = {
+  id: 21,
+  batch_id: 10,
+  type: 'audio',
+  upload_order: 1,
+  original_filename: 'voice.webm',
+  mime_type: 'audio/webm',
+  size_bytes: 5,
+  checksum: 'voice',
+  url: '/files/10/audio/0001.webm',
+  created_at: now,
+};
+
+const item: ProductItem = {
   id: 101,
   batch_id: 10,
   title: 'محصول تستی',
@@ -91,6 +105,7 @@ const basalamConnection = {
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.history.pushState({}, '', '/');
     window.localStorage.clear();
     window.sessionStorage.clear();
     Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
@@ -128,6 +143,98 @@ describe('App', () => {
     expect(await screen.findByAltText('عکس شماره ۱')).toBeInTheDocument();
   });
 
+  it('shrinks very large photos before uploading them', async () => {
+    const user = userEvent.setup();
+    const uploadedFiles: File[] = [];
+    const originalCreateImageBitmap = window.createImageBitmap;
+    const bitmap = { width: 4200, height: 3000, close: vi.fn() } as unknown as ImageBitmap;
+    Object.defineProperty(window, 'createImageBitmap', {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(bitmap),
+    });
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      const element = originalCreateElement(tagName);
+      if (tagName.toLowerCase() === 'canvas') {
+        Object.defineProperty(element, 'getContext', {
+          configurable: true,
+          value: vi.fn(() => ({ drawImage: vi.fn() })),
+        });
+        Object.defineProperty(element, 'toBlob', {
+          configurable: true,
+          value: (callback: BlobCallback) => callback(new Blob(['small-image'], { type: 'image/jpeg' })),
+        });
+      }
+      return element;
+    });
+
+    const { container } = renderWithApi({ uploadAssetCount: 1, uploadedFiles });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['x'.repeat(2_000_000)], 'large.png', { type: 'image/png' }),
+      new File(['y'.repeat(2_000_000)], 'second.png', { type: 'image/png' }),
+    ]);
+
+    await waitFor(() => expect(uploadedFiles).toHaveLength(2));
+    expect(uploadedFiles[0].name).toBe('large.jpg');
+    expect(uploadedFiles[0].type).toBe('image/jpeg');
+    expect(uploadedFiles[0].size).toBeLessThan(2_000_000);
+    expect(uploadedFiles[1].name).toBe('second.jpg');
+    expect(uploadedFiles[1].type).toBe('image/jpeg');
+    expect(bitmap.close).toHaveBeenCalledTimes(2);
+
+    Object.defineProperty(window, 'createImageBitmap', {
+      configurable: true,
+      value: originalCreateImageBitmap,
+    });
+  });
+
+  it('keeps selected photo order when image preparation finishes out of order', async () => {
+    const user = userEvent.setup();
+    const uploadedFiles: File[] = [];
+    const originalCreateImageBitmap = window.createImageBitmap;
+    Object.defineProperty(window, 'createImageBitmap', {
+      configurable: true,
+      value: vi.fn(async (file: File) => {
+        if (file.name === 'first.png') await new Promise((resolve) => window.setTimeout(resolve, 30));
+        return { width: 4200, height: 3000, close: vi.fn() } as unknown as ImageBitmap;
+      }),
+    });
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      const element = originalCreateElement(tagName);
+      if (tagName.toLowerCase() === 'canvas') {
+        Object.defineProperty(element, 'getContext', {
+          configurable: true,
+          value: vi.fn(() => ({ drawImage: vi.fn() })),
+        });
+        Object.defineProperty(element, 'toBlob', {
+          configurable: true,
+          value: (callback: BlobCallback) => callback(new Blob(['small-image'], { type: 'image/jpeg' })),
+        });
+      }
+      return element;
+    });
+
+    const { container } = renderWithApi({ uploadAssetCount: 2, uploadedFiles });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['x'.repeat(2_000_000)], 'first.png', { type: 'image/png' }),
+      new File(['y'.repeat(2_000_000)], 'second.png', { type: 'image/png' }),
+    ]);
+
+    await waitFor(() => expect(uploadedFiles.map((file) => file.name)).toEqual(['first.jpg', 'second.jpg']));
+
+    Object.defineProperty(window, 'createImageBitmap', {
+      configurable: true,
+      value: originalCreateImageBitmap,
+    });
+  });
+
   it('creates a browser-local seller instead of reusing another connected seller', async () => {
     const user = userEvent.setup();
     const onCreateSeller = vi.fn();
@@ -153,6 +260,68 @@ describe('App', () => {
     expect(screen.getByText('غرفه باسلام')).toBeInTheDocument();
     expect(screen.queryByText('غرفه ساز')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'اتصال غرفه' })).toBeInTheDocument();
+  });
+
+  it('shows a clear Persian message when Basalam OAuth is not configured locally', async () => {
+    const user = userEvent.setup();
+    renderWithApi({
+      oauthResponse: {
+        configured: false,
+        url: null,
+        state: null,
+        error: 'اتصال باسلام در این محیط تنظیم نشده است.',
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.click(await screen.findByRole('button', { name: 'اتصال غرفه' }));
+
+    expect(await screen.findByText('اتصال باسلام در این محیط تنظیم نشده است.')).toBeInTheDocument();
+    expect(screen.queryByText(/503|Service Unavailable|Failed to fetch/i)).not.toBeInTheDocument();
+  });
+
+  it('hides raw network errors behind a Persian message', async () => {
+    const user = userEvent.setup();
+    renderWithApi({ failCreateBatchNetwork: true });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+
+    expect(await screen.findByText('ارتباط برقرار نشد. چند لحظه بعد دوباره تلاش کن.')).toBeInTheDocument();
+    expect(screen.queryByText(/Failed to fetch|NetworkError|TypeError/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps Basalam and Torob upload workspaces separate', async () => {
+    const user = userEvent.setup();
+    const onCreateBatch = vi.fn();
+    const { container } = renderWithApi({ onCreateBatch, uploadAssetCount: 1 });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await waitFor(() => expect(onCreateBatch).toHaveBeenCalledTimes(1));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }));
+    expect(await screen.findByText('۱ عکس اضافه شده')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'تغییر مسیر' }));
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به ترب/ }));
+    await waitFor(() => expect(onCreateBatch).toHaveBeenCalledTimes(2));
+
+    expect(screen.getByText('فروشگاه ترب')).toBeInTheDocument();
+    expect(screen.queryByText('۱ عکس اضافه شده')).not.toBeInTheDocument();
+    expect(screen.queryByAltText('عکس شماره ۱')).not.toBeInTheDocument();
+  });
+
+  it('shows a minimal loading state while photo upload is slow', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({ uploadAssetCount: 1, uploadDelayMs: 80 });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }));
+
+    expect(await screen.findByText('در حال آماده‌سازی عکس‌ها')).toBeInTheDocument();
+    expect(await screen.findByText('۱ عکس اضافه شده')).toBeInTheDocument();
   });
 
   it('shows results, formats Persian price, and confirms starting over', async () => {
@@ -186,6 +355,58 @@ describe('App', () => {
     expect(await screen.findByRole('dialog')).toHaveTextContent('محصولات جدید اضافه می‌کنی؟');
     await user.click(screen.getByRole('button', { name: 'نه، برگرد' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('records optional voice before building the AI list', async () => {
+    const user = userEvent.setup();
+    const uploadKinds: string[] = [];
+    let processCalls = 0;
+    const stopTrack = vi.fn();
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] });
+    Object.defineProperty(window.navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    class FakeMediaRecorder {
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void | Promise<void>) | null = null;
+
+      start() {
+        this.ondataavailable?.({ data: new Blob(['voice'], { type: 'audio/webm' }) } as BlobEvent);
+      }
+
+      stop() {
+        void this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+    const { container } = renderWithApi({
+      uploadKinds,
+      onProcess: () => {
+        processCalls += 1;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await screen.findByText('۲ عکس اضافه شده');
+
+    await user.click(screen.getByRole('button', { name: 'ضبط صدا' }));
+    await user.click(await screen.findByRole('button', { name: 'توقف ضبط' }));
+
+    expect(await screen.findByText('صدا ضبط شد و آماده پردازش است.')).toBeInTheDocument();
+    expect(uploadKinds).toEqual(['image', 'audio']);
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    expect(stopTrack).toHaveBeenCalled();
+
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+
+    await waitFor(() => expect(processCalls).toBe(1));
+    expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
   });
 
   it('keeps files and offers retry when processing fails', async () => {
@@ -266,6 +487,215 @@ describe('App', () => {
     expect(container.querySelector('.product-card.needs-info')).toBeInTheDocument();
   });
 
+  it('lets the seller connect Basalam from the reviewed list', async () => {
+    const user = userEvent.setup();
+    const updateBodies: Array<Record<string, unknown>> = [];
+    const { container } = renderWithApi({
+      updateBodies,
+      oauthResponse: {
+        configured: false,
+        url: null,
+        state: null,
+        error: 'اتصال باسلام در این محیط تنظیم نشده است.',
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+    await screen.findByDisplayValue(item.title);
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    fireEvent.change(extraInputs[0], { target: { value: '۵' } });
+    fireEvent.change(extraInputs[1], { target: { value: '۲' } });
+    fireEvent.change(extraInputs[2], { target: { value: '۳۰۰' } });
+    fireEvent.change(extraInputs[3], { target: { value: '۵۰۰' } });
+    fireEvent.change(extraInputs[4], { target: { value: '۱' } });
+
+    await user.click(screen.getByRole('button', { name: 'اتصال غرفه باسلام' }));
+
+    expect(await screen.findByText('اتصال باسلام در این محیط تنظیم نشده است.')).toBeInTheDocument();
+    expect(updateBodies[updateBodies.length - 1]).toMatchObject({
+      stock: 5,
+      preparation_days: 2,
+      weight_grams: 300,
+      package_weight_grams: 500,
+      unit_quantity: 1,
+    });
+    expect(window.localStorage.getItem('bulkadd_basalam_active_batch_id')).toBe('10');
+  });
+
+  it('saves edited fields when connecting from the top Basalam panel after review', async () => {
+    const user = userEvent.setup();
+    const updateBodies: Array<Record<string, unknown>> = [];
+    const { container } = renderWithApi({
+      updateBodies,
+      oauthResponse: {
+        configured: false,
+        url: null,
+        state: null,
+        error: 'اتصال باسلام در این محیط تنظیم نشده است.',
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+    await screen.findByDisplayValue(item.title);
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    fireEvent.change(extraInputs[0], { target: { value: '۷' } });
+    fireEvent.change(extraInputs[1], { target: { value: '۳' } });
+    fireEvent.change(extraInputs[2], { target: { value: '۴۰۰' } });
+    fireEvent.change(extraInputs[3], { target: { value: '۶۰۰' } });
+    fireEvent.change(extraInputs[4], { target: { value: '۲' } });
+
+    await user.click(screen.getByRole('button', { name: 'اتصال غرفه' }));
+
+    expect(await screen.findByText('اتصال باسلام در این محیط تنظیم نشده است.')).toBeInTheDocument();
+    expect(updateBodies[updateBodies.length - 1]).toMatchObject({
+      stock: 7,
+      preparation_days: 3,
+      weight_grams: 400,
+      package_weight_grams: 600,
+      unit_quantity: 2,
+    });
+  });
+
+  it('returns to the same Basalam list after OAuth callback', async () => {
+    window.localStorage.setItem('bulkadd_seller_id', '1');
+    window.localStorage.setItem('bulkadd_basalam_active_batch_id', '10');
+    window.history.pushState({}, '', '/?basalam_status=success&seller_id=1');
+
+    renderWithApi({
+      platformConnections: [basalamConnection],
+      itemOverride: {
+        stock: 5,
+        preparation_days: 2,
+        weight_grams: 300,
+        package_weight_grams: 500,
+        unit_quantity: 1,
+      },
+    });
+
+    expect(await screen.findByText('غرفه تست')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
+    expect(screen.getByLabelText('موجودی')).toHaveValue('۵');
+    expect(screen.queryByRole('button', { name: /افزودن محصولات به باسلام/ })).not.toBeInTheDocument();
+  });
+
+  it('returns to the Basalam upload screen after OAuth when no list was active', async () => {
+    const onCreateBatch = vi.fn();
+    window.localStorage.setItem('bulkadd_seller_id', '1');
+    window.history.pushState({}, '', '/?basalam_status=success&seller_id=1');
+
+    renderWithApi({
+      platformConnections: [basalamConnection],
+      onCreateBatch,
+      createdBatch: { ...batch, id: 12, seller_id: 1 },
+    });
+
+    expect(await screen.findByText('غرفه تست')).toBeInTheDocument();
+    expect(screen.getByText('عکس محصولات')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /افزودن محصولات به باسلام/ })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('bulkadd_basalam_active_batch_id')).toBe('12');
+    expect(onCreateBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a Persian error and keeps the Basalam path after failed OAuth callback', async () => {
+    const onCreateBatch = vi.fn();
+    window.localStorage.setItem('bulkadd_seller_id', '1');
+    window.history.pushState({}, '', '/?basalam_status=failed&seller_id=1');
+
+    renderWithApi({ onCreateBatch, createdBatch: { ...batch, id: 13, seller_id: 1 } });
+
+    expect(await screen.findByText('اتصال غرفه باسلام انجام نشد. دوباره تلاش کن.')).toBeInTheDocument();
+    expect(screen.getByText('عکس محصولات')).toBeInTheDocument();
+    expect(screen.queryByText(/failed|oauth|callback|503/i)).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('bulkadd_basalam_active_batch_id')).toBe('13');
+    expect(onCreateBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restore a saved Basalam batch from another seller after OAuth', async () => {
+    const onCreateBatch = vi.fn();
+    window.localStorage.setItem('bulkadd_seller_id', '1');
+    window.localStorage.setItem('bulkadd_basalam_active_batch_id', '10');
+    window.history.pushState({}, '', '/?basalam_status=success&seller_id=1');
+
+    renderWithApi({
+      platformConnections: [basalamConnection],
+      onCreateBatch,
+      restoredBatch: { ...batch, seller_id: 99 },
+      createdBatch: { ...batch, id: 11, seller_id: 1 },
+    });
+
+    expect(await screen.findByText('غرفه تست')).toBeInTheDocument();
+    expect(await screen.findByText('عکس محصولات')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(item.title)).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('bulkadd_basalam_active_batch_id')).toBe('11');
+    expect(onCreateBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('records voice after an incomplete list and reprocesses the same batch', async () => {
+    const user = userEvent.setup();
+    let processCalls = 0;
+    const stopTrack = vi.fn();
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] });
+    Object.defineProperty(window.navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    class FakeMediaRecorder {
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void | Promise<void>) | null = null;
+
+      start() {
+        this.ondataavailable?.({ data: new Blob(['voice'], { type: 'audio/webm' }) } as BlobEvent);
+      }
+
+      stop() {
+        void this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      onProcess: () => {
+        processCalls += 1;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+    await screen.findByDisplayValue(item.title);
+    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
+
+    const validationDock = await screen.findByText('اطلاعات لازم کامل نیست.');
+    const dock = validationDock.closest('.dock-message') as HTMLElement;
+    expect(within(dock).getByRole('button', { name: 'تکمیل فیلدها' })).toBeInTheDocument();
+    expect(within(dock).queryByRole('button', { name: 'اولین مورد' })).not.toBeInTheDocument();
+    await user.click(within(dock).getByRole('button', { name: 'ضبط صدا' }));
+    await user.click(await within(dock).findByRole('button', { name: 'توقف ضبط' }));
+
+    await waitFor(() => expect(within(dock).getByRole('button', { name: 'بازبینی' })).not.toBeDisabled());
+    await user.click(within(dock).getByRole('button', { name: 'بازبینی' }));
+
+    await waitFor(() => expect(processCalls).toBe(2));
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    expect(stopTrack).toHaveBeenCalled();
+  });
+
   it('publishes reviewed products to connected Basalam booth', async () => {
     const user = userEvent.setup();
     const updateBodies: Array<Record<string, unknown>> = [];
@@ -304,6 +734,117 @@ describe('App', () => {
       unit_quantity: 1,
     });
     await waitFor(() => expect(container.querySelector('.publish-status')).toBeInTheDocument());
+    expect(screen.getByText('محصول‌ها در باسلام ثبت شدند')).toBeInTheDocument();
+    expect(screen.getByText('۱ محصول با موفقیت ثبت شد.')).toBeInTheDocument();
+  });
+
+  it('humanizes Basalam publish failures and hides raw English errors', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      publishJobResponse: {
+        id: 80,
+        batch_id: 10,
+        connection_id: 501,
+        platform: 'basalam',
+        status: 'failed',
+        step: 'failed',
+        error: 'Basalam product create failed: 422 product(s) failed 1',
+      },
+      publishedProductsResponse: [
+        {
+          id: 1,
+          batch_item_id: 101,
+          publish_job_id: 80,
+          connection_id: 501,
+          platform: 'basalam',
+          external_product_id: null,
+          external_url: null,
+          status: 'failed',
+          error: 'Basalam product create failed: 422 product(s) failed 1',
+          response_metadata: {},
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+    await screen.findByDisplayValue(item.title);
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    fireEvent.change(extraInputs[0], { target: { value: '۵' } });
+    fireEvent.change(extraInputs[1], { target: { value: '۲' } });
+    fireEvent.change(extraInputs[2], { target: { value: '۳۰۰' } });
+    fireEvent.change(extraInputs[3], { target: { value: '۵۰۰' } });
+    fireEvent.change(extraInputs[4], { target: { value: '۱' } });
+    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
+
+    expect(await screen.findByText('ثبت محصول‌ها انجام نشد')).toBeInTheDocument();
+    expect(screen.getByText('۱ محصول ثبت نشد.')).toBeInTheDocument();
+    const genericFailure = 'ثبت این محصول ناموفق بود. فیلدهای لازم را چک کن و دوباره تلاش کن.';
+    expect(screen.getAllByText(genericFailure)).toHaveLength(2);
+    expect(within(container.querySelector('.save-dock') as HTMLElement).getByText(genericFailure)).toBeInTheDocument();
+    expect(screen.queryByText(/Basalam|product\(s\) failed|failed 1|422/i)).not.toBeInTheDocument();
+  });
+
+  it('explains category publish failures without saying the category was missing', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      publishJobResponse: {
+        id: 80,
+        batch_id: 10,
+        connection_id: 501,
+        platform: 'basalam',
+        status: 'failed',
+        step: 'failed',
+        error: 'Basalam product create failed: 422 category_id is invalid',
+      },
+      publishedProductsResponse: [
+        {
+          id: 1,
+          batch_item_id: 101,
+          publish_job_id: 80,
+          connection_id: 501,
+          platform: 'basalam',
+          external_product_id: null,
+          external_url: null,
+          status: 'failed',
+          error: 'Basalam product create failed: 422 category_id is invalid',
+          response_metadata: {},
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+    await screen.findByDisplayValue(item.title);
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    fireEvent.change(extraInputs[0], { target: { value: '۵' } });
+    fireEvent.change(extraInputs[1], { target: { value: '۲' } });
+    fireEvent.change(extraInputs[2], { target: { value: '۳۰۰' } });
+    fireEvent.change(extraInputs[3], { target: { value: '۵۰۰' } });
+    fireEvent.change(extraInputs[4], { target: { value: '۱' } });
+    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
+
+    const categoryError = 'باسلام این دسته‌بندی را قبول نکرد. روی «تغییر» در کارت محصول بزن و دسته نزدیک‌تر را انتخاب کن.';
+    expect(await screen.findAllByText(categoryError)).toHaveLength(2);
+    expect(within(container.querySelector('.save-dock') as HTMLElement).getByText(categoryError)).toBeInTheDocument();
+    expect(screen.queryByText(/category_id|invalid|422|Basalam/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('دسته‌بندی این محصول درست نیست یا انتخاب نشده. دسته‌بندی را اصلاح کن و دوباره ثبت کن.')).not.toBeInTheDocument();
   });
 
   it('creates a Torob review request without touching Basalam publish flow', async () => {
@@ -312,13 +853,14 @@ describe('App', () => {
     let categorySuggestCalled = false;
     const { container } = renderWithApi({
       torobBodies,
+      torobSubmissionMessage: 'Submission created successfully. Pending admin review.',
       onCategorySuggest: () => {
         categorySuggestCalled = true;
       },
     });
 
     await screen.findByRole('heading', { level: 1 });
-    await user.click(screen.getByRole('button', { name: /افزودن محصولات به ترب/ }));
+    await user.click(await screen.findByRole('button', { name: /افزودن محصولات به ترب/ }));
     expect(screen.getByText('فروشگاه ترب')).toBeInTheDocument();
     expect(screen.queryByText('غرفه باسلام')).not.toBeInTheDocument();
 
@@ -339,6 +881,64 @@ describe('App', () => {
     await waitFor(() => expect(torobBodies).toHaveLength(1));
     expect(torobBodies[0]).toEqual({ shop_name: 'فروشگاه من', contact_mobile: '09120000000' });
     expect(await screen.findByRole('dialog')).toHaveTextContent('درخواست ترب ثبت شد');
+    expect(screen.getByRole('dialog')).toHaveTextContent('درخواستت ثبت شد. به زودی بررسی می‌شود.');
+    expect(screen.queryByText(/Submission created|Pending admin/i)).not.toBeInTheDocument();
+  });
+
+  it('lets Torob sellers add voice before AI list without running Basalam category logic', async () => {
+    const user = userEvent.setup();
+    const uploadKinds: string[] = [];
+    let categorySuggestCalled = false;
+    let processCalls = 0;
+    const stopTrack = vi.fn();
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] });
+    Object.defineProperty(window.navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    class FakeMediaRecorder {
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void | Promise<void>) | null = null;
+
+      start() {
+        this.ondataavailable?.({ data: new Blob(['torob voice'], { type: 'audio/webm' }) } as BlobEvent);
+      }
+
+      stop() {
+        void this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+    const { container } = renderWithApi({
+      uploadAssetCount: 1,
+      uploadKinds,
+      onProcess: () => {
+        processCalls += 1;
+      },
+      onCategorySuggest: () => {
+        categorySuggestCalled = true;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به ترب/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }));
+    await screen.findByText('۱ عکس اضافه شده');
+
+    await user.click(screen.getByRole('button', { name: 'ضبط صدا' }));
+    await user.click(await screen.findByRole('button', { name: 'توقف ضبط' }));
+
+    expect(await screen.findByText('صدا ضبط شد و آماده پردازش است.')).toBeInTheDocument();
+    expect(uploadKinds).toEqual(['image', 'audio']);
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    expect(stopTrack).toHaveBeenCalled();
+
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+
+    await waitFor(() => expect(processCalls).toBe(1));
+    expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
+    expect(categorySuggestCalled).toBe(false);
+    expect(screen.queryByText('دسته‌بندی باسلام')).not.toBeInTheDocument();
   });
 });
 
@@ -355,6 +955,17 @@ function renderWithApi({
   listedSellers = [],
   onCreateSeller,
   onListSellers,
+  onCreateBatch,
+  oauthResponse,
+  failCreateBatchNetwork,
+  publishJobResponse,
+  publishedProductsResponse,
+  uploadKinds,
+  uploadedFiles,
+  uploadDelayMs = 0,
+  torobSubmissionMessage = 'درخواستت ثبت شد. به زودی بررسی می‌شود.',
+  restoredBatch = batch,
+  createdBatch = batch,
 }: {
   failProcessing?: boolean;
   uploadAssetCount?: number;
@@ -368,6 +979,17 @@ function renderWithApi({
   listedSellers?: Array<typeof seller>;
   onCreateSeller?: () => void;
   onListSellers?: () => void;
+  onCreateBatch?: () => void;
+  oauthResponse?: Record<string, unknown>;
+  failCreateBatchNetwork?: boolean;
+  publishJobResponse?: Record<string, unknown>;
+  publishedProductsResponse?: Array<Record<string, unknown>>;
+  uploadKinds?: string[];
+  uploadedFiles?: File[];
+  uploadDelayMs?: number;
+  torobSubmissionMessage?: string;
+  restoredBatch?: typeof batch;
+  createdBatch?: typeof batch;
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
   vi.stubGlobal(
@@ -387,8 +1009,31 @@ function renderWithApi({
       if (path === '/sellers/1/platform-connections') return jsonResponse(platformConnections);
       if (path === '/sellers/1' && method === 'GET') return jsonResponse(seller);
       if (path === '/sellers/1' && method === 'PATCH') return jsonResponse(seller);
-      if (path === '/batches' && method === 'POST') return jsonResponse(batch, 201);
-      if (path === '/batches/10/assets' && method === 'POST') return jsonResponse(imageAssets.slice(0, uploadAssetCount), 201);
+      if (path === '/integrations/basalam/oauth-url') {
+        return jsonResponse(
+          oauthResponse ?? {
+            configured: false,
+            url: null,
+            state: null,
+            error: 'اتصال باسلام در این محیط تنظیم نشده است.',
+          },
+        );
+      }
+      if (path === '/batches' && method === 'POST') {
+        onCreateBatch?.();
+        if (failCreateBatchNetwork) throw new TypeError('Failed to fetch');
+        return jsonResponse(createdBatch, 201);
+      }
+      if (path === '/batches/10' && method === 'GET') return jsonResponse(restoredBatch);
+      if (path === '/batches/10/assets' && method === 'GET') return jsonResponse(imageAssets.slice(0, uploadAssetCount));
+      if (path === '/batches/10/assets' && method === 'POST') {
+        const files = init?.body instanceof FormData ? init.body.getAll('files') : [];
+        const hasAudio = files.some((file) => file instanceof File && file.type.startsWith('audio/'));
+        uploadedFiles?.push(...files.filter((file): file is File => file instanceof File));
+        uploadKinds?.push(hasAudio ? 'audio' : 'image');
+        if (uploadDelayMs > 0 && !hasAudio) await new Promise((resolve) => window.setTimeout(resolve, uploadDelayMs));
+        return jsonResponse(hasAudio ? [audioAsset] : imageAssets.slice(0, uploadAssetCount), 201);
+      }
       if (path === '/batches/10/process' && method === 'POST') {
         onProcess?.();
         return jsonResponse({ job_id: failProcessing ? 31 : 30 }, 202);
@@ -454,30 +1099,42 @@ function renderWithApi({
         return jsonResponse({ job_id: 80 }, 202);
       }
       if (path === '/publish-jobs/80') {
-        return jsonResponse({ id: 80, batch_id: 10, connection_id: 501, platform: 'basalam', status: 'succeeded', step: 'ready', error: null });
-      }
-      if (path === '/batches/10/published-products') {
-        return jsonResponse([
-          {
-            id: 1,
-            batch_item_id: 101,
-            publish_job_id: 80,
+        return jsonResponse(
+          publishJobResponse ?? {
+            id: 80,
+            batch_id: 10,
             connection_id: 501,
             platform: 'basalam',
-            external_product_id: '9001',
-            external_url: 'https://basalam.com/p/9001',
-            status: 'published',
+            status: 'succeeded',
+            step: 'ready',
             error: null,
-            response_metadata: {},
-            created_at: now,
-            updated_at: now,
           },
-        ]);
+        );
+      }
+      if (path === '/batches/10/published-products') {
+        return jsonResponse(
+          publishedProductsResponse ?? [
+            {
+              id: 1,
+              batch_item_id: 101,
+              publish_job_id: 80,
+              connection_id: 501,
+              platform: 'basalam',
+              external_product_id: '9001',
+              external_url: 'https://basalam.com/p/9001',
+              status: 'published',
+              error: null,
+              response_metadata: {},
+              created_at: now,
+              updated_at: now,
+            },
+          ],
+        );
       }
       if (path === '/batches/10/torob-submissions' && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}'));
         torobBodies.push(body);
-        return jsonResponse({ id: 701, status: 'pending', message: 'درخواستت ثبت شد. به زودی بررسی می‌شود.' }, 201);
+        return jsonResponse({ id: 701, status: 'pending', message: torobSubmissionMessage }, 201);
       }
 
       return jsonResponse({});

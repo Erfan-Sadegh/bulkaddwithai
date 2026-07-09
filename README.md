@@ -73,6 +73,10 @@ npm run e2e
 
 جزئیات بیشتر در [docs/ONBOARDING.md](docs/ONBOARDING.md).
 
+## Release Milestone
+
+مرز ریلیز کوچک فعلی در [docs/RELEASE.md](docs/RELEASE.md) ثبت شده است. برای جلوگیری از loop بی‌پایان، این milestone با عنوان `v0.1-basalam-feedback` فقط روی publish باسلام برای بازخورد واقعی و مسیر ترب تا ساخت لیست/ثبت درخواست تمرکز دارد.
+
 ## Production Image
 
 برای production یک image واحد ساخته می‌شود که frontend build شده و backend FastAPI را با هم سرو می‌کند.

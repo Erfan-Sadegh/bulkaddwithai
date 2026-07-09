@@ -622,14 +622,14 @@ a {
 
 .item-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 420px));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 520px));
   gap: 16px;
   justify-content: center;
   align-items: stretch;
 }
 
 .item-list.torob-item-list {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 420px));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 520px));
   justify-content: center;
 }
 
@@ -673,7 +673,7 @@ a {
 .result-photo-frame {
   position: relative;
   min-height: 0;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 4 / 3;
   overflow: hidden;
   border: 1px solid #edf1f0;
   border-radius: 8px;
@@ -889,8 +889,8 @@ a {
 }
 
 .bulk-prep-close {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   display: inline-grid;
   place-items: center;
   border: 0;
@@ -1607,7 +1607,7 @@ a {
   }
 
   .product-card .result-photo-frame {
-    aspect-ratio: 4 / 3;
+    aspect-ratio: 16 / 11;
   }
 
   .actions {
@@ -1630,17 +1630,19 @@ a {
   .bulk-prep-box {
     width: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 34px;
     align-items: stretch;
-    gap: 10px;
-    padding: 12px;
+    gap: 8px;
+    padding: 10px;
   }
 
   .bulk-prep-field {
+    grid-column: 1;
+    grid-row: 1;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
-    padding-inline-end: 30px;
+    padding-inline-end: 0;
   }
 
   .bulk-prep-field > span {
@@ -1656,14 +1658,18 @@ a {
 
   .prep-apply {
     grid-column: 1 / -1;
-    width: 100%;
+    justify-self: start;
+    width: auto;
+    min-width: 132px;
     min-height: 40px;
   }
 
   .bulk-prep-close {
-    position: absolute;
-    top: 9px;
-    inset-inline-end: 9px;
+    position: static;
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+    justify-self: end;
   }
 
   .product-extra-fields {

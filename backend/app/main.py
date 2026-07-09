@@ -210,7 +210,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/integrations/basalam/oauth-url", response_model=OAuthUrlResponse)
     def get_basalam_oauth_url(seller_id: int, session: Session = Depends(get_session)):
-        url, state = create_basalam_oauth_url(settings, session, basalam_client_factory(), seller_id)
+        try:
+            url, state = create_basalam_oauth_url(settings, session, basalam_client_factory(), seller_id)
+        except HTTPException as exc:
+            if exc.status_code == 503:
+                return OAuthUrlResponse(
+                    configured=False,
+                    url=None,
+                    state=None,
+                    error="اتصال باسلام در این محیط تنظیم نشده است.",
+                )
+            raise
         return OAuthUrlResponse(configured=True, url=url, state=state)
 
     @app.get("/integrations/basalam/categories", response_model=list[BasalamCategoryRead])

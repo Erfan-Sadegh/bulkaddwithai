@@ -56,7 +56,9 @@ type PublishValidationIssue = {
 };
 const BASALAM_AUTO_CATEGORY_THRESHOLD = 0.62;
 const PHOTO_GROUP_WARNING_THRESHOLD = 0.65;
+const IMAGE_PREPARE_CONCURRENCY = 2;
 const SELLER_STORAGE_KEY = 'bulkadd_seller_id';
+const BASALAM_ACTIVE_BATCH_STORAGE_KEY = 'bulkadd_basalam_active_batch_id';
 const REQUIRED_FIELD_LABELS: Record<RequiredField, string> = {
   title: 'نام محصول',
   price_toman: 'قیمت',
@@ -119,6 +121,7 @@ function MainApp() {
   const [error, setError] = useState<string | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
   const resultsAutoScrolledRef = useRef(false);
+  const platformRequestRef = useRef(0);
 
   const imageAssets = useMemo(
     () => assets.filter((asset) => asset.type === 'image').sort((a, b) => a.upload_order - b.upload_order),
@@ -192,28 +195,76 @@ function MainApp() {
     }, 100);
   }, [items]);
 
+  async function restoreBasalamBatchAfterOAuth(currentSeller: Seller): Promise<boolean> {
+    const batchId = readActiveBasalamBatchId();
+    if (!batchId) {
+      setPlatform('basalam');
+      const created = await api.createBatch(currentSeller.id);
+      rememberActiveBasalamBatchId(created.id);
+      setBatch(created);
+      setAssets([]);
+      setItems([]);
+      setDrafts({});
+      setPublishJob(null);
+      setPublishedProducts([]);
+      setJob(null);
+      setShowPublishValidation(false);
+      setTorobSuccessMessage(null);
+      return true;
+    }
+    try {
+      const restoredBatch = await api.getBatch(batchId);
+      if (restoredBatch.seller_id !== currentSeller.id) throw new Error('wrong_seller');
+      const [restoredAssets, restoredItems] = await Promise.all([
+        api.listAssets(restoredBatch.id),
+        api.listItems(restoredBatch.id).catch(() => []),
+      ]);
+      setPlatform('basalam');
+      setBatch(restoredBatch);
+      setAssets(restoredAssets);
+      setItems(restoredItems);
+      setPublishJob(null);
+      setPublishedProducts([]);
+      setJob(null);
+      setShowPublishValidation(false);
+      setTorobSuccessMessage(null);
+      resultsAutoScrolledRef.current = restoredItems.length === 0;
+      return true;
+    } catch {
+      window.localStorage.removeItem(BASALAM_ACTIVE_BATCH_STORAGE_KEY);
+      setPlatform('basalam');
+      const created = await api.createBatch(currentSeller.id);
+      rememberActiveBasalamBatchId(created.id);
+      setBatch(created);
+      setAssets([]);
+      setItems([]);
+      setDrafts({});
+      return true;
+    }
+  }
+
   async function bootstrapWorkspace() {
     setBooting(true);
     setError(null);
     try {
+      const pendingBasalamCallback = readFrontendBasalamCallbackUrl();
+      if (pendingBasalamCallback) {
+        setPlatform('basalam');
+        window.location.assign(pendingBasalamCallback);
+        return;
+      }
       const oauthResult = readBasalamReturn();
       const currentSeller = await resolveSellerForThisBrowser(oauthResult?.sellerId ?? null);
       if (oauthResult?.status === 'success') showToast('غرفه باسلام وصل شد.');
       if (oauthResult?.status === 'failed') setError('اتصال غرفه باسلام انجام نشد. دوباره تلاش کن.');
-      const currentBatch = await api.createBatch(currentSeller.id);
       const currentConnections = await api.listPlatformConnections(currentSeller.id).catch(() => []);
       setSeller(currentSeller);
-      setBatch(currentBatch);
       setConnections(Array.isArray(currentConnections) ? currentConnections : []);
-      setAssets([]);
-      setItems([]);
-      setDrafts({});
-      resultsAutoScrolledRef.current = false;
-      setPublishedProducts([]);
-      setPublishJob(null);
-      setJob(null);
-      setShowPublishValidation(false);
-      setTorobSuccessMessage(null);
+      if (oauthResult) {
+        const restored = await restoreBasalamBatchAfterOAuth(currentSeller);
+        if (restored) return;
+      }
+      resetCurrentBatchState();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'صفحه آماده نشد. دوباره تلاش کن.');
     } finally {
@@ -230,6 +281,7 @@ function MainApp() {
     try {
       const created = await api.createBatch(seller.id);
       setBatch(created);
+      if (platform === 'basalam') rememberActiveBasalamBatchId(created.id);
       setAssets([]);
       setItems([]);
       setDrafts({});
@@ -256,7 +308,8 @@ function MainApp() {
     setUploading(true);
     setError(null);
     try {
-      const uploaded = await api.uploadAssets(batch.id, files);
+      const preparedFiles = await prepareFilesForUpload(files);
+      const uploaded = await api.uploadAssets(batch.id, preparedFiles);
       const hasNewAudio = uploaded.some((asset) => asset.type === 'audio');
       setAssets((current) => {
         const base = hasNewAudio ? current.filter((asset) => asset.type !== 'audio') : current;
@@ -309,7 +362,11 @@ function MainApp() {
             weight_grams: parseNullableInt(draft.weight_grams),
             package_weight_grams: parseNullableInt(draft.package_weight_grams),
             unit_quantity: parseNullableInt(draft.unit_quantity),
-          });
+          }).then((updated) => ({
+            ...updated,
+            photos: updated.photos.length > 0 ? updated.photos : item.photos,
+            basalam_category: updated.basalam_category ?? item.basalam_category,
+          }));
         }),
       );
       setItems(savedItems);
@@ -355,11 +412,19 @@ function MainApp() {
     }
   }
 
-  async function connectBasalam() {
+  async function connectBasalam(options: { saveCurrentList?: boolean } = {}) {
     if (!seller) return;
     setConnectingBasalam(true);
     setError(null);
     try {
+      if (batch) rememberActiveBasalamBatchId(batch.id);
+      if (options.saveCurrentList && items.length > 0) {
+        const saved = await persistDrafts();
+        if (!saved) {
+          setConnectingBasalam(false);
+          return;
+        }
+      }
       const result = await api.getBasalamOAuthUrl(seller.id);
       if (!result.url) throw new Error(result.error || 'اتصال باسلام هنوز تنظیم نشده است.');
       window.location.href = result.url;
@@ -371,14 +436,14 @@ function MainApp() {
 
   async function publishToBasalam() {
     if (!batch) return;
-    if (!basalamConnection) {
-      await connectBasalam();
-      return;
-    }
     setShowPublishValidation(true);
     setPublishJob(null);
     setPublishedProducts([]);
     if (publishValidationIssues.length > 0) {
+      return;
+    }
+    if (!basalamConnection) {
+      await connectBasalam({ saveCurrentList: true });
       return;
     }
     setPublishingBasalam(true);
@@ -426,7 +491,7 @@ function MainApp() {
         shop_name: shopName,
         contact_mobile: contactMobile,
       });
-      setTorobSuccessMessage(created.message);
+      setTorobSuccessMessage(humanizeTorobSubmissionMessage(created.message));
       showToast('درخواست ترب ثبت شد.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'درخواست ترب ثبت نشد. دوباره تلاش کن.');
@@ -455,12 +520,45 @@ function MainApp() {
     setDrafts((current) => ({ ...current, [itemId]: { ...current[itemId], ...patch } }));
   }
 
-  function selectPlatform(nextPlatform: Platform | null) {
+  function resetCurrentBatchState() {
+    setBatch(null);
+    setAssets([]);
+    setItems([]);
+    setDrafts({});
+    resultsAutoScrolledRef.current = false;
+    setPublishedProducts([]);
+    setPublishJob(null);
+    setJob(null);
+    setShowPublishValidation(false);
+    setTorobSuccessMessage(null);
+    setProcessing(false);
+    setUploading(false);
+    setSavingList(false);
+    setSuggestingCategories(false);
+    setPublishingBasalam(false);
+    setSubmittingTorob(false);
+  }
+
+  async function selectPlatform(nextPlatform: Platform | null) {
+    const requestId = ++platformRequestRef.current;
     setPlatform(nextPlatform);
     setError(null);
-    setShowPublishValidation(false);
-    setPublishJob(null);
-    setPublishedProducts([]);
+    resetCurrentBatchState();
+    if (!nextPlatform) return;
+    if (!seller) {
+      setError('صفحه هنوز آماده نیست. چند لحظه صبر کن.');
+      return;
+    }
+    try {
+      const created = await api.createBatch(seller.id);
+      if (platformRequestRef.current !== requestId) return;
+      setBatch(created);
+      if (nextPlatform === 'basalam') rememberActiveBasalamBatchId(created.id);
+    } catch (err) {
+      if (platformRequestRef.current !== requestId) return;
+      setError(err instanceof Error ? err.message : 'مسیر آماده نشد. دوباره تلاش کن.');
+      setPlatform(null);
+    }
   }
 
   function scrollToFirstIssue() {
@@ -475,7 +573,7 @@ function MainApp() {
   }
 
   const hasPhotos = imageAssets.length > 0;
-  const canProcess = hasPhotos && !uploading && !processing && items.length === 0;
+  const canProcess = Boolean(batch) && hasPhotos && !uploading && !processing && items.length === 0;
 
   return (
     <main className="app-shell">
@@ -500,13 +598,15 @@ function MainApp() {
         <section className="workspace">
           {!platform ? (
             <PlatformChooser platform={platform} onChange={selectPlatform} />
+          ) : !batch ? (
+            <LoadingPanel label="در حال آماده‌سازی مسیر" />
           ) : (
             <>
               {seller && platform === 'basalam' && (
                 <BasalamPanel
                   connection={basalamConnection}
                   connecting={connectingBasalam}
-                  onConnect={connectBasalam}
+                  onConnect={() => connectBasalam({ saveCurrentList: items.length > 0 })}
                   onChangePlatform={() => selectPlatform(null)}
                 />
               )}
@@ -533,7 +633,7 @@ function MainApp() {
             </>
           )}
 
-          {platform && (processing || job?.status === 'failed') && (
+          {platform && batch && (processing || job?.status === 'failed') && (
             <ProgressPanel
               job={job}
               processing={processing}
@@ -542,7 +642,7 @@ function MainApp() {
             />
           )}
 
-          {platform && hasPhotos && items.length === 0 && (
+          {platform && batch && hasPhotos && items.length === 0 && (
             <div className="sticky-action">
               <button className="button primary action-button" type="button" onClick={processBatch} disabled={!canProcess}>
                 {processing ? <Loader2 className="spin" size={19} /> : <Sparkles size={19} />}
@@ -551,7 +651,7 @@ function MainApp() {
             </div>
           )}
 
-          {platform && (
+          {platform && batch && (
             <PreviewPanel
               refNode={resultsRef}
               batch={batch}
@@ -1070,7 +1170,7 @@ function UploadPanel({
           <span className="camera-mark">
             {uploading ? <Loader2 className="spin" size={30} /> : <Upload size={30} />}
           </span>
-          <strong>{uploading ? 'در حال اضافه کردن عکس‌ها' : 'افزودن عکس'}</strong>
+          <strong>{uploading ? 'در حال آماده‌سازی عکس‌ها' : 'افزودن عکس'}</strong>
           <span>چند عکس را با هم انتخاب کن.</span>
         </label>
       ) : (
@@ -1084,7 +1184,7 @@ function UploadPanel({
           {uploading && (
             <div className="photo-tile loading-tile">
               <Loader2 className="spin" size={24} />
-              <span>در حال اضافه کردن</span>
+              <span>در حال آماده‌سازی</span>
             </div>
           )}
         </div>
@@ -1149,10 +1249,10 @@ function VoicePanel({
   return (
     <section className={inline ? 'voice-inline' : 'panel compact-panel'}>
       <h2>توضیحات صوتی <small className="optional-note">(اختیاری)</small></h2>
-      <ul className="voice-tips">
-        <li>با ویس می‌تونی قیمت، موجودی و توضیحات محصول را هم بگی.</li>
-        <li>با شماره عکس محصول هم می‌تونی توضیح بدی؛ مثلا «عکس شماره ۲ قیمتش ۲۰۰ هزار تومنه».</li>
-      </ul>
+        <ul className="voice-tips">
+          <li>با ویس می‌تونی قیمت، موجودی، وزن و توضیحات محصول را هم بگی.</li>
+          <li>با شماره عکس محصول هم می‌تونی توضیح بدی؛ مثلا «عکس شماره ۲ قیمتش ۲۰۰ هزار تومنه».</li>
+        </ul>
       <div className="voice-actions">
         <button className={`button mic-button ${recording ? 'danger' : 'secondary'}`} type="button" onClick={toggleRecording} disabled={disabled || askingMic}>
           <span className="mic-ai-icon">
@@ -1228,7 +1328,7 @@ function ProgressPanel({
         <p>{failed ? 'عکس‌ها و صدا پاک نشده‌اند. می‌توانی دوباره تلاش کنی.' : 'این کار ممکن است کمی زمان ببرد.'}</p>
       </div>
       {processing ? <Loader2 className="spin" size={22} /> : failed ? <RotateCcw size={22} /> : <Check size={22} />}
-      {job?.error && <div className="error inline">{job.error}</div>}
+      {job?.error && <div className="error inline">{humanizeProcessingError(job.error)}</div>}
       {canRetry && (
         <button className="button secondary" type="button" onClick={onRetry}>
           <RotateCcw size={18} />
@@ -1456,7 +1556,7 @@ function PublishValidationPanel({
       </div>
       <div className="dock-message-actions">
         <button className="link-button" type="button" onClick={onGoToFirstIssue}>
-          اولین مورد
+          تکمیل فیلدها
         </button>
         <VoiceRefineControl
           hasAudio={audios.length > 0}
@@ -1472,6 +1572,7 @@ function PublishValidationPanel({
 function DockPublishProblem({ job, products }: { job: PublishJob | null; products: PublishedProduct[] }) {
   const failedProducts = products.filter((product) => product.status === 'failed');
   const failedCount = failedProducts.length || (job?.status === 'partial_failed' || job?.status === 'failed' ? 1 : 0);
+  const firstError = failedProducts.find((product) => product.error)?.error ?? job?.error ?? null;
   if (!job || failedCount === 0) return null;
   return (
     <div className="dock-message failed" role="alert">
@@ -1480,6 +1581,7 @@ function DockPublishProblem({ job, products }: { job: PublishJob | null; product
         <span>
           {toPersianDigits(failedCount)} محصول ثبت نشد. اطلاعات محصول‌ها یا وضعیت غرفه را چک کن.
         </span>
+        {firstError && <span>{humanizePublishError(firstError)}</span>}
       </div>
     </div>
   );
@@ -1981,6 +2083,17 @@ function rememberSellerId(sellerId: number) {
   window.localStorage.setItem(SELLER_STORAGE_KEY, String(sellerId));
 }
 
+function readActiveBasalamBatchId(): number | null {
+  const raw = window.localStorage.getItem(BASALAM_ACTIVE_BATCH_STORAGE_KEY);
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function rememberActiveBasalamBatchId(batchId: number) {
+  window.localStorage.setItem(BASALAM_ACTIVE_BATCH_STORAGE_KEY, String(batchId));
+}
+
 function readBasalamReturn(): { status: 'success' | 'failed'; sellerId: number | null } | null {
   const params = new URLSearchParams(window.location.search);
   const status = params.get('basalam_status');
@@ -1989,6 +2102,22 @@ function readBasalamReturn(): { status: 'success' | 'failed'; sellerId: number |
   const sellerId = rawSellerId ? Number(rawSellerId) : null;
   window.history.replaceState({}, '', window.location.pathname);
   return { status: status === 'success' ? 'success' : 'failed', sellerId: Number.isFinite(sellerId) ? sellerId : null };
+}
+
+function readFrontendBasalamCallbackUrl(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('basalam_status')) return null;
+  const code = params.get('code');
+  const state = params.get('state');
+  const error = params.get('error');
+  if (!state || (!code && !error)) return null;
+  const callbackParams = new URLSearchParams();
+  if (code) callbackParams.set('code', code);
+  callbackParams.set('state', state);
+  if (error) callbackParams.set('error', error);
+  const errorDescription = params.get('error_description');
+  if (errorDescription) callbackParams.set('error_description', errorDescription);
+  return `${API_BASE}/integrations/basalam/callback?${callbackParams.toString()}`;
 }
 
 function buildDrafts(items: ProductItem[]): DraftMap {
@@ -2079,6 +2208,53 @@ function parseStockValue(value: string): number | null {
   return parsed !== null && parsed >= 0 ? parsed : null;
 }
 
+async function prepareFilesForUpload(files: File[]): Promise<File[]> {
+  const prepared = new Array<File>(files.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(IMAGE_PREPARE_CONCURRENCY, files.length) }, async () => {
+    while (nextIndex < files.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      prepared[index] = await prepareFileForUpload(files[index]);
+    }
+  });
+  await Promise.all(workers);
+  return prepared;
+}
+
+async function prepareFileForUpload(file: File): Promise<File> {
+  if (!file.type.startsWith('image/') || file.type === 'image/svg+xml') return file;
+  return resizeImageForUpload(file).catch(() => file);
+}
+
+async function resizeImageForUpload(file: File): Promise<File> {
+  if (!('createImageBitmap' in window)) return file;
+  const bitmap = await window.createImageBitmap(file);
+  try {
+    const maxSide = 1400;
+    const largestSide = Math.max(bitmap.width, bitmap.height);
+    if (largestSide <= maxSide && file.size <= 650_000) return file;
+    const scale = Math.min(1, maxSide / largestSide);
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) return file;
+    context.drawImage(bitmap, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.76));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], imageUploadName(file.name), { type: 'image/jpeg', lastModified: file.lastModified });
+  } finally {
+    bitmap.close?.();
+  }
+}
+
+function imageUploadName(name: string): string {
+  return name.replace(/\.[^.]+$/, '') + '.jpg';
+}
+
 function humanizePublishError(error: string | null): string {
   if (!error) return 'این محصول ثبت نشد. فیلدهای قیمت، عکس و دسته‌بندی را چک کن.';
   const normalized = error.toLowerCase();
@@ -2089,7 +2265,7 @@ function humanizePublishError(error: string | null): string {
     return 'غرفه باسلام فعال نیست یا اجازه ثبت محصول ندارد. وضعیت غرفه را در باسلام چک کن.';
   }
   if (normalized.includes('category') || error.includes('دسته‌بندی')) {
-    return 'دسته‌بندی این محصول درست نیست یا انتخاب نشده. دسته‌بندی را اصلاح کن و دوباره ثبت کن.';
+    return 'باسلام این دسته‌بندی را قبول نکرد. روی «تغییر» در کارت محصول بزن و دسته نزدیک‌تر را انتخاب کن.';
   }
   if (normalized.includes('stock') || normalized.includes('inventory')) {
     return 'موجودی محصول را چک کن و دوباره ثبت کن.';
@@ -2107,6 +2283,19 @@ function humanizePublishError(error: string | null): string {
     return 'باسلام ثبت این محصول را قبول نکرد. فیلدهای محصول را چک کن و دوباره تلاش کن.';
   }
   return 'این محصول ثبت نشد. فیلدهای محصول را چک کن و دوباره تلاش کن.';
+}
+
+function humanizeProcessingError(error: string | null): string {
+  if (!error) return 'ساخت لیست کامل نشد. دوباره تلاش کن.';
+  if (/[A-Za-z]{3,}/.test(error) || /\b(4\d\d|5\d\d)\b/.test(error)) {
+    return 'ساخت لیست کامل نشد. عکس‌ها و صدا پاک نشده‌اند؛ دوباره تلاش کن.';
+  }
+  return error;
+}
+
+function humanizeTorobSubmissionMessage(message: string | null): string {
+  if (message && !/[{}[\]":]/.test(message) && !/[A-Za-z]{3,}/.test(message)) return message;
+  return 'درخواستت ثبت شد. به زودی بررسی می‌شود.';
 }
 
 function formatPriceInput(value: string): string {

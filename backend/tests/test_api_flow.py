@@ -1,6 +1,10 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.models import Asset, Batch
+from app.schemas import AiExtraction, AiProduct
 from app.services import _normalize_extracted_price_toman, _price_hint_for_product, _price_hints_from_transcript
+from app.services import _replace_items_from_extraction
 from helpers import audio_file, image_file
 
 
@@ -105,6 +109,48 @@ def test_fake_processing_creates_editable_items_and_exports(client: TestClient, 
     exported_csv = client.get(f"/batches/{batch['id']}/export.csv").text
     assert "seller_name,seller_mobile,shop_name,batch_id,item_id,title" in exported_csv
     assert "عنوان اصلاح شده" in exported_csv
+
+
+def test_operational_fields_from_voice_extraction_are_saved(client: TestClient, batch: dict):
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")])
+    session = client.app.state.session_factory()
+    try:
+        batch_model = session.get(Batch, batch["id"])
+        images = session.scalars(select(Asset).where(Asset.batch_id == batch["id"], Asset.type == "image")).all()
+        _replace_items_from_extraction(
+            session,
+            batch_model,
+            images,
+            AiExtraction(
+                transcript="موجودی ۵ تا، آماده سازی ۲ روز، وزن محصول ۳۰۰ گرم، وزن با بسته بندی ۵۰۰ گرم.",
+                products=[
+                    AiProduct(
+                        title="محصول با اطلاعات کامل",
+                        description="توضیح",
+                        price_toman=300_000,
+                        stock=5,
+                        preparation_days=2,
+                        weight_grams=300,
+                        package_weight_grams=500,
+                        unit_quantity=1,
+                        confidence=0.9,
+                        image_numbers=[1],
+                    )
+                ],
+                metadata={},
+            ),
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    saved = client.get(f"/batches/{batch['id']}/items").json()[0]
+
+    assert saved["stock"] == 5
+    assert saved["preparation_days"] == 2
+    assert saved["weight_grams"] == 300
+    assert saved["package_weight_grams"] == 500
+    assert saved["unit_quantity"] == 1
 
 
 def test_merge_split_and_reorder(client: TestClient, batch: dict):

@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.integrations.basalam import BasalamProductPayload, BasalamUploadedFile
+from app.integrations.basalam import BasalamClientError, BasalamProductPayload, BasalamUploadedFile
 from app.models import PlatformConnection
 from helpers import image_file
 
@@ -116,6 +116,82 @@ def test_basalam_oauth_url_and_callback_create_platform_connection(client: TestC
     assert connections[0]["external_shop_name"] == "غرفه تست"
 
 
+def test_basalam_oauth_callback_connects_each_seller_to_its_own_booth(client: TestClient, seller: dict):
+    class MultiVendorBasalamClient(FakeBasalamClient):
+        vendors = {
+            "seller-one-code": {"id": 111, "identifier": "shop-one", "title": "غرفه اول"},
+            "seller-two-code": {"id": 222, "identifier": "shop-two", "title": "غرفه دوم"},
+        }
+
+        def exchange_code_for_tokens(self, code: str) -> dict:
+            assert code in self.vendors
+            return {
+                "access_token": f"access-token:{code}",
+                "refresh_token": f"refresh-token:{code}",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+                "scope": "vendor.profile.read vendor.product.write",
+            }
+
+        def get_current_user(self, access_token: str) -> dict:
+            code = access_token.split(":", 1)[1]
+            return {
+                "id": 7000 + self.vendors[code]["id"],
+                "mobile": f"0912{self.vendors[code]['id']}",
+                "vendor": self.vendors[code],
+            }
+
+    second_seller = client.post(
+        "/sellers",
+        json={"name": "فروشنده دوم", "mobile": "09120000002", "shop_name": "فروشگاه دوم"},
+    ).json()
+    fake = MultiVendorBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+
+    first_state = client.get(f"/integrations/basalam/oauth-url?seller_id={seller['id']}").json()["state"]
+    second_state = client.get(f"/integrations/basalam/oauth-url?seller_id={second_seller['id']}").json()["state"]
+
+    client.get(
+        f"/integrations/basalam/callback?code=seller-one-code&state={first_state}",
+        follow_redirects=False,
+    )
+    client.get(
+        f"/integrations/basalam/callback?code=seller-two-code&state={second_state}",
+        follow_redirects=False,
+    )
+
+    first_connections = client.get(f"/sellers/{seller['id']}/platform-connections").json()
+    second_connections = client.get(f"/sellers/{second_seller['id']}/platform-connections").json()
+
+    assert [(connection["external_shop_id"], connection["external_shop_name"]) for connection in first_connections] == [
+        ("111", "غرفه اول")
+    ]
+    assert [(connection["external_shop_id"], connection["external_shop_name"]) for connection in second_connections] == [
+        ("222", "غرفه دوم")
+    ]
+    assert client.get(f"/sellers/{seller['id']}").json()["shop_name"] == "غرفه اول"
+    assert client.get(f"/sellers/{second_seller['id']}").json()["shop_name"] == "غرفه دوم"
+
+
+def test_basalam_oauth_url_reports_unconfigured_without_503(client: TestClient, seller: dict):
+    client.app.state.settings.basalam_client_id = None
+    client.app.state.settings.basalam_client_secret = None
+    client.app.state.settings.basalam_redirect_uri = None
+
+    response = client.get(f"/integrations/basalam/oauth-url?seller_id={seller['id']}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "configured": False,
+        "url": None,
+        "state": None,
+        "error": "اتصال باسلام در این محیط تنظیم نشده است.",
+    }
+
+
 def test_basalam_callback_with_invalid_state_does_not_create_connection(client: TestClient, seller: dict):
     fake = FakeBasalamClient()
     client.app.state.basalam_client_factory = lambda _settings: fake
@@ -200,6 +276,54 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     assert fake.created_products[0].weight == 300
     assert fake.created_products[0].package_weight == 500
     assert fake.created_products[0].unit_quantity == 1
+
+
+def test_publish_retries_next_auto_category_when_basalam_rejects_category(client: TestClient, batch: dict):
+    class CategoryRetryBasalamClient(FakeBasalamClient):
+        def create_product(
+            self,
+            connection: PlatformConnection,
+            payload: BasalamProductPayload,
+        ) -> dict:
+            if payload.category_id == 20:
+                raise BasalamClientError("Basalam product create failed: 422 category_id is invalid")
+            return super().create_product(connection, payload)
+
+    fake = CategoryRetryBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg"), image_file("b.jpg")])
+    client.post(f"/batches/{batch['id']}/process")
+    item = client.get(f"/batches/{batch['id']}/items").json()[0]
+    client.patch(
+        f"/batch-items/{item['id']}",
+        json={
+            "price_toman": item["price_toman"] or 456000,
+            "stock": 5,
+            "preparation_days": 2,
+            "weight_grams": 300,
+            "package_weight_grams": 500,
+            "unit_quantity": 1,
+        },
+    )
+    suggested = client.post(f"/batches/{batch['id']}/categories/basalam/suggest").json()
+    assert suggested[0]["basalam_category"]["category_id"] == 20
+
+    callback_state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}").json()["state"]
+    client.get(f"/integrations/basalam/callback?code=valid-code&state={callback_state}", follow_redirects=False)
+
+    publish = client.post(f"/batches/{batch['id']}/publish/basalam")
+
+    assert publish.status_code == 202
+    job = client.get(f"/publish-jobs/{publish.json()['job_id']}").json()
+    assert job["status"] == "succeeded"
+    assert fake.created_products[0].category_id == 21
+    updated_item = client.get(f"/batches/{batch['id']}/items").json()[0]
+    assert updated_item["basalam_category"]["category_id"] == 21
+    assert updated_item["basalam_category"]["source"] == "auto"
 
 
 def test_publish_requires_seller_operational_fields(client: TestClient, batch: dict):
