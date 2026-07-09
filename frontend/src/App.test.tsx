@@ -281,6 +281,33 @@ describe('App', () => {
     expect(screen.queryByText(/503|Service Unavailable|Failed to fetch/i)).not.toBeInTheDocument();
   });
 
+  it('shows loading and prevents duplicate requests while building the Basalam connect link', async () => {
+    const user = userEvent.setup();
+    const onOAuthUrl = vi.fn();
+    renderWithApi({
+      onOAuthUrl,
+      oauthDelayMs: 80,
+      oauthResponse: {
+        configured: false,
+        url: null,
+        state: null,
+        error: 'اتصال باسلام در این محیط تنظیم نشده است.',
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    const connectButton = await screen.findByRole('button', { name: 'اتصال غرفه' });
+
+    await user.dblClick(connectButton);
+
+    expect(connectButton).toBeDisabled();
+    expect(connectButton.querySelector('.spin')).toBeInTheDocument();
+    expect(await screen.findByText('اتصال باسلام در این محیط تنظیم نشده است.')).toBeInTheDocument();
+    expect(onOAuthUrl).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Failed to fetch|Service Unavailable|503/i)).not.toBeInTheDocument();
+  });
+
   it('hides raw network errors behind a Persian message', async () => {
     const user = userEvent.setup();
     renderWithApi({ failCreateBatchNetwork: true });
@@ -1028,7 +1055,9 @@ function renderWithApi({
   onCreateSeller,
   onListSellers,
   onCreateBatch,
+  onOAuthUrl,
   oauthResponse,
+  oauthDelayMs = 0,
   failCreateBatchNetwork,
   publishJobResponse,
   publishJobResponses,
@@ -1054,7 +1083,9 @@ function renderWithApi({
   onCreateSeller?: () => void;
   onListSellers?: () => void;
   onCreateBatch?: () => void;
+  onOAuthUrl?: () => void;
   oauthResponse?: Record<string, unknown>;
+  oauthDelayMs?: number;
   failCreateBatchNetwork?: boolean;
   publishJobResponse?: Record<string, unknown>;
   publishJobResponses?: Array<Record<string, unknown>>;
@@ -1087,6 +1118,8 @@ function renderWithApi({
       if (path === '/sellers/1' && method === 'GET') return jsonResponse(seller);
       if (path === '/sellers/1' && method === 'PATCH') return jsonResponse(seller);
       if (path === '/integrations/basalam/oauth-url') {
+        onOAuthUrl?.();
+        if (oauthDelayMs > 0) await new Promise((resolve) => window.setTimeout(resolve, oauthDelayMs));
         return jsonResponse(
           oauthResponse ?? {
             configured: false,
