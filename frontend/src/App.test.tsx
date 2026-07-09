@@ -1016,6 +1016,42 @@ describe('App', () => {
     expect(screen.queryByText(/Torob upstream|Service Unavailable|503|failed/i)).not.toBeInTheDocument();
   });
 
+  it('polls Torob AI list creation without running Basalam category logic', async () => {
+    const user = userEvent.setup();
+    let processCalls = 0;
+    let categorySuggestCalled = false;
+    const { container } = renderWithApi({
+      onProcess: () => {
+        processCalls += 1;
+      },
+      onCategorySuggest: () => {
+        categorySuggestCalled = true;
+      },
+      jobResponses: [
+        { id: 30, batch_id: 10, status: 'running', step: 'matching', error: null },
+        { id: 30, batch_id: 10, status: 'succeeded', step: 'ready', error: null },
+      ],
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(await screen.findByRole('button', { name: /افزودن محصولات به ترب/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+
+    expect(processCalls).toBe(1);
+    expect(await screen.findByText('در حال ساخت لیست محصولات')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /در حال ساخت لیست/ })).toBeDisabled();
+    expect(screen.queryByText(/AI provider|timeout|503|Failed to fetch/i)).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByDisplayValue(item.title)).toBeInTheDocument(), { timeout: 3000 });
+    expect(categorySuggestCalled).toBe(false);
+    expect(screen.queryByText('دسته‌بندی باسلام')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('موجودی')).not.toBeInTheDocument();
+  });
+
   it('lets Torob sellers add voice before AI list without running Basalam category logic', async () => {
     const user = userEvent.setup();
     const uploadKinds: string[] = [];
