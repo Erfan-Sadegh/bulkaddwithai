@@ -738,6 +738,57 @@ describe('App', () => {
     expect(screen.getByText('۱ محصول با موفقیت ثبت شد.')).toBeInTheDocument();
   });
 
+  it('shows a running Basalam publish state while polling the publish job', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      publishJobResponses: [
+        {
+          id: 80,
+          batch_id: 10,
+          connection_id: 501,
+          platform: 'basalam',
+          status: 'running',
+          step: 'uploading_photos',
+          error: null,
+        },
+        {
+          id: 80,
+          batch_id: 10,
+          connection_id: 501,
+          platform: 'basalam',
+          status: 'succeeded',
+          step: 'ready',
+          error: null,
+        },
+      ],
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+    await screen.findByDisplayValue(item.title);
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    fireEvent.change(extraInputs[0], { target: { value: '۵' } });
+    fireEvent.change(extraInputs[1], { target: { value: '۲' } });
+    fireEvent.change(extraInputs[2], { target: { value: '۳۰۰' } });
+    fireEvent.change(extraInputs[3], { target: { value: '۵۰۰' } });
+    fireEvent.change(extraInputs[4], { target: { value: '۱' } });
+
+    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
+
+    expect(await screen.findByText('در حال فرستادن عکس‌ها به باسلام')).toBeInTheDocument();
+    expect(container.querySelector('.save-dock button')).toBeDisabled();
+    expect(screen.queryByText(/product\(s\) failed|Basalam product create failed|Service Unavailable|Failed to fetch/i)).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByText('محصول‌ها در باسلام ثبت شدند')).toBeInTheDocument(), { timeout: 3000 });
+    expect(screen.getByText('۱ محصول با موفقیت ثبت شد.')).toBeInTheDocument();
+  });
+
   it('humanizes Basalam publish failures and hides raw English errors', async () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({
@@ -980,6 +1031,7 @@ function renderWithApi({
   oauthResponse,
   failCreateBatchNetwork,
   publishJobResponse,
+  publishJobResponses,
   publishedProductsResponse,
   uploadKinds,
   uploadedFiles,
@@ -1005,6 +1057,7 @@ function renderWithApi({
   oauthResponse?: Record<string, unknown>;
   failCreateBatchNetwork?: boolean;
   publishJobResponse?: Record<string, unknown>;
+  publishJobResponses?: Array<Record<string, unknown>>;
   publishedProductsResponse?: Array<Record<string, unknown>>;
   uploadKinds?: string[];
   uploadedFiles?: File[];
@@ -1015,6 +1068,7 @@ function renderWithApi({
   createdBatch?: typeof batch;
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
+  let publishJobResponseIndex = 0;
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1122,6 +1176,11 @@ function renderWithApi({
         return jsonResponse({ job_id: 80 }, 202);
       }
       if (path === '/publish-jobs/80') {
+        if (publishJobResponses) {
+          const response = publishJobResponses[Math.min(publishJobResponseIndex, publishJobResponses.length - 1)];
+          publishJobResponseIndex += 1;
+          return jsonResponse(response);
+        }
         return jsonResponse(
           publishJobResponse ?? {
             id: 80,
