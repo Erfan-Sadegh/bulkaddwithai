@@ -885,6 +885,27 @@ describe('App', () => {
     expect(screen.queryByText(/Submission created|Pending admin/i)).not.toBeInTheDocument();
   });
 
+  it('hides raw Torob submission errors behind a Persian message', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({ failTorobSubmission: true });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(await screen.findByRole('button', { name: /افزودن محصولات به ترب/ }));
+    await user.type(screen.getByLabelText('اسم فروشگاه'), 'فروشگاه من');
+    await user.type(screen.getByLabelText('شماره تماس'), '09120000000');
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+
+    expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'ثبت درخواست ترب' }));
+
+    expect(await screen.findByText('درخواست انجام نشد. دوباره تلاش کن.')).toBeInTheDocument();
+    expect(screen.queryByText(/Torob upstream|Service Unavailable|503|failed/i)).not.toBeInTheDocument();
+  });
+
   it('lets Torob sellers add voice before AI list without running Basalam category logic', async () => {
     const user = userEvent.setup();
     const uploadKinds: string[] = [];
@@ -964,6 +985,7 @@ function renderWithApi({
   uploadedFiles,
   uploadDelayMs = 0,
   torobSubmissionMessage = 'درخواستت ثبت شد. به زودی بررسی می‌شود.',
+  failTorobSubmission = false,
   restoredBatch = batch,
   createdBatch = batch,
 }: {
@@ -988,6 +1010,7 @@ function renderWithApi({
   uploadedFiles?: File[];
   uploadDelayMs?: number;
   torobSubmissionMessage?: string;
+  failTorobSubmission?: boolean;
   restoredBatch?: typeof batch;
   createdBatch?: typeof batch;
 } = {}) {
@@ -1134,6 +1157,9 @@ function renderWithApi({
       if (path === '/batches/10/torob-submissions' && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}'));
         torobBodies.push(body);
+        if (failTorobSubmission) {
+          return jsonResponse({ detail: 'Torob upstream failed 503' }, 503);
+        }
         return jsonResponse({ id: 701, status: 'pending', message: torobSubmissionMessage }, 201);
       }
 

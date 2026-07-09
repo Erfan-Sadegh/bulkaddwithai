@@ -37,6 +37,7 @@ function toFriendlyApiError(text: string, status: number): string {
   if (normalized.includes('seller not found')) return 'اطلاعات فروشنده پیدا نشد. صفحه را دوباره باز کن.';
   if (normalized.includes('batch item not found')) return 'این محصول پیدا نشد. صفحه را دوباره باز کن.';
   if (normalized.includes('no ready products found')) return 'هنوز محصول آماده‌ای برای ثبت وجود ندارد.';
+  if (normalized.includes('at least one product image is required')) return 'برای ساخت لیست، اول حداقل یک عکس محصول اضافه کن.';
   if (normalized.includes('basalam booth is not connected')) return 'غرفه باسلام هنوز وصل نیست.';
   if (normalized.includes('basalam category was not found')) return 'این دسته‌بندی در باسلام پیدا نشد. دسته دیگری انتخاب کن.';
   if (normalized.includes('only image and audio uploads are supported')) return 'فقط عکس و صدای ضبط‌شده قابل اضافه کردن است.';

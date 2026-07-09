@@ -77,6 +77,16 @@ def test_upload_order_stays_stable_for_images(client: TestClient, batch: dict):
     assert image_orders == [1, 2, 3]
 
 
+def test_processing_requires_at_least_one_product_image(client: TestClient, batch: dict):
+    client.post(f"/batches/{batch['id']}/assets", files=[audio_file()])
+
+    process = client.post(f"/batches/{batch['id']}/process")
+
+    assert process.status_code == 422
+    assert process.json()["detail"] == "At least one product image is required"
+    assert client.get(f"/batches/{batch['id']}/items").json() == []
+
+
 def test_fake_processing_creates_editable_items_and_exports(client: TestClient, batch: dict):
     client.post(
         f"/batches/{batch['id']}/assets",
