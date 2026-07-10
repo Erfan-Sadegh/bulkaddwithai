@@ -42,6 +42,45 @@ from .services import _item_to_read
 
 BASALAM_PLATFORM = "basalam"
 PUBLISH_STEPS = ("uploading_photos", "creating_products", "ready", "failed")
+BASALAM_NUMERIC_UNIT_TYPE_ID = 6304
+BASALAM_NUMERIC_UNIT_TYPE_TITLE = "عددی"
+BASALAM_ALLOWED_UNIT_TYPE_IDS = {
+    6375,
+    6374,
+    6373,
+    6332,
+    6331,
+    6330,
+    6329,
+    6328,
+    6327,
+    6326,
+    6325,
+    6324,
+    6323,
+    6322,
+    6321,
+    6320,
+    6319,
+    6318,
+    6317,
+    6316,
+    6315,
+    6314,
+    6313,
+    6312,
+    6311,
+    6310,
+    6309,
+    6308,
+    6307,
+    6306,
+    6305,
+    6304,
+    6392,
+    6438,
+    6466,
+}
 
 
 def list_platform_connections(session: Session, seller_id: int) -> list[PlatformConnection]:
@@ -385,8 +424,6 @@ def _publish_validation_error(settings: Settings, item: BatchItem) -> str | None
         and item.preparation_days > category_data.category_max_preparation_days
     ):
         return f"زمان آماده‌سازی این دسته‌بندی حداکثر {category_data.category_max_preparation_days} روز است."
-    if not category_data.category_unit_type_id:
-        return "برای ثبت محصول در باسلام، واحد فروش این دسته‌بندی مشخص نیست. دسته‌بندی را اصلاح کن."
     if not item.asset_links:
         return "برای ثبت محصول در باسلام، حداقل یک عکس لازم است."
     return None
@@ -471,7 +508,20 @@ def _create_product_with_category_retries(
 
         try:
             payload = _item_to_basalam_payload(settings, item, uploaded_by_asset_id)
-            return _with_refresh(session, client, connection, lambda: client.create_product(connection, payload))
+            try:
+                return _with_refresh(session, client, connection, lambda: client.create_product(connection, payload))
+            except Exception as exc:
+                if not _can_retry_with_numeric_unit(exc, payload):
+                    raise
+                numeric_payload = _item_to_basalam_payload(
+                    settings,
+                    item,
+                    uploaded_by_asset_id,
+                    unit_type_override=BASALAM_NUMERIC_UNIT_TYPE_ID,
+                )
+                _mark_category_numeric_unit_fallback(item)
+                session.flush()
+                return _with_refresh(session, client, connection, lambda: client.create_product(connection, numeric_payload))
         except Exception as exc:
             last_error = exc
             if not _can_retry_with_another_category(exc, category_data):
@@ -519,8 +569,6 @@ def _category_retry_candidates(
     for candidate in retry_candidates:
         if candidate.id in seen:
             continue
-        if not candidate.unit_type_id:
-            continue
         if (
             candidate.id not in metadata_candidate_ids
             and (candidate.confidence or 0) < max(0.45, settings.basalam_category_suggestion_threshold - 0.18)
@@ -537,9 +585,35 @@ def _can_retry_with_another_category(exc: Exception, category_data: BatchItemPla
     if not category_data or category_data.category_source != "auto":
         return False
     normalized = str(exc).lower()
-    if any(token in normalized for token in ("stock", "inventory", "price", "preparation", "weight", "unit_quantity")):
+    if any(
+        token in normalized
+        for token in ("stock", "inventory", "price", "preparation", "weight", "unit_quantity", "unit_type", "unit type")
+    ):
         return False
     return any(token in normalized for token in ("category", "attribute", "product(s) failed", "422", "دسته", "ویژگی"))
+
+
+def _can_retry_with_numeric_unit(exc: Exception, payload: BasalamProductPayload) -> bool:
+    if payload.unit_type == BASALAM_NUMERIC_UNIT_TYPE_ID:
+        return False
+    normalized = str(exc).lower()
+    if "unit_quantity" in normalized:
+        return False
+    return any(token in normalized for token in ("unit_type", "unit type", '"unit"', "واحد"))
+
+
+def _mark_category_numeric_unit_fallback(item: BatchItem) -> None:
+    data = _basalam_platform_data(item)
+    if not data:
+        return
+    data.category_unit_type_id = BASALAM_NUMERIC_UNIT_TYPE_ID
+    data.category_unit_type_title = BASALAM_NUMERIC_UNIT_TYPE_TITLE
+    metadata = data.platform_metadata or {}
+    data.platform_metadata = {
+        **metadata,
+        "unit_type_fallback": "numeric",
+        "unit_type_fallback_at": utc_now().isoformat(),
+    }
 
 
 def _category_data_snapshot(data: BatchItemPlatformData | None) -> dict | None:
@@ -569,7 +643,10 @@ def _restore_category_data(item: BatchItem, snapshot: dict | None) -> None:
 
 
 def _item_to_basalam_payload(
-    settings: Settings, item: BatchItem, uploaded_by_asset_id: dict[int, BasalamUploadedFile]
+    settings: Settings,
+    item: BatchItem,
+    uploaded_by_asset_id: dict[int, BasalamUploadedFile],
+    unit_type_override: int | None = None,
 ) -> BasalamProductPayload:
     if item.price_toman is None:
         raise ValueError("برای ثبت محصول در باسلام، قیمت لازم است.")
@@ -595,9 +672,7 @@ def _item_to_basalam_payload(
         raise ValueError(
             f"زمان آماده‌سازی این دسته‌بندی حداکثر {category_data.category_max_preparation_days} روز است."
         )
-    unit_type = category_data.category_unit_type_id if category_data and category_data.category_unit_type_id else None
-    if unit_type is None:
-        raise ValueError("برای ثبت محصول در باسلام، واحد فروش این دسته‌بندی مشخص نیست. دسته‌بندی را اصلاح کن.")
+    unit_type = _basalam_unit_type_id(category_data, unit_type_override)
     photo_ids = [
         uploaded_by_asset_id[link.asset_id].id
         for link in sorted(item.asset_links, key=lambda link: link.sort_order)
@@ -619,6 +694,14 @@ def _item_to_basalam_payload(
         unit_quantity=item.unit_quantity,
         unit_type=unit_type,
     )
+
+
+def _basalam_unit_type_id(category_data: BatchItemPlatformData | None, override: int | None = None) -> int:
+    if override in BASALAM_ALLOWED_UNIT_TYPE_IDS:
+        return override
+    if category_data and category_data.category_unit_type_id in BASALAM_ALLOWED_UNIT_TYPE_IDS:
+        return category_data.category_unit_type_id
+    return BASALAM_NUMERIC_UNIT_TYPE_ID
 
 
 def _with_refresh(session: Session, client: BasalamClient, connection: PlatformConnection, operation):
@@ -811,11 +894,7 @@ def _publishable_category_data(settings: Settings, item: BatchItem) -> BatchItem
     data = _basalam_platform_data(item)
     if not data or not data.category_id:
         return None
-    if data.category_source == "user":
-        return data
-    if (data.category_confidence or 0) >= settings.basalam_category_suggestion_threshold:
-        return data
-    return None
+    return data
 
 
 def _make_oauth_state(settings: Settings, seller_id: int) -> str:

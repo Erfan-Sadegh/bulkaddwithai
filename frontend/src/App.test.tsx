@@ -1095,6 +1095,13 @@ describe('App', () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({
       platformConnections: [basalamConnection],
+      itemOverride: {
+        stock: 5,
+        preparation_days: 2,
+        weight_grams: 300,
+        package_weight_grams: 500,
+        unit_quantity: 1,
+      },
       categorySuggestionOverride: {
         category_id: 20,
         title: 'پنل خورشیدی و تجهیزات',
@@ -1119,6 +1126,7 @@ describe('App', () => {
     const note = screen.getByText('دسته را چک کن؛ اگر درست است ادامه بده.');
     expect(note).toBeInTheDocument();
     expect(note).toHaveClass('category-check-note');
+    expect(container.querySelector('.save-dock button')).not.toBeDisabled();
     expect(screen.queryByText('اگر دسته درست نیست، اصلاحش کن.')).not.toBeInTheDocument();
   });
 

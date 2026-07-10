@@ -2215,10 +2215,7 @@ function validateItemsForBasalam(items: ProductItem[], drafts: DraftMap): Publis
       if (parsePositiveInt(draft.package_weight_grams) === null) fields.push('package_weight_grams');
       if (parsePositiveInt(draft.unit_quantity) === null) fields.push('unit_quantity');
       const category = item.basalam_category;
-      const categoryIsReady = Boolean(
-        category?.category_id &&
-        (category.source === 'user' || (category.confidence ?? 0) >= BASALAM_AUTO_CATEGORY_THRESHOLD),
-      );
+      const categoryIsReady = Boolean(category?.category_id);
       if (!categoryIsReady) fields.push('category');
       if (
         preparationDays !== null &&
