@@ -122,6 +122,7 @@ function MainApp() {
   const resultsRef = useRef<HTMLElement | null>(null);
   const resultsAutoScrolledRef = useRef(false);
   const platformRequestRef = useRef(0);
+  const uploadRequestRef = useRef(false);
   const processingRequestRef = useRef(false);
   const basalamPublishingRef = useRef(false);
   const torobSubmittingRef = useRef(false);
@@ -307,12 +308,13 @@ function MainApp() {
   }
 
   async function upload(files: File[]) {
-    if (!batch || files.length === 0) return;
+    if (!batch || files.length === 0 || uploading || uploadRequestRef.current) return;
     const hasImage = files.some((file) => file.type.startsWith('image/'));
     if (items.length > 0 && hasImage) {
       setError('برای عکس‌های جدید، اول روی «افزودن محصولات جدید» بزن.');
       return;
     }
+    uploadRequestRef.current = true;
     setUploading(true);
     setError(null);
     try {
@@ -326,6 +328,7 @@ function MainApp() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'فایل‌ها اضافه نشدند. دوباره امتحان کن.');
     } finally {
+      uploadRequestRef.current = false;
       setUploading(false);
     }
   }
@@ -549,6 +552,7 @@ function MainApp() {
     setJob(null);
     setShowPublishValidation(false);
     setTorobSuccessMessage(null);
+    uploadRequestRef.current = false;
     processingRequestRef.current = false;
     setProcessing(false);
     setUploading(false);

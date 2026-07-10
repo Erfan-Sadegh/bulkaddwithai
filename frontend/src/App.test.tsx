@@ -351,6 +351,23 @@ describe('App', () => {
     expect(await screen.findByText('۱ عکس اضافه شده')).toBeInTheDocument();
   });
 
+  it('keeps photo upload in one pending request after rapid duplicate input changes', async () => {
+    const user = userEvent.setup();
+    const uploadKinds: string[] = [];
+    const { container } = renderWithApi({ uploadKinds, uploadDelayMs: 80, uploadAssetCount: 1 });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    const input = container.querySelector('input[accept="image/*"]') as HTMLInputElement;
+
+    fireEvent.change(input, { target: { files: [new File(['aaa'], 'a.jpg', { type: 'image/jpeg' })] } });
+    fireEvent.change(input, { target: { files: [new File(['bbb'], 'b.jpg', { type: 'image/jpeg' })] } });
+
+    expect(await screen.findByText('در حال آماده‌سازی عکس‌ها')).toBeInTheDocument();
+    await waitFor(() => expect(uploadKinds).toEqual(['image']));
+    expect(await screen.findByText('۱ عکس اضافه شده')).toBeInTheDocument();
+  });
+
   it('shows results, formats Persian price, and confirms starting over', async () => {
     const user = userEvent.setup();
     const updateBodies: Array<Record<string, unknown>> = [];
