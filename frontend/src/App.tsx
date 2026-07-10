@@ -1930,6 +1930,7 @@ function BasalamCategoryPicker({
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<BasalamCategory[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [selectingId, setSelectingId] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const category = item.basalam_category;
@@ -1942,16 +1943,21 @@ function BasalamCategoryPicker({
     if (trimmed.length < 2) {
       setResults([]);
       setLoading(false);
+      setSearchError(null);
       return;
     }
     let cancelled = false;
     setLoading(true);
+    setSearchError(null);
     const timer = window.setTimeout(async () => {
       try {
         const nextResults = await api.searchBasalamCategories(trimmed);
         if (!cancelled) setResults(nextResults);
       } catch {
-        if (!cancelled) setResults([]);
+        if (!cancelled) {
+          setResults([]);
+          setSearchError('جستجوی دسته انجام نشد. دوباره تلاش کن.');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -2003,6 +2009,11 @@ function BasalamCategoryPicker({
             />
             {loading && <Loader2 className="spin" size={16} />}
           </div>
+          {searchError && (
+            <span className="category-search-message" role="status">
+              {searchError}
+            </span>
+          )}
           {results.length > 0 && (
             <div className="category-results">
               {results.map((category) => (

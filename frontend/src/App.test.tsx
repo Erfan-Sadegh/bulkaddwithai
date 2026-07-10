@@ -1049,6 +1049,29 @@ describe('App', () => {
     expect(screen.queryByText('دسته‌بندی این محصول درست نیست یا انتخاب نشده. دسته‌بندی را اصلاح کن و دوباره ثبت کن.')).not.toBeInTheDocument();
   });
 
+  it('shows a clear Persian message when Basalam category search fails', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      failCategorySearch: true,
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+    await screen.findByDisplayValue(item.title);
+
+    await user.click(screen.getByRole('button', { name: 'تغییر' }));
+    await user.type(screen.getByLabelText('جستجوی دسته‌بندی باسلام'), 'کفش');
+
+    expect(await screen.findByText('جستجوی دسته انجام نشد. دوباره تلاش کن.')).toBeInTheDocument();
+    expect(screen.queryByText(/503|Service Unavailable|categories request failed|Failed to fetch/i)).not.toBeInTheDocument();
+  });
+
   it('creates a Torob review request without touching Basalam publish flow', async () => {
     const user = userEvent.setup();
     const torobBodies: Array<Record<string, unknown>> = [];
@@ -1239,6 +1262,7 @@ function renderWithApi({
   onCategorySuggest,
   jobResponses,
   processDelayMs = 0,
+  failCategorySearch = false,
   torobBodies = [],
   listedSellers = [],
   onCreateSeller,
@@ -1271,6 +1295,7 @@ function renderWithApi({
   onCategorySuggest?: () => void;
   jobResponses?: Array<Record<string, unknown>>;
   processDelayMs?: number;
+  failCategorySearch?: boolean;
   torobBodies?: Array<Record<string, unknown>>;
   listedSellers?: Array<typeof seller>;
   onCreateSeller?: () => void;
@@ -1376,6 +1401,9 @@ function renderWithApi({
         ]);
       }
       if (path === '/integrations/basalam/categories') {
+        if (failCategorySearch) {
+          return jsonResponse({ detail: 'Basalam categories request failed: 503 Service Unavailable' }, 503);
+        }
         return jsonResponse([
           {
             id: 20,

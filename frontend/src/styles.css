@@ -1025,6 +1025,12 @@ a {
   font: inherit;
 }
 
+.category-search-message {
+  color: var(--danger);
+  font-size: 0.76rem;
+  line-height: 1.7;
+}
+
 .category-results {
   display: grid;
   gap: 6px;
