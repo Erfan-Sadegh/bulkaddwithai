@@ -1,10 +1,10 @@
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.models import Asset, Batch
+from app.models import Asset, Batch, ProcessingJob
 from app.schemas import AiExtraction, AiProduct
 from app.services import _normalize_extracted_price_toman, _price_hint_for_product, _price_hints_from_transcript
-from app.services import _replace_items_from_extraction
+from app.services import _replace_items_from_extraction, create_processing_job
 from helpers import audio_file, image_file
 
 
@@ -85,6 +85,31 @@ def test_processing_requires_at_least_one_product_image(client: TestClient, batc
     assert process.status_code == 422
     assert process.json()["detail"] == "At least one product image is required"
     assert client.get(f"/batches/{batch['id']}/items").json() == []
+
+
+def test_processing_reuses_active_job_and_allows_reprocess_after_terminal_state(client: TestClient, batch: dict):
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")])
+    session = client.app.state.session_factory()
+    try:
+        first_job, first_created = create_processing_job(session, batch["id"])
+        second_job, second_created = create_processing_job(session, batch["id"])
+
+        assert first_created is True
+        assert second_created is False
+        assert second_job.id == first_job.id
+        assert len(session.scalars(select(ProcessingJob).where(ProcessingJob.batch_id == batch["id"])).all()) == 1
+
+        first_job.status = "succeeded"
+        first_job.step = "ready"
+        session.commit()
+
+        reprocess_job, reprocess_created = create_processing_job(session, batch["id"])
+
+        assert reprocess_created is True
+        assert reprocess_job.id != first_job.id
+        assert len(session.scalars(select(ProcessingJob).where(ProcessingJob.batch_id == batch["id"])).all()) == 2
+    finally:
+        session.close()
 
 
 def test_fake_processing_creates_editable_items_and_exports(client: TestClient, batch: dict):

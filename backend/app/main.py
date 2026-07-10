@@ -193,8 +193,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         background_tasks: BackgroundTasks,
         session: Session = Depends(get_session),
     ):
-        job = create_processing_job(session, batch_id)
-        background_tasks.add_task(run_processing_job, session_factory, provider_factory, job.id)
+        job, created = create_processing_job(session, batch_id)
+        if created:
+            background_tasks.add_task(run_processing_job, session_factory, provider_factory, job.id)
         return ProcessStartResponse(job_id=job.id)
 
     @app.get("/jobs/{job_id}", response_model=JobRead)

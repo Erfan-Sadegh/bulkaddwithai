@@ -102,18 +102,25 @@ def store_upload(settings: Settings, session: Session, batch_id: int, file: Uplo
     return asset
 
 
-def create_processing_job(session: Session, batch_id: int) -> ProcessingJob:
+def create_processing_job(session: Session, batch_id: int) -> tuple[ProcessingJob, bool]:
     batch = session.get(Batch, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
     if not any(asset.type == "image" for asset in batch.assets):
         raise HTTPException(status_code=422, detail="At least one product image is required")
+    active_job = session.scalar(
+        select(ProcessingJob)
+        .where(ProcessingJob.batch_id == batch_id, ProcessingJob.status.in_(("queued", "running")))
+        .order_by(ProcessingJob.created_at.desc(), ProcessingJob.id.desc())
+    )
+    if active_job:
+        return active_job, False
     job = ProcessingJob(batch_id=batch_id, status="queued", step="upload_ready")
     batch.status = "processing"
     session.add(job)
     session.commit()
     session.refresh(job)
-    return job
+    return job, True
 
 
 def run_processing_job(
