@@ -40,6 +40,8 @@ type ProductDraft = Pick<ProductItem, 'title' | 'description'> & {
   unit_quantity: string;
 };
 type DraftMap = Record<number, ProductDraft>;
+type DraftField = keyof ProductDraft;
+type DraftTouchedMap = Record<number, Partial<Record<DraftField, true>>>;
 type RequiredField =
   | 'title'
   | 'price_toman'
@@ -59,6 +61,17 @@ const PHOTO_GROUP_WARNING_THRESHOLD = 0.65;
 const IMAGE_PREPARE_CONCURRENCY = 2;
 const SELLER_STORAGE_KEY = 'bulkadd_seller_id';
 const BASALAM_ACTIVE_BATCH_STORAGE_KEY = 'bulkadd_basalam_active_batch_id';
+const DRAFT_STORAGE_PREFIX = 'bulkadd_product_drafts';
+const PRODUCT_DRAFT_FIELDS: DraftField[] = [
+  'title',
+  'description',
+  'price_toman',
+  'stock',
+  'preparation_days',
+  'weight_grams',
+  'package_weight_grams',
+  'unit_quantity',
+];
 const REQUIRED_FIELD_LABELS: Record<RequiredField, string> = {
   title: 'نام محصول',
   price_toman: 'قیمت',
@@ -126,6 +139,7 @@ function MainApp() {
   const processingRequestRef = useRef(false);
   const basalamPublishingRef = useRef(false);
   const torobSubmittingRef = useRef(false);
+  const draftTouchedRef = useRef<DraftTouchedMap>({});
 
   const imageAssets = useMemo(
     () => assets.filter((asset) => asset.type === 'image').sort((a, b) => a.upload_order - b.upload_order),
@@ -193,16 +207,28 @@ function MainApp() {
 
   useEffect(() => {
     if (items.length === 0) {
+      draftTouchedRef.current = {};
       setDrafts({});
       return;
     }
-    setDrafts(buildDrafts(items));
+    const storageKey = batch && platform ? draftStorageKey(platform, batch.id) : null;
+    const stored = storageKey ? readStoredDraftState(storageKey) : null;
+    if (stored?.touched) {
+      draftTouchedRef.current = mergeTouchedMaps(draftTouchedRef.current, stored.touched);
+    }
+    pruneTouchedMap(draftTouchedRef.current, items);
+    setDrafts((current) => mergeDraftsWithItems(current, items, draftTouchedRef.current, stored?.drafts ?? {}));
     if (resultsAutoScrolledRef.current) return;
     resultsAutoScrolledRef.current = true;
     window.setTimeout(() => {
       resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
-  }, [items]);
+  }, [batch, items, platform]);
+
+  useEffect(() => {
+    if (!batch || !platform || items.length === 0) return;
+    writeStoredDraftState(draftStorageKey(platform, batch.id), drafts, draftTouchedRef.current);
+  }, [batch, drafts, items.length, platform]);
 
   async function restoreBasalamBatchAfterOAuth(currentSeller: Seller): Promise<boolean> {
     const batchId = readActiveBasalamBatchId();
@@ -213,6 +239,7 @@ function MainApp() {
       setBatch(created);
       setAssets([]);
       setItems([]);
+      draftTouchedRef.current = {};
       setDrafts({});
       setPublishJob(null);
       setPublishedProducts([]);
@@ -247,6 +274,7 @@ function MainApp() {
       setBatch(created);
       setAssets([]);
       setItems([]);
+      draftTouchedRef.current = {};
       setDrafts({});
       return true;
     }
@@ -293,6 +321,7 @@ function MainApp() {
       if (platform === 'basalam') rememberActiveBasalamBatchId(created.id);
       setAssets([]);
       setItems([]);
+      draftTouchedRef.current = {};
       setDrafts({});
       resultsAutoScrolledRef.current = false;
       setPublishedProducts([]);
@@ -538,13 +567,18 @@ function MainApp() {
   }
 
   function updateDraft(itemId: number, patch: Partial<ProductDraft>) {
-    setDrafts((current) => ({ ...current, [itemId]: { ...current[itemId], ...patch } }));
+    markDraftTouched(draftTouchedRef.current, itemId, Object.keys(patch) as DraftField[]);
+    setDrafts((current) => {
+      const item = items.find((item) => item.id === itemId);
+      return { ...current, [itemId]: { ...(current[itemId] ?? (item ? toDraft(item) : emptyDraft())), ...patch } };
+    });
   }
 
   function resetCurrentBatchState() {
     setBatch(null);
     setAssets([]);
     setItems([]);
+    draftTouchedRef.current = {};
     setDrafts({});
     resultsAutoScrolledRef.current = false;
     setPublishedProducts([]);
@@ -695,6 +729,7 @@ function MainApp() {
               onReprocessWithVoice={processBatch}
               onGoToFirstIssue={scrollToFirstIssue}
               onApplyPreparationDays={(days) => {
+                markDraftTouched(draftTouchedRef.current, items.map((item) => item.id), ['preparation_days']);
                 setDrafts((current) =>
                   Object.fromEntries(
                     items.map((item) => [
@@ -2176,8 +2211,24 @@ function readFrontendBasalamCallbackUrl(): string | null {
   return `${API_BASE}/integrations/basalam/callback?${callbackParams.toString()}`;
 }
 
-function buildDrafts(items: ProductItem[]): DraftMap {
-  return Object.fromEntries(items.map((item) => [item.id, toDraft(item)]));
+function mergeDraftsWithItems(
+  currentDrafts: DraftMap,
+  items: ProductItem[],
+  touched: DraftTouchedMap,
+  storedDrafts: DraftMap = {},
+): DraftMap {
+  return Object.fromEntries(
+    items.map((item) => {
+      const serverDraft = toDraft(item);
+      const draft = currentDrafts[item.id] ?? storedDrafts[item.id] ?? serverDraft;
+      const touchedFields = touched[item.id] ?? {};
+      const merged = { ...serverDraft };
+      for (const field of PRODUCT_DRAFT_FIELDS) {
+        if (touchedFields[field]) merged[field] = draft[field] ?? '';
+      }
+      return [item.id, merged];
+    }),
+  );
 }
 
 function toDraft(item: ProductItem): ProductDraft {
@@ -2191,6 +2242,102 @@ function toDraft(item: ProductItem): ProductDraft {
     package_weight_grams: item.package_weight_grams?.toString() ?? '',
     unit_quantity: item.unit_quantity?.toString() ?? '',
   };
+}
+
+function emptyDraft(): ProductDraft {
+  return {
+    title: '',
+    description: '',
+    price_toman: '',
+    stock: '',
+    preparation_days: '',
+    weight_grams: '',
+    package_weight_grams: '',
+    unit_quantity: '',
+  };
+}
+
+function markDraftTouched(touched: DraftTouchedMap, itemIds: number | number[], fields: DraftField[]) {
+  const ids = Array.isArray(itemIds) ? itemIds : [itemIds];
+  for (const itemId of ids) {
+    touched[itemId] = { ...(touched[itemId] ?? {}) };
+    for (const field of fields) touched[itemId][field] = true;
+  }
+}
+
+function pruneTouchedMap(touched: DraftTouchedMap, items: ProductItem[]) {
+  const liveIds = new Set(items.map((item) => item.id));
+  for (const rawId of Object.keys(touched)) {
+    if (!liveIds.has(Number(rawId))) delete touched[Number(rawId)];
+  }
+}
+
+function mergeTouchedMaps(current: DraftTouchedMap, stored: DraftTouchedMap): DraftTouchedMap {
+  const merged: DraftTouchedMap = { ...current };
+  for (const [rawId, fields] of Object.entries(stored)) {
+    const itemId = Number(rawId);
+    if (!Number.isFinite(itemId)) continue;
+    merged[itemId] = { ...(merged[itemId] ?? {}), ...fields };
+  }
+  return merged;
+}
+
+function draftStorageKey(platform: Platform, batchId: number): string {
+  return `${DRAFT_STORAGE_PREFIX}:${platform}:${batchId}`;
+}
+
+function readStoredDraftState(key: string): { drafts: DraftMap; touched: DraftTouchedMap } | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { drafts?: DraftMap; touched?: DraftTouchedMap };
+    return {
+      drafts: sanitizeDraftMap(parsed.drafts),
+      touched: sanitizeTouchedMap(parsed.touched),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredDraftState(key: string, drafts: DraftMap, touched: DraftTouchedMap) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ drafts, touched }));
+  } catch {
+    // Losing local draft backup is non-critical; in-memory drafts still protect the current session.
+  }
+}
+
+function sanitizeDraftMap(value: unknown): DraftMap {
+  if (!value || typeof value !== 'object') return {};
+  const result: DraftMap = {};
+  for (const [rawId, rawDraft] of Object.entries(value)) {
+    const itemId = Number(rawId);
+    if (!Number.isFinite(itemId) || !rawDraft || typeof rawDraft !== 'object') continue;
+    const source = rawDraft as Partial<Record<DraftField, unknown>>;
+    const draft = emptyDraft();
+    for (const field of PRODUCT_DRAFT_FIELDS) {
+      const fieldValue = source[field];
+      draft[field] = typeof fieldValue === 'string' ? fieldValue : '';
+    }
+    result[itemId] = draft;
+  }
+  return result;
+}
+
+function sanitizeTouchedMap(value: unknown): DraftTouchedMap {
+  if (!value || typeof value !== 'object') return {};
+  const result: DraftTouchedMap = {};
+  for (const [rawId, rawFields] of Object.entries(value)) {
+    const itemId = Number(rawId);
+    if (!Number.isFinite(itemId) || !rawFields || typeof rawFields !== 'object') continue;
+    for (const field of PRODUCT_DRAFT_FIELDS) {
+      if ((rawFields as Partial<Record<DraftField, unknown>>)[field]) {
+        result[itemId] = { ...(result[itemId] ?? {}), [field]: true };
+      }
+    }
+  }
+  return result;
 }
 
 function missingFieldMap(issues: PublishValidationIssue[]): Map<number, Set<RequiredField>> {

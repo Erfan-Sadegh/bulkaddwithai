@@ -831,6 +831,104 @@ describe('App', () => {
     expect(stopTrack).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps edited product fields when a product action refreshes items from the API', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      itemOverride: { confidence: 0.51 },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+    await screen.findByDisplayValue(item.title);
+
+    const titleInput = container.querySelector('.product-title-field input') as HTMLInputElement;
+    const stockInput = container.querySelector('.product-extra-fields input') as HTMLInputElement;
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Manual title');
+    await user.type(stockInput, '5');
+
+    await user.click(container.querySelector('.split-photo-button') as HTMLButtonElement);
+
+    await waitFor(() => expect(container.querySelector('.product-title-field input')).toHaveValue('Manual title'));
+    expect((container.querySelector('.product-extra-fields input') as HTMLInputElement).value).not.toBe('');
+  });
+
+  it('preserves seller edits while applying AI-filled empty fields after voice reprocess', async () => {
+    const user = userEvent.setup();
+    let processCalls = 0;
+    const stopTrack = vi.fn();
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] });
+    Object.defineProperty(window.navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    class FakeMediaRecorder {
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void | Promise<void>) | null = null;
+
+      start() {
+        this.ondataavailable?.({ data: new Blob(['voice'], { type: 'audio/webm' }) } as BlobEvent);
+      }
+
+      stop() {
+        void this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+
+    const firstItem: ProductItem = { ...item, title: 'AI old title', stock: null };
+    const revisedItem: ProductItem = { ...item, title: 'AI revised title', stock: 8 };
+    const category = {
+      category_id: 20,
+      title: 'گروه شده',
+      path: 'کالای دیجیتال > گروه شده',
+      confidence: 0.88,
+      source: 'auto',
+      unit_type_id: 6304,
+      unit_type_title: 'عددی',
+      max_preparation_days: 7,
+    };
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      listItemsResponses: [[firstItem], [revisedItem]],
+      categorySuggestionResponses: [[{ ...firstItem, basalam_category: category }], [{ ...revisedItem, basalam_category: category }]],
+      onProcess: () => {
+        processCalls += 1;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+    await screen.findByDisplayValue('AI old title');
+
+    const titleInput = container.querySelector('.product-title-field input') as HTMLInputElement;
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Manual title');
+    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
+
+    const validationDock = await screen.findByText('اطلاعات لازم کامل نیست.');
+    const dock = validationDock.closest('.dock-message') as HTMLElement;
+    await user.click(within(dock).getByRole('button', { name: 'ضبط صدا' }));
+    await user.click(await within(dock).findByRole('button', { name: 'توقف ضبط' }));
+    await waitFor(() => expect(within(dock).getByRole('button', { name: 'بازبینی' })).not.toBeDisabled());
+    await user.click(within(dock).getByRole('button', { name: 'بازبینی' }));
+
+    await waitFor(() => expect(processCalls).toBe(2));
+    expect(await screen.findByDisplayValue('Manual title')).toBeInTheDocument();
+    expect((container.querySelector('.product-extra-fields input') as HTMLInputElement).value).not.toBe('');
+  });
+
   it('publishes reviewed products to connected Basalam booth', async () => {
     const user = userEvent.setup();
     const updateBodies: Array<Record<string, unknown>> = [];
@@ -1315,6 +1413,8 @@ function renderWithApi({
   updateBodies = [],
   itemOverride = {},
   categorySuggestionOverride,
+  listItemsResponses,
+  categorySuggestionResponses,
   platformConnections = [],
   onProcess,
   onPublish,
@@ -1349,6 +1449,8 @@ function renderWithApi({
   updateBodies?: Array<Record<string, unknown>>;
   itemOverride?: Partial<typeof item>;
   categorySuggestionOverride?: ProductBasalamCategory;
+  listItemsResponses?: ProductItem[][];
+  categorySuggestionResponses?: ProductItem[][];
   platformConnections?: Array<typeof basalamConnection>;
   onProcess?: () => void;
   onPublish?: () => void;
@@ -1380,6 +1482,8 @@ function renderWithApi({
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
   let jobResponseIndex = 0;
+  let listItemsResponseIndex = 0;
+  let categorySuggestionResponseIndex = 0;
   let publishJobResponseIndex = 0;
   vi.stubGlobal(
     'fetch',
@@ -1441,9 +1545,21 @@ function renderWithApi({
         return jsonResponse({ id: 30, batch_id: 10, status: 'succeeded', step: 'ready', error: null });
       }
       if (path === '/jobs/31') return jsonResponse({ id: 31, batch_id: 10, status: 'failed', step: 'failed', error: 'پردازش کامل نشد.' });
-      if (path === '/batches/10/items') return jsonResponse([responseItem]);
+      if (path === '/batches/10/items') {
+        if (listItemsResponses) {
+          const response = listItemsResponses[Math.min(listItemsResponseIndex, listItemsResponses.length - 1)];
+          listItemsResponseIndex += 1;
+          return jsonResponse(response);
+        }
+        return jsonResponse([responseItem]);
+      }
       if (path === '/batches/10/categories/basalam/suggest' && method === 'POST') {
         onCategorySuggest?.();
+        if (categorySuggestionResponses) {
+          const response = categorySuggestionResponses[Math.min(categorySuggestionResponseIndex, categorySuggestionResponses.length - 1)];
+          categorySuggestionResponseIndex += 1;
+          return jsonResponse(response);
+        }
         return jsonResponse([
           {
             ...responseItem,
