@@ -122,6 +122,7 @@ function MainApp() {
   const resultsRef = useRef<HTMLElement | null>(null);
   const resultsAutoScrolledRef = useRef(false);
   const platformRequestRef = useRef(0);
+  const torobSubmittingRef = useRef(false);
 
   const imageAssets = useMemo(
     () => assets.filter((asset) => asset.type === 'image').sort((a, b) => a.upload_order - b.upload_order),
@@ -468,7 +469,7 @@ function MainApp() {
   }
 
   async function submitToTorob() {
-    if (!batch) return;
+    if (!batch || submittingTorob || torobSubmittingRef.current) return;
     setTorobInfoTouched(true);
     setPublishJob(null);
     setPublishedProducts([]);
@@ -479,6 +480,7 @@ function MainApp() {
       document.querySelector('.torob-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
+    torobSubmittingRef.current = true;
     setSubmittingTorob(true);
     setError(null);
     try {
@@ -496,6 +498,7 @@ function MainApp() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'درخواست ترب ثبت نشد. دوباره تلاش کن.');
     } finally {
+      torobSubmittingRef.current = false;
       setSubmittingTorob(false);
     }
   }

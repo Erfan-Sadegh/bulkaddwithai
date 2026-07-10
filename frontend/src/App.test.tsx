@@ -1021,6 +1021,33 @@ describe('App', () => {
     expect(screen.queryByText(/Submission created|Pending admin/i)).not.toBeInTheDocument();
   });
 
+  it('keeps Torob submission in one pending request even after a fast double click', async () => {
+    const user = userEvent.setup();
+    const torobBodies: Array<Record<string, unknown>> = [];
+    const { container } = renderWithApi({ torobBodies, torobSubmissionDelayMs: 80 });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(await screen.findByRole('button', { name: /افزودن محصولات به ترب/ }));
+    await user.type(screen.getByLabelText('اسم فروشگاه'), 'فروشگاه من');
+    await user.type(screen.getByLabelText('شماره تماس'), '09120000000');
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+
+    expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
+    const submitButton = screen.getByRole('button', { name: 'ثبت درخواست ترب' });
+    await user.dblClick(submitButton);
+
+    expect(submitButton).toBeDisabled();
+    expect(submitButton.querySelector('.spin')).toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).toHaveTextContent('درخواست ترب ثبت شد');
+    expect(torobBodies).toHaveLength(1);
+    expect(torobBodies[0]).toEqual({ shop_name: 'فروشگاه من', contact_mobile: '09120000000' });
+    expect(screen.queryByText(/Failed to fetch|Service Unavailable|Pending admin|Submission created/i)).not.toBeInTheDocument();
+  });
+
   it('hides raw Torob submission errors behind a Persian message', async () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({ failTorobSubmission: true });
@@ -1162,6 +1189,7 @@ function renderWithApi({
   uploadDelayMs = 0,
   torobSubmissionMessage = 'درخواستت ثبت شد. به زودی بررسی می‌شود.',
   failTorobSubmission = false,
+  torobSubmissionDelayMs = 0,
   restoredBatch = batch,
   createdBatch = batch,
 }: {
@@ -1191,6 +1219,7 @@ function renderWithApi({
   uploadDelayMs?: number;
   torobSubmissionMessage?: string;
   failTorobSubmission?: boolean;
+  torobSubmissionDelayMs?: number;
   restoredBatch?: typeof batch;
   createdBatch?: typeof batch;
 } = {}) {
@@ -1353,6 +1382,9 @@ function renderWithApi({
       if (path === '/batches/10/torob-submissions' && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}'));
         torobBodies.push(body);
+        if (torobSubmissionDelayMs > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, torobSubmissionDelayMs));
+        }
         if (failTorobSubmission) {
           return jsonResponse({ detail: 'Torob upstream failed 503' }, 503);
         }
