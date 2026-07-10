@@ -102,6 +102,22 @@ def store_upload(settings: Settings, session: Session, batch_id: int, file: Uplo
     return asset
 
 
+def delete_asset(session: Session, asset_id: int) -> None:
+    asset = session.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if asset.item_links:
+        raise HTTPException(status_code=422, detail="Asset is already attached to a product")
+
+    path = Path(asset.file_path)
+    session.delete(asset)
+    session.commit()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def create_processing_job(session: Session, batch_id: int) -> tuple[ProcessingJob, bool]:
     batch = session.get(Batch, batch_id)
     if not batch:

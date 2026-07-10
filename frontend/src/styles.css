@@ -431,6 +431,26 @@ a {
   font-size: 0.85rem;
 }
 
+.photo-delete {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #4f5b58;
+  cursor: pointer;
+}
+
+.photo-delete:hover {
+  color: var(--danger);
+  border-color: #f1b7b1;
+}
+
 .loading-tile {
   display: grid;
   place-items: center;

@@ -12,6 +12,7 @@ import {
   SplitSquareHorizontal,
   Store,
   Upload,
+  X,
 } from 'lucide-react';
 import type { ChangeEvent, MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -60,6 +61,7 @@ const BASALAM_AUTO_CATEGORY_THRESHOLD = 0.62;
 const PHOTO_GROUP_WARNING_THRESHOLD = 0.65;
 const IMAGE_PREPARE_CONCURRENCY = 2;
 const SELLER_STORAGE_KEY = 'bulkadd_seller_id';
+const WORKSPACE_STORAGE_KEY = 'bulkadd_workspace_id';
 const BASALAM_ACTIVE_BATCH_STORAGE_KEY = 'bulkadd_basalam_active_batch_id';
 const DRAFT_STORAGE_PREFIX = 'bulkadd_product_drafts';
 const PRODUCT_DRAFT_FIELDS: DraftField[] = [
@@ -105,6 +107,7 @@ export function App() {
 }
 
 function MainApp() {
+  const [workspaceId] = useState(() => getOrCreateWorkspaceId());
   const [seller, setSeller] = useState<Seller | null>(null);
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [batch, setBatch] = useState<Batch | null>(null);
@@ -296,7 +299,7 @@ function MainApp() {
       const currentSeller = await resolveSellerForThisBrowser(oauthResult?.sellerId ?? null);
       if (oauthResult?.status === 'success') showToast('غرفه باسلام وصل شد.');
       if (oauthResult?.status === 'failed') setError('اتصال غرفه باسلام انجام نشد. دوباره تلاش کن.');
-      const currentConnections = await api.listPlatformConnections(currentSeller.id).catch(() => []);
+      const currentConnections = await api.listPlatformConnections(currentSeller.id, workspaceId).catch(() => []);
       setSeller(currentSeller);
       setConnections(Array.isArray(currentConnections) ? currentConnections : []);
       if (oauthResult) {
@@ -361,6 +364,17 @@ function MainApp() {
     } finally {
       uploadRequestRef.current = false;
       setUploading(false);
+    }
+  }
+
+  async function deleteUploadedAsset(assetId: number) {
+    if (items.length > 0 || uploading || processing) return;
+    setError(null);
+    try {
+      await api.deleteAsset(assetId);
+      setAssets((current) => current.filter((asset) => asset.id !== assetId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'عکس حذف نشد. دوباره تلاش کن.');
     }
   }
 
@@ -471,7 +485,7 @@ function MainApp() {
           return;
         }
       }
-      const result = await api.getBasalamOAuthUrl(seller.id);
+      const result = await api.getBasalamOAuthUrl(seller.id, workspaceId);
       if (!result.url) throw new Error(result.error || 'اتصال باسلام هنوز تنظیم نشده است.');
       window.location.href = result.url;
     } catch (err) {
@@ -502,7 +516,7 @@ function MainApp() {
         setPublishingBasalam(false);
         return;
       }
-      const started = await api.publishToBasalam(batch.id);
+      const started = await api.publishToBasalam(batch.id, workspaceId);
       const firstJob = await api.getPublishJob(started.job_id);
       setPublishJob(firstJob);
       if (['succeeded', 'partial_failed', 'failed'].includes(firstJob.status)) {
@@ -723,6 +737,7 @@ function MainApp() {
                 uploadDisabled={items.length > 0 || processing}
                 voiceDisabled={items.length > 0 || uploading || processing}
                 onUpload={upload}
+                onDeleteAsset={deleteUploadedAsset}
               />
             </>
           )}
@@ -1254,6 +1269,7 @@ function UploadPanel({
   uploadDisabled,
   voiceDisabled,
   onUpload,
+  onDeleteAsset,
 }: {
   images: Asset[];
   audios: Asset[];
@@ -1261,6 +1277,7 @@ function UploadPanel({
   uploadDisabled: boolean;
   voiceDisabled: boolean;
   onUpload: (files: File[]) => void;
+  onDeleteAsset: (assetId: number) => void;
 }) {
   function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
@@ -1299,6 +1316,11 @@ function UploadPanel({
             <figure className="photo-tile" key={asset.id}>
               <img src={`${API_BASE}${asset.url}`} alt={`عکس شماره ${toPersianDigits(asset.upload_order)}`} />
               <figcaption>شماره {toPersianDigits(asset.upload_order)}</figcaption>
+              {!uploadDisabled && (
+                <button className="photo-delete" type="button" aria-label="حذف عکس" onClick={() => onDeleteAsset(asset.id)}>
+                  <X size={15} />
+                </button>
+              )}
             </figure>
           ))}
           {uploading && (
@@ -2241,6 +2263,21 @@ function readStoredSellerId(): number | null {
 
 function rememberSellerId(sellerId: number) {
   window.localStorage.setItem(SELLER_STORAGE_KEY, String(sellerId));
+}
+
+function getOrCreateWorkspaceId(): string {
+  try {
+    const existing = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    if (existing) return existing;
+    const next =
+      typeof window.crypto?.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : `ws-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    window.localStorage.setItem(WORKSPACE_STORAGE_KEY, next);
+    return next;
+  } catch {
+    return `ws-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
 }
 
 function readActiveBasalamBatchId(): number | null {

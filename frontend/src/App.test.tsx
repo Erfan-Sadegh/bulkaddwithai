@@ -343,6 +343,22 @@ describe('App', () => {
     expect(screen.queryByAltText('عکس شماره ۱')).not.toBeInTheDocument();
   });
 
+  it('lets the seller delete an uploaded photo before building the list', async () => {
+    const user = userEvent.setup();
+    const deletedAssetIds: number[] = [];
+    const { container } = renderWithApi({ uploadAssetCount: 1, deletedAssetIds });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }));
+    const deleteButton = await screen.findByRole('button', { name: 'حذف عکس' });
+
+    await user.click(deleteButton);
+
+    expect(deletedAssetIds).toEqual([11]);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'حذف عکس' })).not.toBeInTheDocument());
+  });
+
   it('shows a minimal loading state while photo upload is slow', async () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({ uploadAssetCount: 1, uploadDelayMs: 80 });
@@ -1538,6 +1554,7 @@ function renderWithApi({
   publishDelayMs = 0,
   uploadKinds,
   uploadedFiles,
+  deletedAssetIds,
   uploadDelayMs = 0,
   torobSubmissionMessage = 'درخواستت ثبت شد. به زودی بررسی می‌شود.',
   failTorobSubmission = false,
@@ -1574,6 +1591,7 @@ function renderWithApi({
   publishDelayMs?: number;
   uploadKinds?: string[];
   uploadedFiles?: File[];
+  deletedAssetIds?: number[];
   uploadDelayMs?: number;
   torobSubmissionMessage?: string;
   failTorobSubmission?: boolean;
@@ -1629,6 +1647,10 @@ function renderWithApi({
         uploadKinds?.push(hasAudio ? 'audio' : 'image');
         if (uploadDelayMs > 0 && !hasAudio) await new Promise((resolve) => window.setTimeout(resolve, uploadDelayMs));
         return jsonResponse(hasAudio ? [audioAsset] : imageAssets.slice(0, uploadAssetCount), 201);
+      }
+      if (path.startsWith('/assets/') && method === 'DELETE') {
+        deletedAssetIds?.push(Number(path.split('/').pop()));
+        return new Response(null, { status: 204 });
       }
       if (path === '/batches/10/process' && method === 'POST') {
         onProcess?.();

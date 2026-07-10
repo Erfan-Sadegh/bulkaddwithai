@@ -77,6 +77,29 @@ def test_upload_order_stays_stable_for_images(client: TestClient, batch: dict):
     assert image_orders == [1, 2, 3]
 
 
+def test_uploaded_image_can_be_deleted_before_processing(client: TestClient, batch: dict):
+    uploaded = client.post(
+        f"/batches/{batch['id']}/assets",
+        files=[image_file("a.jpg"), image_file("b.jpg")],
+    ).json()
+
+    response = client.delete(f"/assets/{uploaded[0]['id']}")
+
+    assert response.status_code == 204
+    assets = client.get(f"/batches/{batch['id']}/assets").json()
+    assert [asset["id"] for asset in assets] == [uploaded[1]["id"]]
+
+
+def test_uploaded_image_delete_is_rejected_after_it_is_linked_to_product(client: TestClient, batch: dict):
+    uploaded = client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")]).json()
+    client.post(f"/batches/{batch['id']}/process")
+
+    response = client.delete(f"/assets/{uploaded[0]['id']}")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Asset is already attached to a product"
+
+
 def test_processing_requires_at_least_one_product_image(client: TestClient, batch: dict):
     client.post(f"/batches/{batch['id']}/assets", files=[audio_file()])
 

@@ -131,6 +131,55 @@ def test_basalam_oauth_url_and_callback_create_platform_connection(client: TestC
     assert connections[0]["external_shop_name"] == "غرفه تست"
 
 
+def test_basalam_connection_is_scoped_to_workspace(client: TestClient, seller: dict):
+    fake = FakeBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+
+    state = client.get(f"/integrations/basalam/oauth-url?seller_id={seller['id']}&workspace_id=phone").json()["state"]
+    client.get(f"/integrations/basalam/callback?code=valid-code&state={state}", follow_redirects=False)
+
+    phone_connections = client.get(f"/sellers/{seller['id']}/platform-connections?workspace_id=phone").json()
+    laptop_connections = client.get(f"/sellers/{seller['id']}/platform-connections?workspace_id=laptop").json()
+
+    assert len(phone_connections) == 1
+    assert laptop_connections == []
+
+
+def test_basalam_publish_requires_matching_workspace_connection(client: TestClient, batch: dict):
+    fake = FakeBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")])
+    client.post(f"/batches/{batch['id']}/process")
+    item = client.get(f"/batches/{batch['id']}/items").json()[0]
+    client.patch(
+        f"/batch-items/{item['id']}",
+        json={
+            "price_toman": item["price_toman"] or 456000,
+            "stock": 5,
+            "preparation_days": 2,
+            "weight_grams": 300,
+            "package_weight_grams": 500,
+            "unit_quantity": 1,
+        },
+    )
+    client.patch(f"/batch-items/{item['id']}/basalam-category", json={"category_id": 20})
+    state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}&workspace_id=phone").json()["state"]
+    client.get(f"/integrations/basalam/callback?code=valid-code&state={state}", follow_redirects=False)
+
+    publish = client.post(f"/batches/{batch['id']}/publish/basalam?workspace_id=laptop")
+
+    assert publish.status_code == 422
+    assert publish.json()["detail"] == "Basalam booth is not connected"
+    assert fake.created_products == []
+
+
 def test_basalam_oauth_callback_connects_each_seller_to_its_own_booth(client: TestClient, seller: dict):
     class MultiVendorBasalamClient(FakeBasalamClient):
         vendors = {
@@ -291,8 +340,8 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     assert fake.created_products[0].weight == 300
     assert fake.created_products[0].package_weight == 500
     assert fake.created_products[0].unit_quantity == 1
-    assert fake.created_products[0].status == 1
-    assert fake.created_products[0].to_json()["status"] == 1
+    assert fake.created_products[0].status == 2976
+    assert fake.created_products[0].to_json()["status"] == 2976
 
 
 def test_create_basalam_publish_job_reuses_active_job_and_allows_retry_after_finish(client: TestClient, batch: dict):
@@ -328,6 +377,59 @@ def test_create_basalam_publish_job_reuses_active_job_and_allows_retry_after_fin
         assert len(session.scalars(select(PublishJob).where(PublishJob.batch_id == batch["id"])).all()) == 2
     finally:
         session.close()
+
+
+def test_publish_retries_valid_status_when_basalam_rejects_configured_status(client: TestClient, batch: dict):
+    class StatusRetryBasalamClient(FakeBasalamClient):
+        def __init__(self):
+            super().__init__()
+            self.attempted_statuses: list[int] = []
+
+        def create_product(
+            self,
+            connection: PlatformConnection,
+            payload: BasalamProductPayload,
+        ) -> dict:
+            self.attempted_statuses.append(payload.status)
+            if payload.status == 1:
+                raise BasalamClientError(
+                    'Basalam product create failed: 422 {"messages":[{"fields":["status"],"message":"وضعیت محصول نامعتبر می باشد"}]}'
+                )
+            return super().create_product(connection, payload)
+
+    fake = StatusRetryBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+    client.app.state.settings.basalam_default_status = 1
+
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")])
+    client.post(f"/batches/{batch['id']}/process")
+    item = client.get(f"/batches/{batch['id']}/items").json()[0]
+    client.patch(
+        f"/batch-items/{item['id']}",
+        json={
+            "price_toman": 600000,
+            "stock": 5,
+            "preparation_days": 2,
+            "weight_grams": 300,
+            "package_weight_grams": 500,
+            "unit_quantity": 1,
+        },
+    )
+    client.patch(f"/batch-items/{item['id']}/basalam-category", json={"category_id": 20})
+    callback_state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}").json()["state"]
+    client.get(f"/integrations/basalam/callback?code=valid-code&state={callback_state}", follow_redirects=False)
+
+    publish = client.post(f"/batches/{batch['id']}/publish/basalam")
+
+    assert publish.status_code == 202
+    job = client.get(f"/publish-jobs/{publish.json()['job_id']}").json()
+    assert job["status"] == "succeeded"
+    assert fake.attempted_statuses == [1, 2976]
+    assert fake.created_products[0].status == 2976
+    assert fake.created_products[0].primary_price == 6000000
 
 
 def test_publish_retries_next_auto_category_when_basalam_rejects_category(client: TestClient, batch: dict):
@@ -557,7 +659,7 @@ def test_failed_basalam_publish_stores_safe_request_debug_metadata(client: TestC
     metadata = published[0]["response_metadata"]
     assert metadata["http_status"] == 400
     assert metadata["request_payload_has_status"] is True
-    assert metadata["request_payload_status"] == 1
+    assert metadata["request_payload_status"] == 2976
     assert metadata["request_payload_category_id"] == 20
     assert metadata["request_payload_unit_type"] == 6304
     assert metadata["request_payload_primary_price"] == 4560000
@@ -641,4 +743,4 @@ def test_publish_does_not_guess_category_for_ambiguous_product(client: TestClien
 def test_empty_basalam_status_uses_published_default():
     settings = Settings(basalam_default_status="")
 
-    assert settings.basalam_default_status == 1
+    assert settings.basalam_default_status == 2976

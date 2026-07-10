@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -58,6 +58,7 @@ from .services import (
     create_batch,
     create_processing_job,
     create_seller,
+    delete_asset,
     export_csv,
     export_json,
     list_items,
@@ -187,6 +188,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ).all()
         return [_asset_to_read(asset) for asset in assets]
 
+    @app.delete("/assets/{asset_id}", status_code=204)
+    def delete_upload_asset(asset_id: int, session: Session = Depends(get_session)):
+        delete_asset(session, asset_id)
+        return Response(status_code=204)
+
     @app.post("/batches/{batch_id}/process", response_model=ProcessStartResponse, status_code=202)
     def post_process(
         batch_id: int,
@@ -206,13 +212,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return job
 
     @app.get("/sellers/{seller_id}/platform-connections", response_model=list[PlatformConnectionRead])
-    def get_platform_connections(seller_id: int, session: Session = Depends(get_session)):
-        return list_platform_connections(session, seller_id)
+    def get_platform_connections(
+        seller_id: int, workspace_id: str | None = None, session: Session = Depends(get_session)
+    ):
+        return list_platform_connections(session, seller_id, workspace_id)
 
     @app.get("/integrations/basalam/oauth-url", response_model=OAuthUrlResponse)
-    def get_basalam_oauth_url(seller_id: int, session: Session = Depends(get_session)):
+    def get_basalam_oauth_url(
+        seller_id: int, workspace_id: str | None = None, session: Session = Depends(get_session)
+    ):
         try:
-            url, state = create_basalam_oauth_url(settings, session, basalam_client_factory(), seller_id)
+            url, state = create_basalam_oauth_url(settings, session, basalam_client_factory(), seller_id, workspace_id)
         except HTTPException as exc:
             if exc.status_code == 503:
                 return OAuthUrlResponse(
@@ -333,9 +343,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def post_publish_basalam(
         batch_id: int,
         background_tasks: BackgroundTasks,
+        workspace_id: str | None = None,
         session: Session = Depends(get_session),
     ):
-        job, created = create_basalam_publish_job(session, batch_id)
+        job, created = create_basalam_publish_job(session, batch_id, workspace_id)
         if created:
             background_tasks.add_task(
                 run_basalam_publish_job,

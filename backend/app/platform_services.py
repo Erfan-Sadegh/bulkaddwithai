@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import time
+from dataclasses import replace
 from datetime import timedelta
 from urllib.parse import urlencode
 
@@ -44,6 +45,7 @@ BASALAM_PLATFORM = "basalam"
 PUBLISH_STEPS = ("uploading_photos", "creating_products", "ready", "failed")
 BASALAM_NUMERIC_UNIT_TYPE_ID = 6304
 BASALAM_NUMERIC_UNIT_TYPE_TITLE = "عددی"
+BASALAM_STATUS_RETRY_CANDIDATES = (2976, 3790, 1)
 BASALAM_ALLOWED_UNIT_TYPE_IDS = {
     6375,
     6374,
@@ -83,24 +85,25 @@ BASALAM_ALLOWED_UNIT_TYPE_IDS = {
 }
 
 
-def list_platform_connections(session: Session, seller_id: int) -> list[PlatformConnection]:
+def list_platform_connections(session: Session, seller_id: int, workspace_id: str | None = None) -> list[PlatformConnection]:
     if not session.get(Seller, seller_id):
         raise HTTPException(status_code=404, detail="Seller not found")
-    return session.scalars(
+    connections = session.scalars(
         select(PlatformConnection)
         .where(PlatformConnection.seller_id == seller_id)
         .order_by(PlatformConnection.created_at.desc())
     ).all()
+    return [connection for connection in connections if _connection_matches_workspace(connection, workspace_id)]
 
 
 def create_basalam_oauth_url(
-    settings: Settings, session: Session, client: BasalamClient, seller_id: int
+    settings: Settings, session: Session, client: BasalamClient, seller_id: int, workspace_id: str | None = None
 ) -> tuple[str, str]:
     if not session.get(Seller, seller_id):
         raise HTTPException(status_code=404, detail="Seller not found")
     if not client.is_configured:
         raise HTTPException(status_code=503, detail="Basalam OAuth is not configured")
-    state = _make_oauth_state(settings, seller_id)
+    state = _make_oauth_state(settings, seller_id, workspace_id)
     return client.get_authorization_url(state), state
 
 
@@ -135,7 +138,7 @@ def handle_basalam_callback(
         vendor = user.get("vendor")
         if not vendor or not vendor.get("id"):
             return _frontend_redirect(settings, {"basalam_status": "failed", "error": "no_vendor_found"})
-        connection = upsert_basalam_connection(session, seller, tokens, user, vendor)
+        connection = upsert_basalam_connection(session, seller, tokens, user, vendor, state_payload.get("workspace_id"))
     except Exception as exc:
         session.rollback()
         return _frontend_redirect(settings, {"basalam_status": "failed", "error": str(exc)})
@@ -152,7 +155,7 @@ def handle_basalam_callback(
 
 
 def upsert_basalam_connection(
-    session: Session, seller: Seller, tokens: dict, user: dict, vendor: dict
+    session: Session, seller: Seller, tokens: dict, user: dict, vendor: dict, workspace_id: str | None = None
 ) -> PlatformConnection:
     external_shop_id = str(vendor["id"])
     connection = session.scalar(
@@ -180,7 +183,7 @@ def upsert_basalam_connection(
     connection.token_type = tokens.get("token_type")
     connection.scopes = tokens.get("scope") or tokens.get("scopes")
     connection.expires_at = _expires_at(tokens.get("expires_in"))
-    connection.connection_metadata = {"user": _public_user_metadata(user), "vendor": vendor}
+    connection.connection_metadata = {"workspace_id": workspace_id, "user": _public_user_metadata(user), "vendor": vendor}
     seller.shop_name = connection.external_shop_name
     seller.mobile = str(user.get("mobile") or seller.mobile or "-")
     session.commit()
@@ -188,7 +191,7 @@ def upsert_basalam_connection(
     return connection
 
 
-def create_basalam_publish_job(session: Session, batch_id: int) -> tuple[PublishJob, bool]:
+def create_basalam_publish_job(session: Session, batch_id: int, workspace_id: str | None = None) -> tuple[PublishJob, bool]:
     batch = session.scalar(
         select(Batch)
         .where(Batch.id == batch_id)
@@ -203,6 +206,7 @@ def create_basalam_publish_job(session: Session, batch_id: int) -> tuple[Publish
             item
             for item in batch.seller.platform_connections
             if item.platform == BASALAM_PLATFORM and item.status == "connected"
+            and _connection_matches_workspace(item, workspace_id)
         ),
         None,
     )
@@ -531,7 +535,7 @@ def _create_product_with_category_retries(
         try:
             payload = _item_to_basalam_payload(settings, item, uploaded_by_asset_id)
             try:
-                return _with_refresh(session, client, connection, lambda: client.create_product(connection, payload))
+                return _create_product_with_status_retries(session, client, connection, payload)
             except Exception as exc:
                 if not _can_retry_with_numeric_unit(exc, payload):
                     raise
@@ -543,7 +547,7 @@ def _create_product_with_category_retries(
                 )
                 _mark_category_numeric_unit_fallback(item)
                 session.flush()
-                return _with_refresh(session, client, connection, lambda: client.create_product(connection, numeric_payload))
+                return _create_product_with_status_retries(session, client, connection, numeric_payload)
         except Exception as exc:
             last_error = exc
             if not _can_retry_with_another_category(exc, category_data):
@@ -622,6 +626,43 @@ def _can_retry_with_numeric_unit(exc: Exception, payload: BasalamProductPayload)
     if "unit_quantity" in normalized:
         return False
     return any(token in normalized for token in ("unit_type", "unit type", '"unit"', "واحد"))
+
+
+def _create_product_with_status_retries(
+    session: Session, client: BasalamClient, connection: PlatformConnection, payload: BasalamProductPayload
+) -> dict:
+    last_error: Exception | None = None
+    for candidate in [payload, *_status_retry_payloads(payload)]:
+        try:
+            return _with_refresh(
+                session,
+                client,
+                connection,
+                lambda candidate=candidate: client.create_product(connection, candidate),
+            )
+        except Exception as exc:
+            last_error = exc
+            if not _can_retry_with_status(exc):
+                raise
+    if last_error:
+        raise last_error
+    raise RuntimeError("Basalam product create failed")
+
+
+def _status_retry_payloads(payload: BasalamProductPayload) -> list[BasalamProductPayload]:
+    candidates: list[BasalamProductPayload] = []
+    seen = {payload.status}
+    for status in BASALAM_STATUS_RETRY_CANDIDATES:
+        if status in seen:
+            continue
+        seen.add(status)
+        candidates.append(replace(payload, status=status))
+    return candidates
+
+
+def _can_retry_with_status(exc: Exception) -> bool:
+    normalized = str(exc).lower()
+    return "status" in normalized and any(token in normalized for token in ("invalid", "نامعتبر", "ظ†ط§ظ…ط¹طھط¨ط±"))
 
 
 def _mark_category_numeric_unit_fallback(item: BatchItem) -> None:
@@ -923,11 +964,25 @@ def _publishable_category_data(settings: Settings, item: BatchItem) -> BatchItem
     return data
 
 
-def _make_oauth_state(settings: Settings, seller_id: int) -> str:
+def _connection_workspace_id(connection: PlatformConnection) -> str | None:
+    metadata = connection.connection_metadata or {}
+    value = metadata.get("workspace_id")
+    return str(value) if value else None
+
+
+def _connection_matches_workspace(connection: PlatformConnection, workspace_id: str | None) -> bool:
+    if not workspace_id:
+        return True
+    return _connection_workspace_id(connection) == workspace_id
+
+
+def _make_oauth_state(settings: Settings, seller_id: int, workspace_id: str | None = None) -> str:
     payload = {
         "seller_id": seller_id,
         "iat": int(time.time()),
     }
+    if workspace_id:
+        payload["workspace_id"] = workspace_id
     encoded = _urlsafe_b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = hmac.new(_state_secret(settings), encoded.encode("ascii"), hashlib.sha256).hexdigest()
     return f"{encoded}.{signature}"
