@@ -488,6 +488,7 @@ def _basalam_failure_metadata(exc: Exception) -> dict:
         metadata["request_payload_status"] = payload.get("status")
         metadata["request_payload_category_id"] = payload.get("category_id")
         metadata["request_payload_unit_type"] = payload.get("unit_type")
+        metadata["request_payload_primary_price"] = payload.get("primary_price")
         metadata["request_payload_photo_count"] = len(payload.get("photos") or [])
     return metadata
 
@@ -704,7 +705,7 @@ def _item_to_basalam_payload(
     return BasalamProductPayload(
         name=item.title,
         description=item.description or item.title,
-        primary_price=item.price_toman,
+        primary_price=_toman_to_rial(item.price_toman),
         photo_ids=photo_ids,
         category_id=category_id,
         stock=item.stock,
@@ -723,6 +724,10 @@ def _basalam_unit_type_id(category_data: BatchItemPlatformData | None, override:
     if category_data and category_data.category_unit_type_id in BASALAM_ALLOWED_UNIT_TYPE_IDS:
         return category_data.category_unit_type_id
     return BASALAM_NUMERIC_UNIT_TYPE_ID
+
+
+def _toman_to_rial(price_toman: int) -> int:
+    return price_toman * 10
 
 
 def _with_refresh(session: Session, client: BasalamClient, connection: PlatformConnection, operation):

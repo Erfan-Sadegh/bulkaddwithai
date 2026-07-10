@@ -129,6 +129,7 @@ function MainApp() {
   const [torobSuccessMessage, setTorobSuccessMessage] = useState<string | null>(null);
   const [splittingPhotoKey, setSplittingPhotoKey] = useState<string | null>(null);
   const [freshConfirmOpen, setFreshConfirmOpen] = useState(false);
+  const [basalamSuccessOpen, setBasalamSuccessOpen] = useState(false);
   const [showPublishValidation, setShowPublishValidation] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -193,7 +194,7 @@ function MainApp() {
           if (batch) {
             setPublishedProducts(await api.listPublishedProducts(batch.id));
           }
-          if (nextJob.status === 'succeeded') showToast('محصول‌ها در غرفه باسلام ثبت شدند.');
+          if (nextJob.status === 'succeeded') setBasalamSuccessOpen(true);
           if (nextJob.status === 'partial_failed') showToast('بعضی محصول‌ها ثبت نشدند. پایین لیست را چک کن.');
         }
       } catch (err) {
@@ -508,6 +509,7 @@ function MainApp() {
         basalamPublishingRef.current = false;
         setPublishingBasalam(false);
         setPublishedProducts(await api.listPublishedProducts(batch.id));
+        if (firstJob.status === 'succeeded') setBasalamSuccessOpen(true);
       }
     } catch (err) {
       basalamPublishingRef.current = false;
@@ -585,7 +587,9 @@ function MainApp() {
     setPublishedProducts([]);
     setPublishJob(null);
     setJob(null);
+    setBasalamSuccessOpen(false);
     setShowPublishValidation(false);
+    setBasalamSuccessOpen(false);
     setTorobSuccessMessage(null);
     uploadRequestRef.current = false;
     processingRequestRef.current = false;
@@ -595,6 +599,38 @@ function MainApp() {
     setSuggestingCategories(false);
     setPublishingBasalam(false);
     setSubmittingTorob(false);
+  }
+
+  async function startNextBasalamListAfterSuccess() {
+    if (!seller) {
+      setBasalamSuccessOpen(false);
+      resetCurrentBatchState();
+      setPlatform('basalam');
+      return;
+    }
+    setBasalamSuccessOpen(false);
+    setProcessing(false);
+    setUploading(false);
+    setError(null);
+    try {
+      const created = await api.createBatch(seller.id);
+      setPlatform('basalam');
+      setBatch(created);
+      rememberActiveBasalamBatchId(created.id);
+      setAssets([]);
+      setItems([]);
+      draftTouchedRef.current = {};
+      setDrafts({});
+      resultsAutoScrolledRef.current = false;
+      setPublishedProducts([]);
+      setPublishJob(null);
+      setJob(null);
+      setShowPublishValidation(false);
+      setTorobSuccessMessage(null);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'صفحه برای محصولات بعدی آماده نشد. دوباره تلاش کن.');
+    }
   }
 
   async function selectPlatform(nextPlatform: Platform | null) {
@@ -765,6 +801,10 @@ function MainApp() {
         />
       )}
 
+      {basalamSuccessOpen && (
+        <BasalamSuccessDialog onConfirm={startNextBasalamListAfterSuccess} />
+      )}
+
       {torobSuccessMessage && (
         <ConfirmDialog
           title="درخواست ترب ثبت شد"
@@ -775,6 +815,27 @@ function MainApp() {
       )}
 
     </main>
+  );
+}
+
+function BasalamSuccessDialog({ onConfirm }: { onConfirm: () => void }) {
+  return (
+    <div className="modal-backdrop success-backdrop" role="presentation">
+      <section className="modal success-modal" role="dialog" aria-modal="true" aria-labelledby="success-title">
+        <div className="success-mark">
+          <Check size={24} />
+          <Sparkles size={14} />
+        </div>
+        <h2 id="success-title">محصول‌ها به غرفه اضافه شدند</h2>
+        <p>ثبت محصول‌ها با موفقیت انجام شد. حالا می‌تونی محصولات بعدی را اضافه کنی.</p>
+        <div className="modal-actions">
+          <button className="button primary" type="button" onClick={onConfirm}>
+            <Upload size={18} />
+            افزودن محصولات بعدی
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -1639,7 +1700,8 @@ function PublishValidationPanel({
 }
 
 function DockPublishProblem({ job, products }: { job: PublishJob | null; products: PublishedProduct[] }) {
-  const failedProducts = products.filter((product) => product.status === 'failed');
+  const currentProducts = currentPublishProducts(job, products);
+  const failedProducts = currentProducts.filter((product) => product.status === 'failed');
   const failedCount = failedProducts.length || (job?.status === 'partial_failed' || job?.status === 'failed' ? 1 : 0);
   const firstError = failedProducts.find((product) => product.error)?.error ?? job?.error ?? null;
   if (!job || failedCount === 0) return null;
@@ -1730,8 +1792,9 @@ function VoiceRefineControl({
 }
 
 function PublishStatusPanel({ job, products, items }: { job: PublishJob; products: PublishedProduct[]; items: ProductItem[] }) {
-  const published = products.filter((product) => product.status === 'published').length;
-  const failedProducts = products.filter((product) => product.status === 'failed');
+  const currentProducts = currentPublishProducts(job, products);
+  const published = currentProducts.filter((product) => product.status === 'published').length;
+  const failedProducts = currentProducts.filter((product) => product.status === 'failed');
   const hasFailedState = job.status === 'failed' || job.status === 'partial_failed';
   const isFailed = hasFailedState || failedProducts.length > 0;
   const failed = failedProducts.length || (hasFailedState ? Math.max(0, items.length - published) : 0);
@@ -1778,6 +1841,11 @@ function PublishStatusPanel({ job, products, items }: { job: PublishJob; product
       {job.error && !failedProducts.length && <span className="field-error">{humanizePublishError(job.error)}</span>}
     </section>
   );
+}
+
+function currentPublishProducts(job: PublishJob | null, products: PublishedProduct[]): PublishedProduct[] {
+  if (!job) return [];
+  return products.filter((product) => product.publish_job_id === job.id);
 }
 
 function ProductCard({

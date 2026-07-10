@@ -112,6 +112,10 @@ describe('App', () => {
       configurable: true,
       value: vi.fn(),
     });
+    Object.defineProperty(window, 'scrollTo', {
+      configurable: true,
+      value: vi.fn(),
+    });
   });
 
   it('starts from photos and avoids internal product terms', async () => {
@@ -994,9 +998,11 @@ describe('App', () => {
       package_weight_grams: 500,
       unit_quantity: 1,
     });
-    await waitFor(() => expect(container.querySelector('.publish-status')).toBeInTheDocument());
-    expect(screen.getByText('محصول‌ها در باسلام ثبت شدند')).toBeInTheDocument();
-    expect(screen.getByText('۱ محصول با موفقیت ثبت شد.')).toBeInTheDocument();
+    const successDialog = await screen.findByRole('dialog');
+    expect(successDialog).toHaveTextContent('محصول‌ها به غرفه اضافه شدند');
+    await user.click(within(successDialog).getByRole('button', { name: /افزودن محصولات بعدی/ }));
+    await waitFor(() => expect(screen.queryByDisplayValue(item.title)).not.toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: 'عکس محصولات' })).toBeInTheDocument();
   });
 
   it('shows a running Basalam publish state while polling the publish job', async () => {
@@ -1046,8 +1052,75 @@ describe('App', () => {
     expect(container.querySelector('.save-dock button')).toBeDisabled();
     expect(screen.queryByText(/product\(s\) failed|Basalam product create failed|Service Unavailable|Failed to fetch/i)).not.toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByText('محصول‌ها در باسلام ثبت شدند')).toBeInTheDocument(), { timeout: 3000 });
-    expect(screen.getByText('۱ محصول با موفقیت ثبت شد.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('محصول‌ها به غرفه اضافه شدند'), { timeout: 3000 });
+  });
+
+  it('ignores failed products from older Basalam publish jobs after a successful retry', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      publishJobResponse: {
+        id: 80,
+        batch_id: 10,
+        connection_id: 501,
+        platform: 'basalam',
+        status: 'succeeded',
+        step: 'ready',
+        error: null,
+      },
+      publishedProductsResponse: [
+        {
+          id: 1,
+          batch_item_id: 101,
+          publish_job_id: 79,
+          connection_id: 501,
+          platform: 'basalam',
+          external_product_id: null,
+          external_url: null,
+          status: 'failed',
+          error: 'Basalam product create failed: 422 old failure',
+          response_metadata: {},
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          id: 2,
+          batch_item_id: 101,
+          publish_job_id: 80,
+          connection_id: 501,
+          platform: 'basalam',
+          external_product_id: '9001',
+          external_url: 'https://basalam.com/p/9001',
+          status: 'published',
+          error: null,
+          response_metadata: {},
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+    await screen.findByDisplayValue(item.title);
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    fireEvent.change(extraInputs[0], { target: { value: '۵' } });
+    fireEvent.change(extraInputs[1], { target: { value: '۲' } });
+    fireEvent.change(extraInputs[2], { target: { value: '۳۰۰' } });
+    fireEvent.change(extraInputs[3], { target: { value: '۵۰۰' } });
+    fireEvent.change(extraInputs[4], { target: { value: '۱' } });
+
+    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
+
+    expect(await screen.findByRole('dialog')).toHaveTextContent('محصول‌ها به غرفه اضافه شدند');
+    expect(screen.queryByText('ثبت کامل انجام نشد.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/محصول ثبت نشد/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/old failure|Basalam product create failed/i)).not.toBeInTheDocument();
   });
 
   it('keeps Basalam publish in one pending request even after a fast double click', async () => {
@@ -1081,7 +1154,7 @@ describe('App', () => {
 
     expect(publishButton).toBeDisabled();
     await waitFor(() => expect(publishCalls).toBe(1));
-    expect(await screen.findByText('محصول‌ها در باسلام ثبت شدند')).toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).toHaveTextContent('محصول‌ها به غرفه اضافه شدند');
     expect(screen.queryByText(/product\(s\) failed|Basalam product create failed|Service Unavailable|Failed to fetch/i)).not.toBeInTheDocument();
   });
 

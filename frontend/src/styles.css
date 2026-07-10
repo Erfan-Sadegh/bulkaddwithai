@@ -1285,6 +1285,60 @@ a {
   margin-top: 18px;
 }
 
+.success-backdrop {
+  background: rgba(19, 35, 32, 0.28);
+}
+
+.success-modal {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  padding: 28px 22px 22px;
+  animation: modal-rise 180ms ease-out;
+}
+
+.success-mark {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 14px;
+  border-radius: 50%;
+  background: #e5f4ef;
+  color: var(--primary);
+}
+
+.success-mark svg:last-child {
+  position: absolute;
+  top: -3px;
+  left: 5px;
+  width: 17px;
+  height: 17px;
+  color: #cf9b2e;
+}
+
+.success-modal p {
+  max-width: 310px;
+}
+
+.success-modal .modal-actions {
+  width: 100%;
+  justify-content: center;
+}
+
+@keyframes modal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .admin-shell {
   max-width: 1040px;
 }

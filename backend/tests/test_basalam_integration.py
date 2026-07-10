@@ -284,15 +284,15 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     assert len(fake.uploaded_paths) == 3
     assert [product.name for product in fake.created_products] == [item["title"] for item in client.get(f"/batches/{batch['id']}/items").json()]
     assert fake.created_products[0].photo_ids == [1001, 1002]
-    assert fake.created_products[0].primary_price == 456000
+    assert fake.created_products[0].primary_price == 4560000
     assert fake.created_products[0].category_id == 20
     assert fake.created_products[0].stock == 5
     assert fake.created_products[0].preparation_days == 2
     assert fake.created_products[0].weight == 300
     assert fake.created_products[0].package_weight == 500
     assert fake.created_products[0].unit_quantity == 1
-    assert fake.created_products[0].status == 3790
-    assert fake.created_products[0].to_json()["status"] == 3790
+    assert fake.created_products[0].status == 1
+    assert fake.created_products[0].to_json()["status"] == 1
 
 
 def test_create_basalam_publish_job_reuses_active_job_and_allows_retry_after_finish(client: TestClient, batch: dict):
@@ -557,9 +557,10 @@ def test_failed_basalam_publish_stores_safe_request_debug_metadata(client: TestC
     metadata = published[0]["response_metadata"]
     assert metadata["http_status"] == 400
     assert metadata["request_payload_has_status"] is True
-    assert metadata["request_payload_status"] == 3790
+    assert metadata["request_payload_status"] == 1
     assert metadata["request_payload_category_id"] == 20
     assert metadata["request_payload_unit_type"] == 6304
+    assert metadata["request_payload_primary_price"] == 4560000
     assert metadata["request_payload_photo_count"] == 1
     assert "status" in metadata["request_payload_keys"]
     assert "name" in metadata["request_payload_keys"]
@@ -640,4 +641,4 @@ def test_publish_does_not_guess_category_for_ambiguous_product(client: TestClien
 def test_empty_basalam_status_uses_published_default():
     settings = Settings(basalam_default_status="")
 
-    assert settings.basalam_default_status == 3790
+    assert settings.basalam_default_status == 1

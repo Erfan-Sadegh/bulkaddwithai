@@ -4,7 +4,7 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASALAM_PUBLISHED_STATUS = 3790
+BASALAM_PUBLISHED_STATUS = 1
 
 
 class Settings(BaseSettings):
