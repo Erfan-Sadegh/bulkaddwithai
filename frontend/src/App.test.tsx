@@ -436,6 +436,32 @@ describe('App', () => {
     expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
   });
 
+  it('shows a Persian microphone error when voice permission is denied', async () => {
+    const user = userEvent.setup();
+    const getUserMedia = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          window.setTimeout(() => reject(new Error('Permission denied by browser')), 80);
+        }),
+    );
+    Object.defineProperty(window.navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    const uploadKinds: string[] = [];
+    renderWithApi({ uploadKinds });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.click(screen.getByRole('button', { name: 'ضبط صدا' }));
+
+    expect(await screen.findByRole('button', { name: 'در حال آماده‌سازی' })).toBeDisabled();
+    expect(await screen.findByRole('alert')).toHaveTextContent('اجازه میکروفون داده نشد. دسترسی میکروفون را فعال کن و دوباره تلاش کن.');
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    expect(uploadKinds).toEqual([]);
+    expect(screen.queryByText(/Permission denied|browser|NotAllowedError|Failed to fetch/i)).not.toBeInTheDocument();
+  });
+
   it('keeps files and offers retry when processing fails', async () => {
     const user = userEvent.setup();
     let processCalls = 0;
