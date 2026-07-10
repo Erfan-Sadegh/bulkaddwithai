@@ -188,6 +188,104 @@ def test_operational_fields_from_voice_extraction_are_saved(client: TestClient, 
     assert saved["unit_quantity"] == 1
 
 
+def test_reprocess_merges_voice_extraction_without_dropping_existing_items(client: TestClient, batch: dict):
+    client.post(
+        f"/batches/{batch['id']}/assets",
+        files=[image_file("a.jpg"), image_file("b.jpg")],
+    )
+    session = client.app.state.session_factory()
+    try:
+        batch_model = session.get(Batch, batch["id"])
+        images = session.scalars(select(Asset).where(Asset.batch_id == batch["id"], Asset.type == "image")).all()
+        _replace_items_from_extraction(
+            session,
+            batch_model,
+            images,
+            AiExtraction(
+                transcript=None,
+                products=[
+                    AiProduct(
+                        title="محصول اول AI",
+                        description="توضیح اول",
+                        price_toman=100_000,
+                        stock=None,
+                        preparation_days=None,
+                        weight_grams=None,
+                        package_weight_grams=None,
+                        unit_quantity=None,
+                        confidence=0.8,
+                        image_numbers=[1],
+                    ),
+                    AiProduct(
+                        title="محصول دوم AI",
+                        description="توضیح دوم",
+                        price_toman=200_000,
+                        stock=None,
+                        preparation_days=None,
+                        weight_grams=None,
+                        package_weight_grams=None,
+                        unit_quantity=None,
+                        confidence=0.8,
+                        image_numbers=[2],
+                    ),
+                ],
+                metadata={},
+            ),
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    initial_items = client.get(f"/batches/{batch['id']}/items").json()
+    first_id = initial_items[0]["id"]
+    second_id = initial_items[1]["id"]
+    client.patch(
+        f"/batch-items/{first_id}",
+        json={"title": "نام دستی فروشنده", "description": "توضیح دستی فروشنده"},
+    )
+
+    session = client.app.state.session_factory()
+    try:
+        batch_model = session.get(Batch, batch["id"])
+        images = session.scalars(select(Asset).where(Asset.batch_id == batch["id"], Asset.type == "image")).all()
+        _replace_items_from_extraction(
+            session,
+            batch_model,
+            images,
+            AiExtraction(
+                transcript="موجودی محصول اول ۸ تاست.",
+                products=[
+                    AiProduct(
+                        title="نام جدید AI",
+                        description="توضیح جدید AI",
+                        price_toman=None,
+                        stock=8,
+                        preparation_days=2,
+                        weight_grams=None,
+                        package_weight_grams=None,
+                        unit_quantity=None,
+                        confidence=0.91,
+                        image_numbers=[1],
+                    )
+                ],
+                metadata={},
+            ),
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    saved_items = client.get(f"/batches/{batch['id']}/items").json()
+    assert [item["id"] for item in saved_items] == [first_id, second_id]
+    assert saved_items[0]["title"] == "نام دستی فروشنده"
+    assert saved_items[0]["description"] == "توضیح دستی فروشنده"
+    assert saved_items[0]["price_toman"] == 100_000
+    assert saved_items[0]["stock"] == 8
+    assert saved_items[0]["preparation_days"] == 2
+    assert saved_items[1]["title"] == "محصول دوم AI"
+    assert saved_items[1]["price_toman"] == 200_000
+
+
 def test_merge_split_and_reorder(client: TestClient, batch: dict):
     client.post(
         f"/batches/{batch['id']}/assets",

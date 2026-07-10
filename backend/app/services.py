@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 from .ai import AiProvider
 from .config import Settings
 from .models import Asset, Batch, BatchItem, BatchItemAsset, BatchItemPlatformData, ProcessingJob, Seller, utc_now
-from .schemas import AiExtraction, BatchItemAssetRead, BatchItemBasalamCategoryRead, BatchItemRead
+from .schemas import AiExtraction, AiProduct, BatchItemAssetRead, BatchItemBasalamCategoryRead, BatchItemRead
 
 
 IMAGE_MIME_PREFIX = "image/"
@@ -366,10 +366,15 @@ def clean_storage(path: Path) -> None:
 def _replace_items_from_extraction(
     session: Session, batch: Batch, images: list[Asset], extraction: AiExtraction, transcript: str | None = None
 ) -> None:
-    for item in list(batch.items):
-        session.delete(item)
-    session.flush()
     by_order = {asset.upload_order: asset for asset in images}
+    existing_items = list(batch.items)
+    existing_by_assets: dict[tuple[int, ...], list[BatchItem]] = {}
+    for item in existing_items:
+        asset_key = _item_asset_key(item)
+        if asset_key:
+            existing_by_assets.setdefault(asset_key, []).append(item)
+
+    used_item_ids: set[int] = set()
     used_assets: set[int] = set()
     price_hints = _price_hints_from_transcript(transcript)
     for product in extraction.products:
@@ -379,34 +384,40 @@ def _replace_items_from_extraction(
         price_toman = _normalize_extracted_price_toman(product.price_toman)
         if price_toman is None:
             price_toman = _price_hint_for_product(product.title, product.description, product.image_numbers, price_hints)
-        item = BatchItem(
-            batch_id=batch.id,
-            title=product.title.strip() or "محصول بدون نام",
-            description=product.description.strip(),
-            price_toman=price_toman,
-            stock=_normalize_non_negative_int(product.stock),
-            preparation_days=_normalize_positive_int(product.preparation_days),
-            weight_grams=_normalize_positive_int(product.weight_grams),
-            package_weight_grams=_normalize_positive_int(product.package_weight_grams),
-            unit_quantity=_normalize_positive_int(product.unit_quantity),
-            confidence=product.confidence,
-            edited_by_user=False,
-        )
-        session.add(item)
-        session.flush()
-        for index, asset in enumerate(assets, start=1):
-            session.add(
-                BatchItemAsset(
-                    batch_item_id=item.id,
-                    asset_id=asset.id,
-                    role="product_photo",
-                    sort_order=index,
-                )
+        item = _first_unused_item(existing_by_assets.get(_asset_key(assets), []), used_item_ids)
+        if item:
+            _merge_extracted_product_into_item(item, product, price_toman)
+            used_item_ids.add(item.id)
+        else:
+            item = BatchItem(
+                batch_id=batch.id,
+                title=product.title.strip() or "محصول بدون نام",
+                description=product.description.strip(),
+                price_toman=price_toman,
+                stock=_normalize_non_negative_int(product.stock),
+                preparation_days=_normalize_positive_int(product.preparation_days),
+                weight_grams=_normalize_positive_int(product.weight_grams),
+                package_weight_grams=_normalize_positive_int(product.package_weight_grams),
+                unit_quantity=_normalize_positive_int(product.unit_quantity),
+                confidence=product.confidence,
+                edited_by_user=False,
             )
+            session.add(item)
+            session.flush()
+            for index, asset in enumerate(assets, start=1):
+                session.add(
+                    BatchItemAsset(
+                        batch_item_id=item.id,
+                        asset_id=asset.id,
+                        role="product_photo",
+                        sort_order=index,
+                    )
+                )
+        for asset in assets:
             used_assets.add(asset.id)
 
     for asset in images:
-        if asset.id in used_assets:
+        if asset.id in used_assets or any(asset.id in _item_asset_ids(item) for item in existing_items):
             continue
         item = BatchItem(
             batch_id=batch.id,
@@ -432,6 +443,52 @@ def _replace_items_from_extraction(
             )
         )
     session.flush()
+
+
+def _asset_key(assets: list[Asset]) -> tuple[int, ...]:
+    return tuple(sorted(asset.id for asset in assets))
+
+
+def _item_asset_ids(item: BatchItem) -> set[int]:
+    return {link.asset_id for link in item.asset_links}
+
+
+def _item_asset_key(item: BatchItem) -> tuple[int, ...]:
+    return tuple(sorted(_item_asset_ids(item)))
+
+
+def _first_unused_item(items: list[BatchItem], used_item_ids: set[int]) -> BatchItem | None:
+    return next((item for item in items if item.id not in used_item_ids), None)
+
+
+def _merge_extracted_product_into_item(item: BatchItem, product: AiProduct, price_toman: int | None) -> None:
+    if not item.edited_by_user:
+        item.title = product.title.strip() or item.title or "محصول بدون نام"
+        item.description = product.description.strip() or item.description
+        if price_toman is not None:
+            item.price_toman = price_toman
+    else:
+        if not item.title.strip():
+            item.title = product.title.strip() or "محصول بدون نام"
+        if not item.description.strip():
+            item.description = product.description.strip()
+        if item.price_toman is None and price_toman is not None:
+            item.price_toman = price_toman
+
+    _fill_or_update_extracted_number(item, "stock", _normalize_non_negative_int(product.stock))
+    _fill_or_update_extracted_number(item, "preparation_days", _normalize_positive_int(product.preparation_days))
+    _fill_or_update_extracted_number(item, "weight_grams", _normalize_positive_int(product.weight_grams))
+    _fill_or_update_extracted_number(item, "package_weight_grams", _normalize_positive_int(product.package_weight_grams))
+    _fill_or_update_extracted_number(item, "unit_quantity", _normalize_positive_int(product.unit_quantity))
+    item.confidence = product.confidence
+
+
+def _fill_or_update_extracted_number(item: BatchItem, field: str, value: int | None) -> None:
+    if value is None:
+        return
+    current = getattr(item, field)
+    if current is None or not item.edited_by_user:
+        setattr(item, field, value)
 
 
 def _normalize_extracted_price_toman(price_toman: int | None) -> int | None:
@@ -644,7 +701,12 @@ def _asset_url(asset: Asset) -> str:
 
 def _batch_with_assets(session: Session, batch_id: int) -> Batch | None:
     return session.scalar(
-        select(Batch).where(Batch.id == batch_id).options(selectinload(Batch.assets), selectinload(Batch.items))
+        select(Batch)
+        .where(Batch.id == batch_id)
+        .options(
+            selectinload(Batch.assets),
+            selectinload(Batch.items).selectinload(BatchItem.asset_links),
+        )
     )
 
 

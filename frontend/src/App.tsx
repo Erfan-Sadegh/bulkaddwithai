@@ -227,6 +227,7 @@ function MainApp() {
 
   useEffect(() => {
     if (!batch || !platform || items.length === 0) return;
+    if (!draftsCoverItems(drafts, items)) return;
     writeStoredDraftState(draftStorageKey(platform, batch.id), drafts, draftTouchedRef.current);
   }, [batch, drafts, items.length, platform]);
 
@@ -2284,6 +2285,10 @@ function mergeTouchedMaps(current: DraftTouchedMap, stored: DraftTouchedMap): Dr
 
 function draftStorageKey(platform: Platform, batchId: number): string {
   return `${DRAFT_STORAGE_PREFIX}:${platform}:${batchId}`;
+}
+
+function draftsCoverItems(drafts: DraftMap, items: ProductItem[]): boolean {
+  return items.every((item) => Boolean(drafts[item.id]));
 }
 
 function readStoredDraftState(key: string): { drafts: DraftMap; touched: DraftTouchedMap } | null {

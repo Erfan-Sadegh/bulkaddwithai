@@ -859,6 +859,34 @@ describe('App', () => {
     expect((container.querySelector('.product-extra-fields input') as HTMLInputElement).value).not.toBe('');
   });
 
+  it('does not clear edited product fields when the viewport changes', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      itemOverride: { stock: null, preparation_days: null },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+    await screen.findByDisplayValue(item.title);
+
+    const titleInput = container.querySelector('.product-title-field input') as HTMLInputElement;
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    await user.clear(titleInput);
+    await user.type(titleInput, 'نامی که فروشنده نوشته');
+    await user.type(extraInputs[0] as HTMLInputElement, '7');
+
+    window.dispatchEvent(new Event('resize'));
+
+    expect(container.querySelector('.product-title-field input')).toHaveValue('نامی که فروشنده نوشته');
+    expect(extraInputs[0]).toHaveValue('۷');
+  });
+
   it('preserves seller edits while applying AI-filled empty fields after voice reprocess', async () => {
     const user = userEvent.setup();
     let processCalls = 0;
