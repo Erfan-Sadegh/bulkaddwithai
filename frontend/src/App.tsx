@@ -122,6 +122,7 @@ function MainApp() {
   const resultsRef = useRef<HTMLElement | null>(null);
   const resultsAutoScrolledRef = useRef(false);
   const platformRequestRef = useRef(0);
+  const basalamPublishingRef = useRef(false);
   const torobSubmittingRef = useRef(false);
 
   const imageAssets = useMemo(
@@ -168,6 +169,7 @@ function MainApp() {
         const nextJob = await api.getPublishJob(publishJob.id);
         setPublishJob(nextJob);
         if (['succeeded', 'partial_failed', 'failed'].includes(nextJob.status)) {
+          basalamPublishingRef.current = false;
           setPublishingBasalam(false);
           if (batch) {
             setPublishedProducts(await api.listPublishedProducts(batch.id));
@@ -176,6 +178,7 @@ function MainApp() {
           if (nextJob.status === 'partial_failed') showToast('بعضی محصول‌ها ثبت نشدند. پایین لیست را چک کن.');
         }
       } catch (err) {
+        basalamPublishingRef.current = false;
         setPublishingBasalam(false);
         setError(err instanceof Error ? err.message : 'وضعیت ثبت در باسلام خوانده نشد. دوباره تلاش کن.');
       }
@@ -436,7 +439,7 @@ function MainApp() {
   }
 
   async function publishToBasalam() {
-    if (!batch) return;
+    if (!batch || publishingBasalam || basalamPublishingRef.current) return;
     setShowPublishValidation(true);
     setPublishJob(null);
     setPublishedProducts([]);
@@ -447,11 +450,13 @@ function MainApp() {
       await connectBasalam({ saveCurrentList: true });
       return;
     }
+    basalamPublishingRef.current = true;
     setPublishingBasalam(true);
     setError(null);
     try {
       const saved = await persistDrafts();
       if (!saved) {
+        basalamPublishingRef.current = false;
         setPublishingBasalam(false);
         return;
       }
@@ -459,10 +464,12 @@ function MainApp() {
       const firstJob = await api.getPublishJob(started.job_id);
       setPublishJob(firstJob);
       if (['succeeded', 'partial_failed', 'failed'].includes(firstJob.status)) {
+        basalamPublishingRef.current = false;
         setPublishingBasalam(false);
         setPublishedProducts(await api.listPublishedProducts(batch.id));
       }
     } catch (err) {
+      basalamPublishingRef.current = false;
       setPublishingBasalam(false);
       setError(err instanceof Error ? err.message : 'ثبت محصول‌ها در باسلام انجام نشد.');
     }

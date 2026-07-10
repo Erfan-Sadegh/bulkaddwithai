@@ -874,6 +874,41 @@ describe('App', () => {
     expect(screen.getByText('۱ محصول با موفقیت ثبت شد.')).toBeInTheDocument();
   });
 
+  it('keeps Basalam publish in one pending request even after a fast double click', async () => {
+    const user = userEvent.setup();
+    let publishCalls = 0;
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      publishDelayMs: 80,
+      onPublish: () => {
+        publishCalls += 1;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+    await screen.findByDisplayValue(item.title);
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    fireEvent.change(extraInputs[0], { target: { value: '۵' } });
+    fireEvent.change(extraInputs[1], { target: { value: '۲' } });
+    fireEvent.change(extraInputs[2], { target: { value: '۳۰۰' } });
+    fireEvent.change(extraInputs[3], { target: { value: '۵۰۰' } });
+    fireEvent.change(extraInputs[4], { target: { value: '۱' } });
+
+    const publishButton = container.querySelector('.save-dock button') as HTMLButtonElement;
+    await user.dblClick(publishButton);
+
+    expect(publishButton).toBeDisabled();
+    await waitFor(() => expect(publishCalls).toBe(1));
+    expect(await screen.findByText('محصول‌ها در باسلام ثبت شدند')).toBeInTheDocument();
+    expect(screen.queryByText(/product\(s\) failed|Basalam product create failed|Service Unavailable|Failed to fetch/i)).not.toBeInTheDocument();
+  });
+
   it('humanizes Basalam publish failures and hides raw English errors', async () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({
@@ -1184,6 +1219,7 @@ function renderWithApi({
   publishJobResponse,
   publishJobResponses,
   publishedProductsResponse,
+  publishDelayMs = 0,
   uploadKinds,
   uploadedFiles,
   uploadDelayMs = 0,
@@ -1214,6 +1250,7 @@ function renderWithApi({
   publishJobResponse?: Record<string, unknown>;
   publishJobResponses?: Array<Record<string, unknown>>;
   publishedProductsResponse?: Array<Record<string, unknown>>;
+  publishDelayMs?: number;
   uploadKinds?: string[];
   uploadedFiles?: File[];
   uploadDelayMs?: number;
@@ -1339,6 +1376,9 @@ function renderWithApi({
       if (path === '/batch-items/101/photos/reorder' && method === 'POST') return jsonResponse(responseItem);
       if (path === '/batches/10/publish/basalam' && method === 'POST') {
         onPublish?.();
+        if (publishDelayMs > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, publishDelayMs));
+        }
         return jsonResponse({ job_id: 80 }, 202);
       }
       if (path === '/publish-jobs/80') {
