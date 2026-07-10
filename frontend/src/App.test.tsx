@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from './App';
-import type { ProductItem } from './lib/types';
+import type { ProductBasalamCategory, ProductItem } from './lib/types';
 
 const now = new Date().toISOString();
 
@@ -1091,6 +1091,37 @@ describe('App', () => {
     expect(screen.queryByText(/503|Service Unavailable|categories request failed|Failed to fetch/i)).not.toBeInTheDocument();
   });
 
+  it('shows a neutral review note for low-confidence automatic Basalam categories', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      categorySuggestionOverride: {
+        category_id: 20,
+        title: 'پنل خورشیدی و تجهیزات',
+        path: 'کالای دیجیتال > باتری و منبع تغذیه > پنل خورشیدی و تجهیزات',
+        confidence: 0.51,
+        source: 'auto',
+        unit_type_id: 6304,
+        unit_type_title: 'عددی',
+        max_preparation_days: 7,
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+
+    expect(await screen.findByText('کالای دیجیتال > باتری و منبع تغذیه > پنل خورشیدی و تجهیزات')).toBeInTheDocument();
+    const note = screen.getByText('دسته را چک کن؛ اگر درست است ادامه بده.');
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveClass('category-check-note');
+    expect(screen.queryByText('اگر دسته درست نیست، اصلاحش کن.')).not.toBeInTheDocument();
+  });
+
   it('creates a Torob review request without touching Basalam publish flow', async () => {
     const user = userEvent.setup();
     const torobBodies: Array<Record<string, unknown>> = [];
@@ -1275,6 +1306,7 @@ function renderWithApi({
   uploadAssetCount = 2,
   updateBodies = [],
   itemOverride = {},
+  categorySuggestionOverride,
   platformConnections = [],
   onProcess,
   onPublish,
@@ -1308,6 +1340,7 @@ function renderWithApi({
   uploadAssetCount?: number;
   updateBodies?: Array<Record<string, unknown>>;
   itemOverride?: Partial<typeof item>;
+  categorySuggestionOverride?: ProductBasalamCategory;
   platformConnections?: Array<typeof basalamConnection>;
   onProcess?: () => void;
   onPublish?: () => void;
@@ -1406,7 +1439,7 @@ function renderWithApi({
         return jsonResponse([
           {
             ...responseItem,
-            basalam_category: {
+            basalam_category: categorySuggestionOverride ?? {
               category_id: 20,
               title: 'گروه شده',
               path: 'کالای دیجیتال > گروه شده',

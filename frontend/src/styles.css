@@ -1005,6 +1005,10 @@ a {
   line-height: 1.7;
 }
 
+.category-picker small.category-check-note {
+  color: var(--muted);
+}
+
 .category-search {
   display: flex;
   align-items: center;

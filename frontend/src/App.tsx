@@ -2020,7 +2020,9 @@ function BasalamCategoryPicker({
         )}
       </div>
       {needsCategory && (
-        <small>{lowConfidence ? 'اگر دسته درست نیست، اصلاحش کن.' : 'برای ثبت در باسلام، دسته را انتخاب کن.'}</small>
+        <small className={lowConfidence ? 'category-check-note' : undefined}>
+          {lowConfidence ? 'دسته را چک کن؛ اگر درست است ادامه بده.' : 'برای ثبت در باسلام، دسته را انتخاب کن.'}
+        </small>
       )}
       {showSearch && (
         <>
