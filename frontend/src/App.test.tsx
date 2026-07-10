@@ -512,6 +512,37 @@ describe('App', () => {
     expect(screen.getByText('دسته‌بندی باسلام', { exact: true })).toBeInTheDocument();
   });
 
+  it('keeps AI list creation in one pending request after a fast double click', async () => {
+    const user = userEvent.setup();
+    let processCalls = 0;
+    const { container } = renderWithApi({
+      processDelayMs: 80,
+      onProcess: () => {
+        processCalls += 1;
+      },
+      jobResponses: [
+        { id: 30, batch_id: 10, status: 'running', step: 'matching', error: null },
+        { id: 30, batch_id: 10, status: 'succeeded', step: 'ready', error: null },
+      ],
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    const processButton = await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ });
+
+    await user.dblClick(processButton);
+
+    await waitFor(() => expect(processCalls).toBe(1));
+    expect(screen.getByRole('button', { name: /در حال ساخت لیست/ })).toBeDisabled();
+    expect(screen.queryByText(/AI provider|timeout|503|Failed to fetch/i)).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByDisplayValue(item.title)).toBeInTheDocument(), { timeout: 3000 });
+  });
+
   it('does not show split action when grouped photos are confident', async () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({ itemOverride: { confidence: 0.93 } });
@@ -1207,6 +1238,7 @@ function renderWithApi({
   onPublish,
   onCategorySuggest,
   jobResponses,
+  processDelayMs = 0,
   torobBodies = [],
   listedSellers = [],
   onCreateSeller,
@@ -1238,6 +1270,7 @@ function renderWithApi({
   onPublish?: () => void;
   onCategorySuggest?: () => void;
   jobResponses?: Array<Record<string, unknown>>;
+  processDelayMs?: number;
   torobBodies?: Array<Record<string, unknown>>;
   listedSellers?: Array<typeof seller>;
   onCreateSeller?: () => void;
@@ -1309,6 +1342,9 @@ function renderWithApi({
       }
       if (path === '/batches/10/process' && method === 'POST') {
         onProcess?.();
+        if (processDelayMs > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, processDelayMs));
+        }
         return jsonResponse({ job_id: failProcessing ? 31 : 30 }, 202);
       }
       if (path === '/jobs/30') {

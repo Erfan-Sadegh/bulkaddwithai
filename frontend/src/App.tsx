@@ -122,6 +122,7 @@ function MainApp() {
   const resultsRef = useRef<HTMLElement | null>(null);
   const resultsAutoScrolledRef = useRef(false);
   const platformRequestRef = useRef(0);
+  const processingRequestRef = useRef(false);
   const basalamPublishingRef = useRef(false);
   const torobSubmittingRef = useRef(false);
 
@@ -149,12 +150,15 @@ function MainApp() {
         setJob(nextJob);
         if (nextJob.status === 'succeeded' && batch && platform) {
           await loadItemsForPlatform(batch.id, platform);
+          processingRequestRef.current = false;
           setProcessing(false);
         }
         if (nextJob.status === 'failed') {
+          processingRequestRef.current = false;
           setProcessing(false);
         }
       } catch (err) {
+        processingRequestRef.current = false;
         setProcessing(false);
         setError(err instanceof Error ? err.message : 'وضعیت پردازش خوانده نشد. دوباره تلاش کن.');
       }
@@ -327,7 +331,8 @@ function MainApp() {
   }
 
   async function processBatch() {
-    if (!batch || !platform || imageAssets.length === 0) return;
+    if (!batch || !platform || imageAssets.length === 0 || processing || processingRequestRef.current) return;
+    processingRequestRef.current = true;
     setProcessing(true);
     setError(null);
     resultsAutoScrolledRef.current = false;
@@ -338,12 +343,15 @@ function MainApp() {
       if (firstJob.status === 'succeeded') {
         await loadItemsForPlatform(batch.id, platform);
         setShowPublishValidation(false);
+        processingRequestRef.current = false;
         setProcessing(false);
       }
       if (firstJob.status === 'failed') {
+        processingRequestRef.current = false;
         setProcessing(false);
       }
     } catch (err) {
+      processingRequestRef.current = false;
       setProcessing(false);
       setError(err instanceof Error ? err.message : 'پردازش انجام نشد. فایل‌ها باقی مانده‌اند و می‌توانی دوباره تلاش کنی.');
     }
@@ -541,6 +549,7 @@ function MainApp() {
     setJob(null);
     setShowPublishValidation(false);
     setTorobSuccessMessage(null);
+    processingRequestRef.current = false;
     setProcessing(false);
     setUploading(false);
     setSavingList(false);
