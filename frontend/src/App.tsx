@@ -1240,9 +1240,13 @@ function VoicePanel({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const stoppingRef = useRef(false);
+  const stopHandledRef = useRef(false);
 
   async function toggleRecording() {
     if (recording) {
+      if (stoppingRef.current) return;
+      stoppingRef.current = true;
       recorderRef.current?.stop();
       setRecording(false);
       return;
@@ -1253,11 +1257,17 @@ function VoicePanel({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
+      stoppingRef.current = false;
+      stopHandledRef.current = false;
       recorder.ondataavailable = (event) => chunksRef.current.push(event.data);
       recorder.onstop = () => {
+        if (stopHandledRef.current) return;
+        stopHandledRef.current = true;
+        stoppingRef.current = false;
         stream.getTracks().forEach((track) => track.stop());
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         onUpload([new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' })]);
+        recorderRef.current = null;
       };
       recorder.start();
       recorderRef.current = recorder;
@@ -1627,10 +1637,14 @@ function VoiceRefineControl({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+  const stoppingRef = useRef(false);
+  const stopHandledRef = useRef(false);
   const canReprocess = hasAudio || localAudioReady;
 
   async function toggleRecording() {
     if (recording) {
+      if (stoppingRef.current) return;
+      stoppingRef.current = true;
       recorderRef.current?.stop();
       setRecording(false);
       return;
@@ -1640,13 +1654,19 @@ function VoiceRefineControl({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
+      stoppingRef.current = false;
+      stopHandledRef.current = false;
       const recorder = new MediaRecorder(stream);
       recorder.ondataavailable = (event) => chunksRef.current.push(event.data);
       recorder.onstop = async () => {
+        if (stopHandledRef.current) return;
+        stopHandledRef.current = true;
+        stoppingRef.current = false;
         stream.getTracks().forEach((track) => track.stop());
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         await onUpload([new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' })]);
         setLocalAudioReady(true);
+        recorderRef.current = null;
       };
       recorder.start();
       recorderRef.current = recorder;

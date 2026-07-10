@@ -421,6 +421,7 @@ describe('App', () => {
 
       stop() {
         void this.onstop?.();
+        void this.onstop?.();
       }
     }
     vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
@@ -445,7 +446,7 @@ describe('App', () => {
     expect(await screen.findByText('صدا ضبط شد و آماده پردازش است.')).toBeInTheDocument();
     expect(uploadKinds).toEqual(['image', 'audio']);
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
-    expect(stopTrack).toHaveBeenCalled();
+    expect(stopTrack).toHaveBeenCalledTimes(1);
 
     await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
 
@@ -794,6 +795,7 @@ describe('App', () => {
 
       stop() {
         void this.onstop?.();
+        void this.onstop?.();
       }
     }
     vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
@@ -826,7 +828,7 @@ describe('App', () => {
 
     await waitFor(() => expect(processCalls).toBe(2));
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
-    expect(stopTrack).toHaveBeenCalled();
+    expect(stopTrack).toHaveBeenCalledTimes(1);
   });
 
   it('publishes reviewed products to connected Basalam booth', async () => {
