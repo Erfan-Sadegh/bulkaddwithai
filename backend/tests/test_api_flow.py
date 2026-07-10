@@ -80,7 +80,7 @@ def test_upload_order_stays_stable_for_images(client: TestClient, batch: dict):
 def test_uploaded_image_can_be_deleted_before_processing(client: TestClient, batch: dict):
     uploaded = client.post(
         f"/batches/{batch['id']}/assets",
-        files=[image_file("a.jpg"), image_file("b.jpg"), image_file("c.jpg")],
+        files=[image_file("a.jpg", b"first"), image_file("b.jpg", b"second"), image_file("c.jpg", b"third")],
     ).json()
 
     response = client.delete(f"/assets/{uploaded[0]['id']}")
@@ -89,6 +89,30 @@ def test_uploaded_image_can_be_deleted_before_processing(client: TestClient, bat
     assets = client.get(f"/batches/{batch['id']}/assets").json()
     assert [asset["id"] for asset in assets] == [uploaded[1]["id"], uploaded[2]["id"]]
     assert [asset["upload_order"] for asset in assets] == [1, 2]
+
+
+def test_reupload_after_delete_does_not_overwrite_renumbered_photo_file(client: TestClient, batch: dict):
+    uploaded = client.post(
+        f"/batches/{batch['id']}/assets",
+        files=[image_file("a.jpg", b"first"), image_file("b.jpg", b"second")],
+    ).json()
+    client.delete(f"/assets/{uploaded[0]['id']}")
+
+    reuploaded = client.post(f"/batches/{batch['id']}/assets", files=[image_file("c.jpg", b"third")]).json()[0]
+
+    assert reuploaded["upload_order"] == 2
+    assets = client.get(f"/batches/{batch['id']}/assets").json()
+    assert [asset["upload_order"] for asset in assets] == [1, 2]
+    session = client.app.state.session_factory()
+    try:
+        db_assets = session.scalars(
+            select(Asset).where(Asset.batch_id == batch["id"], Asset.type == "image").order_by(Asset.upload_order)
+        ).all()
+        assert len({asset.file_path for asset in db_assets}) == 2
+        assert open(db_assets[0].file_path, "rb").read() == b"second"
+        assert open(db_assets[1].file_path, "rb").read() == b"third"
+    finally:
+        session.close()
 
 
 def test_uploaded_image_delete_is_rejected_after_it_is_linked_to_product(client: TestClient, batch: dict):

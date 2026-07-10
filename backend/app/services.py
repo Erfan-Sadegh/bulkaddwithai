@@ -75,7 +75,7 @@ def store_upload(settings: Settings, session: Session, batch_id: int, file: Uplo
     target_dir = Path(settings.upload_dir) / str(batch_id) / asset_type
     target_dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(file.filename or "upload").suffix
-    target_path = target_dir / f"{upload_order:04d}{suffix}"
+    target_path = _unique_upload_path(target_dir, upload_order, suffix)
 
     digest = hashlib.sha256()
     size = 0
@@ -713,6 +713,18 @@ def _next_upload_order(session: Session, batch_id: int, asset_type: str) -> int:
         .limit(1)
     ).first()
     return (existing or 0) + 1
+
+
+def _unique_upload_path(target_dir: Path, upload_order: int, suffix: str) -> Path:
+    candidate = target_dir / f"{upload_order:04d}{suffix}"
+    if not candidate.exists():
+        return candidate
+    counter = 2
+    while True:
+        candidate = target_dir / f"{upload_order:04d}-{counter}{suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 def _renumber_upload_orders(session: Session, batch_id: int, asset_type: str) -> None:

@@ -113,7 +113,7 @@ test('photo first flow with mocked API', async ({ page }) => {
     if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
     return route.fulfill({ json: [] });
   });
-  await page.route('**/sellers/1/platform-connections', async (route) => route.fulfill({ json: [] }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) => route.fulfill({ json: [] }));
   await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
   await page.route('**/batches', async (route) => route.fulfill({ json: batch, status: 201 }));
   await page.route('**/batches/7/assets', async (route) => {
@@ -190,7 +190,7 @@ test('processing failure keeps uploads and retries without English errors', asyn
     if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
     return route.fulfill({ json: [] });
   });
-  await page.route('**/sellers/1/platform-connections', async (route) => route.fulfill({ json: [] }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) => route.fulfill({ json: [] }));
   await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
   await page.route('**/batches', async (route) => route.fulfill({ json: batch, status: 201 }));
   await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: assets.slice(0, 2), status: 201 }));
@@ -241,7 +241,7 @@ test('Basalam and Torob keep separate upload workspaces in the browser', async (
     if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
     return route.fulfill({ json: [] });
   });
-  await page.route('**/sellers/1/platform-connections', async (route) => route.fulfill({ json: [] }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) => route.fulfill({ json: [] }));
   await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
   await page.route('**/batches', async (route) => {
     const id = nextBatchId++;
@@ -300,7 +300,7 @@ test('Torob photo flow reaches a review request without Basalam fields', async (
     if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
     return route.fulfill({ json: [] });
   });
-  await page.route('**/sellers/1/platform-connections', async (route) => route.fulfill({ json: [] }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) => route.fulfill({ json: [] }));
   await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
   await page.route('**/batches', async (route) => route.fulfill({ json: batch, status: 201 }));
   await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: assets.slice(0, 2), status: 201 }));
@@ -356,7 +356,7 @@ test('Basalam connected booth flow publishes reviewed products', async ({ page }
     if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
     return route.fulfill({ json: [] });
   });
-  await page.route('**/sellers/1/platform-connections', async (route) => route.fulfill({ json: [basalamConnection] }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) => route.fulfill({ json: [basalamConnection] }));
   await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
   await page.route('**/batches', async (route) => route.fulfill({ json: batch, status: 201 }));
   await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: assets.slice(0, 2), status: 201 }));
@@ -368,7 +368,7 @@ test('Basalam connected booth flow publishes reviewed products', async ({ page }
     lastUpdateBody = JSON.parse(route.request().postData() ?? '{}');
     return route.fulfill({ json: { ...readyItem, ...lastUpdateBody, edited_by_user: true } });
   });
-  await page.route('**/batches/7/publish/basalam', async (route) => {
+  await page.route('**/batches/7/publish/basalam?**', async (route) => {
     publishCalled = true;
     return route.fulfill({ json: { job_id: 80 }, status: 202 });
   });
@@ -434,7 +434,7 @@ test('Basalam booth can be connected after reviewing the generated list', async 
     if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
     return route.fulfill({ json: [] });
   });
-  await page.route('**/sellers/1/platform-connections', async (route) => route.fulfill({ json: [] }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) => route.fulfill({ json: [] }));
   await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
   await page.route('**/batches', async (route) => route.fulfill({ json: batch, status: 201 }));
   await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: assets.slice(0, 2), status: 201 }));
@@ -530,7 +530,7 @@ test('Basalam reviewed product grid stays readable and multi-photo items use a c
     if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
     return route.fulfill({ json: [] });
   });
-  await page.route('**/sellers/1/platform-connections', async (route) => route.fulfill({ json: [basalamConnection] }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) => route.fulfill({ json: [basalamConnection] }));
   await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
   await page.route('**/batches', async (route) => route.fulfill({ json: batch, status: 201 }));
   await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: manyAssets, status: 201 }));
