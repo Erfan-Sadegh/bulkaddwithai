@@ -149,7 +149,7 @@ def upsert_basalam_connection(
     return connection
 
 
-def create_basalam_publish_job(session: Session, batch_id: int) -> PublishJob:
+def create_basalam_publish_job(session: Session, batch_id: int) -> tuple[PublishJob, bool]:
     batch = session.scalar(
         select(Batch)
         .where(Batch.id == batch_id)
@@ -169,6 +169,18 @@ def create_basalam_publish_job(session: Session, batch_id: int) -> PublishJob:
     )
     if not connection:
         raise HTTPException(status_code=422, detail="Basalam booth is not connected")
+    active_job = session.scalar(
+        select(PublishJob)
+        .where(
+            PublishJob.batch_id == batch.id,
+            PublishJob.connection_id == connection.id,
+            PublishJob.platform == BASALAM_PLATFORM,
+            PublishJob.status.in_(("queued", "running")),
+        )
+        .order_by(PublishJob.created_at.desc(), PublishJob.id.desc())
+    )
+    if active_job:
+        return active_job, False
     job = PublishJob(
         batch_id=batch.id,
         connection_id=connection.id,
@@ -179,7 +191,7 @@ def create_basalam_publish_job(session: Session, batch_id: int) -> PublishJob:
     session.add(job)
     session.commit()
     session.refresh(job)
-    return job
+    return job, True
 
 
 def search_basalam_categories(settings: Settings, client: BasalamClient, query: str, limit: int = 20) -> list[dict]:

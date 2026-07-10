@@ -1,8 +1,10 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.config import Settings
 from app.integrations.basalam import BasalamClientError, BasalamProductPayload, BasalamUploadedFile
-from app.models import PlatformConnection
+from app.models import PlatformConnection, PublishJob
+from app.platform_services import create_basalam_publish_job
 from helpers import image_file
 
 
@@ -276,6 +278,41 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     assert fake.created_products[0].weight == 300
     assert fake.created_products[0].package_weight == 500
     assert fake.created_products[0].unit_quantity == 1
+
+
+def test_create_basalam_publish_job_reuses_active_job_and_allows_retry_after_finish(client: TestClient, batch: dict):
+    fake = FakeBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")])
+    client.post(f"/batches/{batch['id']}/process")
+    callback_state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}").json()["state"]
+    client.get(f"/integrations/basalam/callback?code=valid-code&state={callback_state}", follow_redirects=False)
+
+    session = client.app.state.session_factory()
+    try:
+        first_job, first_created = create_basalam_publish_job(session, batch["id"])
+        second_job, second_created = create_basalam_publish_job(session, batch["id"])
+
+        assert first_created is True
+        assert second_created is False
+        assert second_job.id == first_job.id
+        assert len(session.scalars(select(PublishJob).where(PublishJob.batch_id == batch["id"])).all()) == 1
+
+        first_job.status = "succeeded"
+        first_job.step = "ready"
+        session.commit()
+
+        retry_job, retry_created = create_basalam_publish_job(session, batch["id"])
+
+        assert retry_created is True
+        assert retry_job.id != first_job.id
+        assert len(session.scalars(select(PublishJob).where(PublishJob.batch_id == batch["id"])).all()) == 2
+    finally:
+        session.close()
 
 
 def test_publish_retries_next_auto_category_when_basalam_rejects_category(client: TestClient, batch: dict):

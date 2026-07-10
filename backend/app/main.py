@@ -334,14 +334,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         background_tasks: BackgroundTasks,
         session: Session = Depends(get_session),
     ):
-        job = create_basalam_publish_job(session, batch_id)
-        background_tasks.add_task(
-            run_basalam_publish_job,
-            settings,
-            session_factory,
-            app.state.basalam_client_factory,
-            job.id,
-        )
+        job, created = create_basalam_publish_job(session, batch_id)
+        if created:
+            background_tasks.add_task(
+                run_basalam_publish_job,
+                settings,
+                session_factory,
+                app.state.basalam_client_factory,
+                job.id,
+            )
         return PublishStartResponse(job_id=job.id)
 
     @app.post("/batches/{batch_id}/torob-submissions", response_model=TorobSubmissionStartResponse, status_code=201)
