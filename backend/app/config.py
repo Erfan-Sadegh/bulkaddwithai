@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+BASALAM_PUBLISHED_STATUS = 3790
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
@@ -41,7 +43,7 @@ class Settings(BaseSettings):
     basalam_legacy_core_base_url: str = Field(
         default="https://core.basalam.com", validation_alias="BASALAM_LEGACY_CORE_BASE_URL"
     )
-    basalam_default_status: int | None = Field(default=None, validation_alias="BASALAM_DEFAULT_STATUS")
+    basalam_default_status: int = Field(default=BASALAM_PUBLISHED_STATUS, validation_alias="BASALAM_DEFAULT_STATUS")
     basalam_category_cache_ttl_seconds: int = Field(
         default=86400, validation_alias="BASALAM_CATEGORY_CACHE_TTL_SECONDS"
     )
@@ -61,8 +63,8 @@ class Settings(BaseSettings):
     @field_validator("basalam_default_status", mode="before")
     @classmethod
     def empty_optional_int(cls, value):
-        if value == "":
-            return None
+        if value in ("", None):
+            return BASALAM_PUBLISHED_STATUS
         return value
 
 

@@ -29,7 +29,7 @@ class BasalamProductPayload:
     photo_ids: list[int]
     category_id: int | None
     stock: int
-    status: int | None
+    status: int
     preparation_days: int
     weight: int
     package_weight: int
@@ -54,8 +54,7 @@ class BasalamProductPayload:
         }
         if self.category_id is not None:
             payload["category_id"] = self.category_id
-        if self.status is not None:
-            payload["status"] = self.status
+        payload["status"] = self.status
         return payload
 
 

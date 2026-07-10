@@ -588,11 +588,14 @@ BASALAM_AUTH_URL=https://basalam.com/accounts/sso
 BASALAM_TOKEN_URL=https://auth.basalam.com/oauth/token
 BASALAM_API_BASE_URL=https://openapi.basalam.com
 BASALAM_LEGACY_CORE_BASE_URL=https://core.basalam.com
+BASALAM_DEFAULT_STATUS=3790
 BASALAM_CATEGORY_CACHE_TTL_SECONDS=86400
 BASALAM_CATEGORY_SUGGESTION_THRESHOLD=0.62
 ```
 
 `BASALAM_REDIRECT_URI` باید در پنل توسعه‌دهنده باسلام دقیقا با مقدار production یکی باشد. scope مهم برای ثبت محصول `vendor.product.write` است. بدون آن OAuth ممکن است موفق شود، اما ساخت محصول fail می‌شود.
+
+`BASALAM_DEFAULT_STATUS=3790` وضعیت پیش‌فرض محصول برای ساخت در باسلام است و طبق نمونه رسمی SDK همان `PUBLISHED` است. این فیلد برای API باسلام اجباری است. اگر env خالی باشد، backend باز هم `3790` می‌فرستد تا خطای `fields:["status"]` رخ ندهد. این default مثل موجودی یا زمان آماده‌سازی تصمیم فروشنده نیست؛ فقط requirement فنی API ساخت محصول است.
 
 اگر callback باسلام به جای backend اشتباهاً مستقیم به frontend با `code` و `state` برگشت، frontend همان query را به `/integrations/basalam/callback` در backend پاس می‌دهد تا اتصال کامل شود. این fail-safe جای تنظیم درست `BASALAM_REDIRECT_URI` را نمی‌گیرد، اما جلوی این را می‌گیرد که فروشنده بعد از اتصال ناگهان به صفحه انتخاب مسیر برگردد.
 

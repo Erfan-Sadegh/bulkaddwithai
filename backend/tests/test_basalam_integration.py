@@ -291,6 +291,8 @@ def test_publish_ready_batch_to_basalam_uses_uploaded_photos_and_product_payload
     assert fake.created_products[0].weight == 300
     assert fake.created_products[0].package_weight == 500
     assert fake.created_products[0].unit_quantity == 1
+    assert fake.created_products[0].status == 3790
+    assert fake.created_products[0].to_json()["status"] == 3790
 
 
 def test_create_basalam_publish_job_reuses_active_job_and_allows_retry_after_finish(client: TestClient, batch: dict):
@@ -576,7 +578,7 @@ def test_publish_does_not_guess_category_for_ambiguous_product(client: TestClien
     assert fake.uploaded_paths == []
 
 
-def test_empty_optional_basalam_status_is_ignored():
+def test_empty_basalam_status_uses_published_default():
     settings = Settings(basalam_default_status="")
 
-    assert settings.basalam_default_status is None
+    assert settings.basalam_default_status == 3790
