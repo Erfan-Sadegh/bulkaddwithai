@@ -80,14 +80,15 @@ def test_upload_order_stays_stable_for_images(client: TestClient, batch: dict):
 def test_uploaded_image_can_be_deleted_before_processing(client: TestClient, batch: dict):
     uploaded = client.post(
         f"/batches/{batch['id']}/assets",
-        files=[image_file("a.jpg"), image_file("b.jpg")],
+        files=[image_file("a.jpg"), image_file("b.jpg"), image_file("c.jpg")],
     ).json()
 
     response = client.delete(f"/assets/{uploaded[0]['id']}")
 
     assert response.status_code == 204
     assets = client.get(f"/batches/{batch['id']}/assets").json()
-    assert [asset["id"] for asset in assets] == [uploaded[1]["id"]]
+    assert [asset["id"] for asset in assets] == [uploaded[1]["id"], uploaded[2]["id"]]
+    assert [asset["upload_order"] for asset in assets] == [1, 2]
 
 
 def test_uploaded_image_delete_is_rejected_after_it_is_linked_to_product(client: TestClient, batch: dict):

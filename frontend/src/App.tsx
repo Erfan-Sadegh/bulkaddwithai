@@ -372,7 +372,11 @@ function MainApp() {
     setError(null);
     try {
       await api.deleteAsset(assetId);
-      setAssets((current) => current.filter((asset) => asset.id !== assetId));
+      if (batch) {
+        setAssets(await api.listAssets(batch.id));
+      } else {
+        setAssets((current) => current.filter((asset) => asset.id !== assetId));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'عکس حذف نشد. دوباره تلاش کن.');
     }

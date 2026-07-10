@@ -109,8 +109,12 @@ def delete_asset(session: Session, asset_id: int) -> None:
     if asset.item_links:
         raise HTTPException(status_code=422, detail="Asset is already attached to a product")
 
+    batch_id = asset.batch_id
+    asset_type = asset.type
     path = Path(asset.file_path)
     session.delete(asset)
+    session.flush()
+    _renumber_upload_orders(session, batch_id, asset_type)
     session.commit()
     try:
         path.unlink(missing_ok=True)
@@ -709,6 +713,16 @@ def _next_upload_order(session: Session, batch_id: int, asset_type: str) -> int:
         .limit(1)
     ).first()
     return (existing or 0) + 1
+
+
+def _renumber_upload_orders(session: Session, batch_id: int, asset_type: str) -> None:
+    assets = session.scalars(
+        select(Asset)
+        .where(Asset.batch_id == batch_id, Asset.type == asset_type)
+        .order_by(Asset.upload_order, Asset.id)
+    ).all()
+    for index, item in enumerate(assets, start=1):
+        item.upload_order = index
 
 
 def _asset_url(asset: Asset) -> str:

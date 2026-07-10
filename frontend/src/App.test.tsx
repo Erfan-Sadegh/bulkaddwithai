@@ -346,17 +346,18 @@ describe('App', () => {
   it('lets the seller delete an uploaded photo before building the list', async () => {
     const user = userEvent.setup();
     const deletedAssetIds: number[] = [];
-    const { container } = renderWithApi({ uploadAssetCount: 1, deletedAssetIds });
+    const { container } = renderWithApi({ uploadAssetCount: 2, deletedAssetIds });
 
     await screen.findByRole('heading', { level: 1 });
     await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
     await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }));
-    const deleteButton = await screen.findByRole('button', { name: 'حذف عکس' });
+    const deleteButton = (await screen.findAllByRole('button', { name: 'حذف عکس' }))[0];
 
     await user.click(deleteButton);
 
     expect(deletedAssetIds).toEqual([11]);
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'حذف عکس' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByAltText('عکس شماره ۱')).toBeInTheDocument());
+    expect(screen.queryByAltText('عکس شماره ۲')).not.toBeInTheDocument();
   });
 
   it('shows a minimal loading state while photo upload is slow', async () => {
@@ -1604,6 +1605,7 @@ function renderWithApi({
   let listItemsResponseIndex = 0;
   let categorySuggestionResponseIndex = 0;
   let publishJobResponseIndex = 0;
+  let availableImageAssets = imageAssets.slice(0, uploadAssetCount);
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1639,17 +1641,22 @@ function renderWithApi({
         return jsonResponse(createdBatch, 201);
       }
       if (path === '/batches/10' && method === 'GET') return jsonResponse(restoredBatch);
-      if (path === '/batches/10/assets' && method === 'GET') return jsonResponse(imageAssets.slice(0, uploadAssetCount));
+      if (path === '/batches/10/assets' && method === 'GET') return jsonResponse(availableImageAssets);
       if (path === '/batches/10/assets' && method === 'POST') {
         const files = init?.body instanceof FormData ? init.body.getAll('files') : [];
         const hasAudio = files.some((file) => file instanceof File && file.type.startsWith('audio/'));
         uploadedFiles?.push(...files.filter((file): file is File => file instanceof File));
         uploadKinds?.push(hasAudio ? 'audio' : 'image');
         if (uploadDelayMs > 0 && !hasAudio) await new Promise((resolve) => window.setTimeout(resolve, uploadDelayMs));
-        return jsonResponse(hasAudio ? [audioAsset] : imageAssets.slice(0, uploadAssetCount), 201);
+        if (!hasAudio) availableImageAssets = imageAssets.slice(0, uploadAssetCount);
+        return jsonResponse(hasAudio ? [audioAsset] : availableImageAssets, 201);
       }
       if (path.startsWith('/assets/') && method === 'DELETE') {
-        deletedAssetIds?.push(Number(path.split('/').pop()));
+        const assetId = Number(path.split('/').pop());
+        deletedAssetIds?.push(assetId);
+        availableImageAssets = availableImageAssets
+          .filter((asset) => asset.id !== assetId)
+          .map((asset, index) => ({ ...asset, upload_order: index + 1 }));
         return new Response(null, { status: 204 });
       }
       if (path === '/batches/10/process' && method === 'POST') {
