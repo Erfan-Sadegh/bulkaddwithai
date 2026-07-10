@@ -466,9 +466,30 @@ def _publish_item(
     except Exception as exc:
         published.status = "failed"
         published.error = str(exc)
+        published.response_metadata = _basalam_failure_metadata(exc)
     session.commit()
     session.refresh(published)
     return published
+
+
+def _basalam_failure_metadata(exc: Exception) -> dict:
+    metadata = {"technical_error": str(exc)[:800]}
+    if not isinstance(exc, BasalamClientError):
+        return metadata
+
+    if exc.status_code is not None:
+        metadata["http_status"] = exc.status_code
+    if exc.response_text:
+        metadata["response_text"] = exc.response_text[:800]
+    if exc.request_payload:
+        payload = exc.request_payload
+        metadata["request_payload_keys"] = sorted(payload.keys())
+        metadata["request_payload_has_status"] = "status" in payload
+        metadata["request_payload_status"] = payload.get("status")
+        metadata["request_payload_category_id"] = payload.get("category_id")
+        metadata["request_payload_unit_type"] = payload.get("unit_type")
+        metadata["request_payload_photo_count"] = len(payload.get("photos") or [])
+    return metadata
 
 
 def _create_product_with_category_retries(

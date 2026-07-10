@@ -507,6 +507,65 @@ def test_publish_allows_auto_category_below_review_threshold(client: TestClient,
     assert fake.created_products[0].category_id == suggested_category_id
 
 
+def test_failed_basalam_publish_stores_safe_request_debug_metadata(client: TestClient, batch: dict):
+    class StatusRequiredBasalamClient(FakeBasalamClient):
+        def create_product(
+            self,
+            connection: PlatformConnection,
+            payload: BasalamProductPayload,
+        ) -> dict:
+            request_payload = payload.to_json()
+            raise BasalamClientError(
+                'Basalam product create failed: 400 {"openapi_raw_data":[{"fields":["status"],"message":"Field required"}]}',
+                status_code=400,
+                response_text='{"openapi_raw_data":[{"fields":["status"],"message":"Field required"}]}',
+                request_payload=request_payload,
+            )
+
+    fake = StatusRequiredBasalamClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+
+    client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")])
+    client.post(f"/batches/{batch['id']}/process")
+    item = client.get(f"/batches/{batch['id']}/items").json()[0]
+    client.patch(
+        f"/batch-items/{item['id']}",
+        json={
+            "price_toman": item["price_toman"] or 456000,
+            "stock": 5,
+            "preparation_days": 2,
+            "weight_grams": 300,
+            "package_weight_grams": 500,
+            "unit_quantity": 1,
+        },
+    )
+    client.patch(f"/batch-items/{item['id']}/basalam-category", json={"category_id": 20})
+
+    callback_state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}").json()["state"]
+    client.get(f"/integrations/basalam/callback?code=valid-code&state={callback_state}", follow_redirects=False)
+
+    publish = client.post(f"/batches/{batch['id']}/publish/basalam")
+
+    assert publish.status_code == 202
+    job = client.get(f"/publish-jobs/{publish.json()['job_id']}").json()
+    assert job["status"] == "partial_failed"
+    published = client.get(f"/batches/{batch['id']}/published-products").json()
+    assert published[0]["status"] == "failed"
+    metadata = published[0]["response_metadata"]
+    assert metadata["http_status"] == 400
+    assert metadata["request_payload_has_status"] is True
+    assert metadata["request_payload_status"] == 3790
+    assert metadata["request_payload_category_id"] == 20
+    assert metadata["request_payload_unit_type"] == 6304
+    assert metadata["request_payload_photo_count"] == 1
+    assert "status" in metadata["request_payload_keys"]
+    assert "name" in metadata["request_payload_keys"]
+    assert "request_payload" not in metadata
+
+
 def test_publish_requires_seller_operational_fields(client: TestClient, batch: dict):
     fake = FakeBasalamClient()
     client.app.state.basalam_client_factory = lambda _settings: fake

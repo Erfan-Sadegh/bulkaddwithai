@@ -8,7 +8,18 @@ from app.config import Settings
 
 
 class BasalamClientError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        response_text: str | None = None,
+        request_payload: dict | None = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_text = response_text
+        self.request_payload = request_payload
 
 
 class BasalamUnauthorized(BasalamClientError):
@@ -139,13 +150,19 @@ class BasalamClient:
         return BasalamUploadedFile(id=int(data["id"]), raw=data)
 
     def create_product(self, connection, payload: BasalamProductPayload) -> dict:
+        request_payload = payload.to_json()
         response = httpx.post(
             f"{self.settings.basalam_api_base_url.rstrip('/')}/v1/vendors/{connection.external_shop_id}/products",
             headers={**self._auth_headers(connection.access_token), "Prefer": "return=representation"},
-            json=payload.to_json(),
+            json=request_payload,
             timeout=self.timeout,
         )
-        return self._json_or_raise(response, "Basalam product create failed")
+        try:
+            return self._json_or_raise(response, "Basalam product create failed")
+        except BasalamClientError as exc:
+            if exc.request_payload is None:
+                exc.request_payload = request_payload
+            raise
 
     def get_categories(self) -> dict:
         response = httpx.get(
@@ -163,8 +180,16 @@ class BasalamClient:
 
     def _json_or_raise(self, response: httpx.Response, message: str) -> dict:
         if response.status_code == 401:
-            raise BasalamUnauthorized(message)
+            raise BasalamUnauthorized(
+                message,
+                status_code=response.status_code,
+                response_text=response.text[:800],
+            )
         if response.is_error:
             detail = response.text[:800]
-            raise BasalamClientError(f"{message}: {response.status_code} {detail}")
+            raise BasalamClientError(
+                f"{message}: {response.status_code} {detail}",
+                status_code=response.status_code,
+                response_text=detail,
+            )
         return response.json()
