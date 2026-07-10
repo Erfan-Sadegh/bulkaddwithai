@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.integrations.torob import TorobBulkItem
-from app.models import TorobSubmissionItem
+from app.models import TorobSubmission, TorobSubmissionItem
 from helpers import image_file
 
 
@@ -60,6 +60,32 @@ def test_torob_submission_is_created_for_admin_review(client: TestClient, batch:
     assert [item["batch_item_id"] for item in submission["items"]] == [item["id"] for item in items]
     assert submission["items"][0]["image_numbers"] == [1, 2]
     assert submission["items"][0]["price"] == items[0]["price_toman"]
+
+
+def test_torob_submission_reuses_active_request_and_allows_retry_after_failure(client: TestClient, batch: dict):
+    _ready_batch(client, batch)
+    payload = {"shop_name": "فروشگاه ترب", "contact_mobile": "09120000000"}
+
+    first = client.post(f"/batches/{batch['id']}/torob-submissions", json=payload)
+    second = client.post(f"/batches/{batch['id']}/torob-submissions", json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert second.json()["id"] == first.json()["id"]
+
+    session = client.app.state.session_factory()
+    try:
+        assert len(session.query(TorobSubmission).filter(TorobSubmission.batch_id == batch["id"]).all()) == 1
+        submission = session.get(TorobSubmission, first.json()["id"])
+        submission.status = "failed"
+        session.commit()
+    finally:
+        session.close()
+
+    retry = client.post(f"/batches/{batch['id']}/torob-submissions", json=payload)
+
+    assert retry.status_code == 201
+    assert retry.json()["id"] != first.json()["id"]
 
 
 def test_admin_can_review_torob_candidate_and_publish_submission(client: TestClient, batch: dict):

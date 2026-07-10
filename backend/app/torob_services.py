@@ -26,6 +26,13 @@ def create_torob_submission(
     contact_mobile = contact_mobile.strip()
     if not shop_name or not contact_mobile:
         raise HTTPException(status_code=422, detail="اطلاعات فروشگاه ترب کامل نیست")
+    active_submission = session.scalar(
+        select(TorobSubmission)
+        .where(TorobSubmission.batch_id == batch.id, TorobSubmission.status.in_(("pending", "submitting")))
+        .order_by(TorobSubmission.created_at.desc(), TorobSubmission.id.desc())
+    )
+    if active_submission:
+        return _submission_to_read(session.scalar(_submission_statement(active_submission.id)))
     submission = TorobSubmission(
         seller_id=batch.seller_id,
         batch_id=batch.id,
