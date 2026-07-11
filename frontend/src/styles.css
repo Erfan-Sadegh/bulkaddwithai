@@ -1226,6 +1226,51 @@ a {
   font-size: 0.78rem;
 }
 
+.voice-nudge-sheet {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 20px;
+  z-index: 30;
+  width: min(520px, calc(100vw - 32px));
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #dbe7e4;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 44px rgba(32, 33, 36, 0.13);
+}
+
+.voice-nudge-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.voice-nudge-copy strong {
+  color: var(--primary-strong);
+  font-size: 0.94rem;
+}
+
+.voice-nudge-copy span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.7;
+}
+
+.voice-nudge-sheet .voice-refine {
+  grid-column: 1 / -1;
+}
+
+.voice-nudge-close {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+}
+
 .sticky-action {
   position: sticky;
   bottom: 14px;
@@ -1774,6 +1819,13 @@ a {
   .voice-refine {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .voice-nudge-sheet {
+    bottom: 84px;
+    grid-template-columns: minmax(0, 1fr) 34px;
+    padding: 11px;
+    border-radius: 10px;
   }
 
   .modal-actions {

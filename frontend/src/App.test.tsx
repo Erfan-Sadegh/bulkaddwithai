@@ -116,6 +116,7 @@ describe('App', () => {
       configurable: true,
       value: vi.fn(),
     });
+    delete (window as Window & { __VOICE_NUDGE_DELAY_MS__?: number }).__VOICE_NUDGE_DELAY_MS__;
   });
 
   it('starts from photos and avoids internal product terms', async () => {
@@ -850,6 +851,107 @@ describe('App', () => {
     await waitFor(() => expect(processCalls).toBe(2));
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
     expect(stopTrack).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a delayed voice completion sheet after a Basalam list is ready without voice', async () => {
+    (window as Window & { __VOICE_NUDGE_DELAY_MS__?: number }).__VOICE_NUDGE_DELAY_MS__ = 30;
+    const user = userEvent.setup();
+    let processCalls = 0;
+    const stopTrack = vi.fn();
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] });
+    Object.defineProperty(window.navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    class FakeMediaRecorder {
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void | Promise<void>) | null = null;
+
+      start() {
+        this.ondataavailable?.({ data: new Blob(['voice'], { type: 'audio/webm' }) } as BlobEvent);
+      }
+
+      stop() {
+        void this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      onProcess: () => {
+        processCalls += 1;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['bbb'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+    await screen.findByDisplayValue(item.title);
+
+    expect(processCalls).toBe(1);
+    expect(screen.queryByRole('dialog', { name: 'تکمیل با صدا' })).not.toBeInTheDocument();
+
+    const sheet = await screen.findByRole('dialog', { name: 'تکمیل با صدا' });
+    expect(within(sheet).getByText('با صدا سریع‌تر کاملش کن')).toBeInTheDocument();
+
+    await user.click(within(sheet).getByRole('button', { name: 'ضبط صدا' }));
+    await user.click(await within(sheet).findByRole('button', { name: 'توقف ضبط' }));
+    await waitFor(() => expect(within(sheet).getByRole('button', { name: 'بازبینی' })).not.toBeDisabled());
+    await user.click(within(sheet).getByRole('button', { name: 'بازبینی' }));
+
+    await waitFor(() => expect(processCalls).toBe(2));
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    expect(stopTrack).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not show the delayed voice completion sheet for Torob', async () => {
+    (window as Window & { __VOICE_NUDGE_DELAY_MS__?: number }).__VOICE_NUDGE_DELAY_MS__ = 20;
+    const user = userEvent.setup();
+    const { container } = renderWithApi();
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به ترب/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+    await screen.findByDisplayValue(item.title);
+
+    await new Promise((resolve) => window.setTimeout(resolve, 40));
+
+    expect(screen.queryByRole('dialog', { name: 'تکمیل با صدا' })).not.toBeInTheDocument();
+  });
+
+  it('does not nudge for voice when the Basalam list already has required fields', async () => {
+    (window as Window & { __VOICE_NUDGE_DELAY_MS__?: number }).__VOICE_NUDGE_DELAY_MS__ = 20;
+    const user = userEvent.setup();
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      itemOverride: {
+        stock: 5,
+        preparation_days: 2,
+        weight_grams: 300,
+        package_weight_grams: 500,
+        unit_quantity: 1,
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
+    await screen.findByDisplayValue(item.title);
+
+    await new Promise((resolve) => window.setTimeout(resolve, 40));
+
+    expect(screen.queryByRole('dialog', { name: 'تکمیل با صدا' })).not.toBeInTheDocument();
   });
 
   it('keeps edited product fields when a product action refreshes items from the API', async () => {

@@ -64,6 +64,9 @@ const SELLER_STORAGE_KEY = 'bulkadd_seller_id';
 const WORKSPACE_STORAGE_KEY = 'bulkadd_workspace_id';
 const BASALAM_ACTIVE_BATCH_STORAGE_KEY = 'bulkadd_basalam_active_batch_id';
 const DRAFT_STORAGE_PREFIX = 'bulkadd_product_drafts';
+const VOICE_NUDGE_DELAY_MS = 7000;
+const voiceNudgeDelayMs = () =>
+  (window as Window & { __VOICE_NUDGE_DELAY_MS__?: number }).__VOICE_NUDGE_DELAY_MS__ ?? VOICE_NUDGE_DELAY_MS;
 const PRODUCT_DRAFT_FIELDS: DraftField[] = [
   'title',
   'description',
@@ -134,6 +137,8 @@ function MainApp() {
   const [freshConfirmOpen, setFreshConfirmOpen] = useState(false);
   const [basalamSuccessOpen, setBasalamSuccessOpen] = useState(false);
   const [showPublishValidation, setShowPublishValidation] = useState(false);
+  const [voiceNudgeVisible, setVoiceNudgeVisible] = useState(false);
+  const [voiceNudgeDismissedBatchId, setVoiceNudgeDismissedBatchId] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
@@ -144,6 +149,7 @@ function MainApp() {
   const basalamPublishingRef = useRef(false);
   const torobSubmittingRef = useRef(false);
   const draftTouchedRef = useRef<DraftTouchedMap>({});
+  const voiceNudgeShownBatchIdRef = useRef<number | null>(null);
 
   const imageAssets = useMemo(
     () => assets.filter((asset) => asset.type === 'image').sort((a, b) => a.upload_order - b.upload_order),
@@ -234,6 +240,55 @@ function MainApp() {
     if (!draftsCoverItems(drafts, items)) return;
     writeStoredDraftState(draftStorageKey(platform, batch.id), drafts, draftTouchedRef.current);
   }, [batch, drafts, items.length, platform]);
+
+  useEffect(() => {
+    if (voiceNudgeVisible) {
+      const keepOpen =
+        platform === 'basalam' &&
+        Boolean(batch) &&
+        voiceNudgeShownBatchIdRef.current === batch?.id &&
+        items.length > 0 &&
+        publishValidationIssues.length > 0 &&
+        !processing;
+      if (!keepOpen) setVoiceNudgeVisible(false);
+      return;
+    }
+
+    if (
+      platform !== 'basalam' ||
+      !batch ||
+      items.length === 0 ||
+      audioAssets.length > 0 ||
+      processing ||
+      uploading ||
+      publishingBasalam ||
+      publishValidationIssues.length === 0 ||
+      !draftsCoverItems(drafts, items) ||
+      voiceNudgeDismissedBatchId === batch.id ||
+      voiceNudgeShownBatchIdRef.current === batch.id
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      voiceNudgeShownBatchIdRef.current = batch.id;
+      setVoiceNudgeVisible(true);
+    }, voiceNudgeDelayMs());
+
+    return () => window.clearTimeout(timer);
+  }, [
+    audioAssets.length,
+    batch,
+    drafts,
+    items,
+    platform,
+    processing,
+    publishValidationIssues.length,
+    publishingBasalam,
+    uploading,
+    voiceNudgeDismissedBatchId,
+    voiceNudgeVisible,
+  ]);
 
   async function restoreBasalamBatchAfterOAuth(currentSeller: Seller): Promise<boolean> {
     const batchId = readActiveBasalamBatchId();
@@ -333,6 +388,7 @@ function MainApp() {
       setPublishJob(null);
       setJob(null);
       setShowPublishValidation(false);
+      setVoiceNudgeVisible(false);
       setTorobSuccessMessage(null);
       showToast('صفحه برای محصولات جدید آماده شد.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -500,6 +556,7 @@ function MainApp() {
 
   async function publishToBasalam() {
     if (!batch || publishingBasalam || basalamPublishingRef.current) return;
+    dismissVoiceNudge();
     setShowPublishValidation(true);
     setPublishJob(null);
     setPublishedProducts([]);
@@ -607,6 +664,7 @@ function MainApp() {
     setJob(null);
     setBasalamSuccessOpen(false);
     setShowPublishValidation(false);
+    setVoiceNudgeVisible(false);
     setBasalamSuccessOpen(false);
     setTorobSuccessMessage(null);
     uploadRequestRef.current = false;
@@ -644,6 +702,7 @@ function MainApp() {
       setPublishJob(null);
       setJob(null);
       setShowPublishValidation(false);
+      setVoiceNudgeVisible(false);
       setTorobSuccessMessage(null);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
@@ -677,6 +736,16 @@ function MainApp() {
     const firstIssue = publishValidationIssues[0];
     if (!firstIssue) return;
     document.querySelector(`[data-product-id="${firstIssue.itemId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function dismissVoiceNudge() {
+    if (batch) setVoiceNudgeDismissedBatchId(batch.id);
+    setVoiceNudgeVisible(false);
+  }
+
+  function reprocessFromVoiceNudge() {
+    dismissVoiceNudge();
+    void processBatch();
   }
 
   function showToast(message: string) {
@@ -807,6 +876,16 @@ function MainApp() {
             />
           )}
         </section>
+      )}
+
+      {voiceNudgeVisible && platform === 'basalam' && publishValidationIssues.length > 0 && (
+        <VoiceNudgeSheet
+          audios={audioAssets}
+          processing={processing}
+          onUploadVoice={upload}
+          onReprocessWithVoice={reprocessFromVoiceNudge}
+          onClose={dismissVoiceNudge}
+        />
       )}
 
       {freshConfirmOpen && (
@@ -1678,6 +1757,38 @@ function BulkPreparationBox({ onApply }: { onApply: (days: number) => void }) {
         اعمال برای همه
       </button>
     </div>
+  );
+}
+
+function VoiceNudgeSheet({
+  audios,
+  processing,
+  onUploadVoice,
+  onReprocessWithVoice,
+  onClose,
+}: {
+  audios: Asset[];
+  processing: boolean;
+  onUploadVoice: (files: File[]) => void | Promise<void>;
+  onReprocessWithVoice: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <section className="voice-nudge-sheet" role="dialog" aria-label="تکمیل با صدا">
+      <button className="icon-dismiss voice-nudge-close" type="button" aria-label="بستن" onClick={onClose}>
+        ×
+      </button>
+      <div className="voice-nudge-copy">
+        <strong>با صدا سریع‌تر کاملش کن</strong>
+        <span>قیمت، موجودی، وزن و توضیحات را بگو تا همین لیست کامل‌تر شود.</span>
+      </div>
+      <VoiceRefineControl
+        hasAudio={audios.length > 0}
+        processing={processing}
+        onUpload={onUploadVoice}
+        onReprocess={onReprocessWithVoice}
+      />
+    </section>
   );
 }
 
