@@ -64,7 +64,7 @@ const SELLER_STORAGE_KEY = 'bulkadd_seller_id';
 const WORKSPACE_STORAGE_KEY = 'bulkadd_workspace_id';
 const BASALAM_ACTIVE_BATCH_STORAGE_KEY = 'bulkadd_basalam_active_batch_id';
 const DRAFT_STORAGE_PREFIX = 'bulkadd_product_drafts';
-const VOICE_NUDGE_DELAY_MS = 7000;
+const VOICE_NUDGE_DELAY_MS = 5000;
 const voiceNudgeDelayMs = () =>
   (window as Window & { __VOICE_NUDGE_DELAY_MS__?: number }).__VOICE_NUDGE_DELAY_MS__ ?? VOICE_NUDGE_DELAY_MS;
 const PRODUCT_DRAFT_FIELDS: DraftField[] = [
@@ -1779,7 +1779,7 @@ function VoiceNudgeSheet({
         ×
       </button>
       <div className="voice-nudge-copy">
-        <strong>با صدا سریع‌تر کاملش کن</strong>
+        <strong>با ضبط صدا راحت‌تر اطلاعات رو تکمیل کن</strong>
         <span>قیمت، موجودی، وزن و توضیحات را بگو تا همین لیست کامل‌تر شود.</span>
       </div>
       <VoiceRefineControl

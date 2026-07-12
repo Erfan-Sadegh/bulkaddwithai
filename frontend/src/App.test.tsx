@@ -897,7 +897,7 @@ describe('App', () => {
     expect(screen.queryByRole('dialog', { name: 'تکمیل با صدا' })).not.toBeInTheDocument();
 
     const sheet = await screen.findByRole('dialog', { name: 'تکمیل با صدا' });
-    expect(within(sheet).getByText('با صدا سریع‌تر کاملش کن')).toBeInTheDocument();
+    expect(within(sheet).getByText('با ضبط صدا راحت‌تر اطلاعات رو تکمیل کن')).toBeInTheDocument();
 
     await user.click(within(sheet).getByRole('button', { name: 'ضبط صدا' }));
     await user.click(await within(sheet).findByRole('button', { name: 'توقف ضبط' }));
