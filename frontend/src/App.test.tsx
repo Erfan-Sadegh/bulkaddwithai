@@ -476,6 +476,12 @@ describe('App', () => {
     expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
   });
 
+  it('does not show redundant copy when no voice is recorded', async () => {
+    renderWithApi();
+
+    expect(screen.queryByText('می‌توانی بدون صدا هم ادامه بدهی.')).not.toBeInTheDocument();
+  });
+
   it('shows a Persian microphone error when voice permission is denied', async () => {
     const user = userEvent.setup();
     const getUserMedia = vi.fn(

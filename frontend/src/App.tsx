@@ -1498,7 +1498,7 @@ function VoicePanel({
         </button>
       </div>
       {voiceError && <span className="field-error" role="alert">{voiceError}</span>}
-      <span className="muted">{audios.length ? 'صدا ضبط شد و آماده پردازش است.' : 'می‌توانی بدون صدا هم ادامه بدهی.'}</span>
+      {audios.length > 0 && <span className="muted">صدا ضبط شد و آماده پردازش است.</span>}
     </section>
   );
 }
