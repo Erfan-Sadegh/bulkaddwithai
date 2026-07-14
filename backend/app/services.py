@@ -177,10 +177,18 @@ def store_uploads(settings: Settings, session: Session, batch_id: int, files: li
         for asset in assets:
             session.refresh(asset)
         return assets
-    except Exception:
+    except Exception as exc:
         session.rollback()
         for asset in assets:
             Path(asset.file_path).unlink(missing_ok=True)
+        if not isinstance(exc, HTTPException):
+            logger.exception(
+                "upload_batch_failed batch_id=%s file_count=%s stored_before_failure=%s exception_type=%s",
+                batch_id,
+                len(files),
+                len(assets),
+                type(exc).__name__,
+            )
         raise
 
 
@@ -279,6 +287,16 @@ def run_processing_job(
         }
         batch.status = "ready"
         _mark_job(session, job, status="succeeded", step="ready", finished=True)
+        logger.info(
+            "processing_job_succeeded job_id=%s batch_id=%s image_count=%s audio_present=%s product_count=%s transcription_attempts=%s extraction_attempts=%s",
+            job.id,
+            batch.id,
+            len(images),
+            bool(audio),
+            len(extraction.products),
+            attempts["transcription"],
+            attempts["extraction"],
+        )
     except Exception as exc:
         session.rollback()
         job = session.get(ProcessingJob, job_id)

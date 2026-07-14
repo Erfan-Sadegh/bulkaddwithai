@@ -53,6 +53,9 @@
 - timeout، قطع ارتباط، rate limit، خطای 5xx، JSON نامعتبر و خروجی خالی AI باید حداکثر سه تلاش کنترل‌شده داشته باشند.
 - شکست نهایی AI باید فایل‌های خام را نگه دارد، پیام امن فارسی بدهد و `code/stage/attempts/exception_type` را در `Batch.ai_metadata.last_processing_failure` ثبت کند.
 - log شکست pipeline باید `job_id`, `batch_id`, `stage`, `code`, `attempts` و traceback داشته باشد؛ متن فنی نباید در `ProcessingJob.error` عمومی قرار بگیرد.
+- هر پاسخ HTTP باید `X-Request-ID` امن داشته باشد و خطای 5xx یا exception با method و path ثبت شود؛ query string نباید log شود چون callback باسلام `code/state` حساس دارد.
+- لاگ OAuth، publish و upload نباید access token، refresh token، کد یک‌بارمصرف OAuth، state، متن ویس، شماره تماس یا payload کامل محصول را ثبت کند.
+- lifecycleهای مهم باید event ثابت و قابل جستجو داشته باشند: `basalam_oauth_failed`, `basalam_publish_validation_failed`, `basalam_product_failed`, `basalam_publish_failed`, `torob_publish_failed`, `image_upload_rejected` و `processing_job_failed`.
 - CTA پیام اطلاعات ناقص باید متن روشن داشته باشد؛ «تکمیل فیلدها» به اولین کارت ناقص می‌رود.
 - مسیر مرورگری باسلام و ترب باید جدا تست شود؛ تغییر مسیر نباید عکس‌ها یا batch قبلی را وارد مسیر جدید کند.
 - مسیر مرورگری ترب باید تا ثبت درخواست پیش برود و ثابت کند فیلدهای اختصاصی باسلام یا حدس دسته‌بندی باسلام در آن مسیر فعال نمی‌شوند.

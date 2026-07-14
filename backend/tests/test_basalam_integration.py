@@ -131,6 +131,31 @@ def test_basalam_oauth_url_and_callback_create_platform_connection(client: TestC
     assert connections[0]["external_shop_name"] == "غرفه تست"
 
 
+def test_basalam_oauth_failure_is_logged_without_code_or_provider_message(client: TestClient, seller: dict, caplog):
+    class FailingOAuthClient(FakeBasalamClient):
+        def exchange_code_for_tokens(self, code: str) -> dict:
+            raise BasalamClientError(f"token exchange failed for {code}", status_code=502)
+
+    fake = FailingOAuthClient()
+    client.app.state.basalam_client_factory = lambda _settings: fake
+    client.app.state.settings.basalam_client_id = "test-client"
+    client.app.state.settings.basalam_client_secret = "test-secret"
+    client.app.state.settings.basalam_redirect_uri = "http://testserver/integrations/basalam/callback"
+    state = client.get(f"/integrations/basalam/oauth-url?seller_id={seller['id']}").json()["state"]
+
+    with caplog.at_level("WARNING", logger="app.platform_services"):
+        callback = client.get(
+            f"/integrations/basalam/callback?code=one-time-secret-code&state={state}",
+            follow_redirects=False,
+        )
+
+    assert "basalam_status=failed" in callback.headers["location"]
+    assert f"basalam_oauth_failed reason=provider_error seller_id={seller['id']}" in caplog.text
+    assert "exception_type=BasalamClientError http_status=502" in caplog.text
+    assert "one-time-secret-code" not in caplog.text
+    assert "token exchange failed" not in caplog.text
+
+
 def test_basalam_connection_is_scoped_to_workspace(client: TestClient, seller: dict):
     fake = FakeBasalamClient()
     client.app.state.basalam_client_factory = lambda _settings: fake
@@ -609,7 +634,7 @@ def test_publish_allows_auto_category_below_review_threshold(client: TestClient,
     assert fake.created_products[0].category_id == suggested_category_id
 
 
-def test_failed_basalam_publish_stores_safe_request_debug_metadata(client: TestClient, batch: dict):
+def test_failed_basalam_publish_stores_safe_request_debug_metadata(client: TestClient, batch: dict, caplog):
     class StatusRequiredBasalamClient(FakeBasalamClient):
         def create_product(
             self,
@@ -649,7 +674,8 @@ def test_failed_basalam_publish_stores_safe_request_debug_metadata(client: TestC
     callback_state = client.get(f"/integrations/basalam/oauth-url?seller_id={batch['seller_id']}").json()["state"]
     client.get(f"/integrations/basalam/callback?code=valid-code&state={callback_state}", follow_redirects=False)
 
-    publish = client.post(f"/batches/{batch['id']}/publish/basalam")
+    with caplog.at_level("INFO", logger="app.platform_services"):
+        publish = client.post(f"/batches/{batch['id']}/publish/basalam")
 
     assert publish.status_code == 202
     job = client.get(f"/publish-jobs/{publish.json()['job_id']}").json()
@@ -667,6 +693,11 @@ def test_failed_basalam_publish_stores_safe_request_debug_metadata(client: TestC
     assert "status" in metadata["request_payload_keys"]
     assert "name" in metadata["request_payload_keys"]
     assert "request_payload" not in metadata
+    assert f"basalam_product_failed job_id={publish.json()['job_id']} batch_item_id={item['id']}" in caplog.text
+    assert "http_status=400" in caplog.text
+    assert "basalam_publish_finished" in caplog.text
+    assert "success_count=0 failure_count=1" in caplog.text
+    assert "openapi_raw_data" not in caplog.text
 
 
 def test_publish_requires_seller_operational_fields(client: TestClient, batch: dict):

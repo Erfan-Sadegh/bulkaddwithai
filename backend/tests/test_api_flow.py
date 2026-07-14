@@ -125,18 +125,21 @@ def test_upload_accepts_real_heic_even_when_browser_omits_mime(client: TestClien
     assert asset["url"].endswith(".jpg")
 
 
-def test_multi_image_upload_is_atomic_when_one_image_is_unreadable(client: TestClient, batch: dict):
-    response = client.post(
-        f"/batches/{batch['id']}/assets",
-        files=[
-            image_file("valid.jpg"),
-            image_file("broken.jpg", b"not-an-image"),
-        ],
-    )
+def test_multi_image_upload_is_atomic_when_one_image_is_unreadable(client: TestClient, batch: dict, caplog):
+    with caplog.at_level("WARNING", logger="app.services"):
+        response = client.post(
+            f"/batches/{batch['id']}/assets",
+            files=[
+                image_file("valid.jpg"),
+                image_file("broken.jpg", b"not-an-image"),
+            ],
+        )
 
     assert response.status_code == 422
     assert response.json()["detail"] == "این عکس خوانده نشد. یک عکس سالم انتخاب کن و دوباره تلاش کن."
     assert client.get(f"/batches/{batch['id']}/assets").json() == []
+    assert f"image_upload_rejected batch_id={batch['id']}" in caplog.text
+    assert "input_bytes=12" in caplog.text
 
 
 def test_uploaded_image_can_be_deleted_before_processing(client: TestClient, batch: dict):

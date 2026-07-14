@@ -88,7 +88,7 @@ def test_torob_submission_reuses_active_request_and_allows_retry_after_failure(c
     assert retry.json()["id"] != first.json()["id"]
 
 
-def test_admin_can_review_torob_candidate_and_publish_submission(client: TestClient, batch: dict):
+def test_admin_can_review_torob_candidate_and_publish_submission(client: TestClient, batch: dict, caplog):
     client.app.state.settings.admin_password = "admin-pass"
     fake = FakeTorobClient()
     client.app.state.torob_client_factory = lambda _settings: fake
@@ -126,20 +126,21 @@ def test_admin_can_review_torob_candidate_and_publish_submission(client: TestCli
     ).json()["items"][0]
     assert reviewed["candidates"][0]["title"] == "محصول متناظر ترب"
 
-    published = client.post(
-        f"/admin/torob-submissions/{submission['id']}/publish",
-        headers={"X-Admin-Password": "admin-pass"},
-        json={
-            "shop_id": 94925,
-            "items": [
-                {
-                    "id": first_item["id"],
-                    "base_product_rk": "2809dddc-a7d8-4d71-b28e-0591b146b6c7",
-                    "price": 999000000,
-                }
-            ],
-        },
-    )
+    with caplog.at_level("INFO", logger="app.torob_services"):
+        published = client.post(
+            f"/admin/torob-submissions/{submission['id']}/publish",
+            headers={"X-Admin-Password": "admin-pass"},
+            json={
+                "shop_id": 94925,
+                "items": [
+                    {
+                        "id": first_item["id"],
+                        "base_product_rk": "2809dddc-a7d8-4d71-b28e-0591b146b6c7",
+                        "price": 999000000,
+                    }
+                ],
+            },
+        )
 
     assert published.status_code == 200
     body = published.json()
@@ -158,3 +159,4 @@ def test_admin_can_review_torob_candidate_and_publish_submission(client: TestCli
             ],
         )
     ]
+    assert f"torob_publish_succeeded submission_id={submission['id']} shop_id=94925 item_count=1" in caplog.text

@@ -811,6 +811,61 @@ JSON کامل‌تر است و برای debug و integration آینده استف
 
 `ProcessingJob.error` عمدا فقط پیام فارسی امن دارد. traceback و متن فنی فقط در log سرور نوشته می‌شود تا کلید، پاسخ خام provider یا اصطلاحات فنی به فروشنده نمایش داده نشود.
 
+### لاگ‌ها و مانیتورینگ خطا
+
+لاگ‌های backend به شکل event ثابت و فیلدهای `key=value` نوشته می‌شوند تا در پنل لاگ همروش با نام event یا شناسه job جستجو شوند. لاگ همه درخواست‌های موفق نوشته نمی‌شود؛ این کار فقط هزینه و نویز می‌سازد. یک لاگ موفقیت برای پایان pipelineهای مهم نگه می‌داریم تا نرخ موفق/ناموفق قابل محاسبه باشد.
+
+| event | کاربرد |
+|---|---|
+| `http_request_failed` | exception کنترل‌نشده API؛ شامل request ID، method و path بدون query string |
+| `http_response_failed` | پاسخ 5xx که به exception کنترل‌نشده تبدیل نشده است |
+| `image_upload_rejected` | فایل تصویر خراب یا غیرقابل decode |
+| `upload_batch_failed` | شکست غیرمنتظره ذخیره‌سازی چندفایلی |
+| `processing_stage_retry` | retry موقت AvalAI |
+| `processing_job_failed` | شکست نهایی AI با stage/code/attempts و شماره عکس در صورت وجود |
+| `processing_job_succeeded` | پایان موفق AI و تعداد عکس/محصول و تلاش‌ها |
+| `basalam_oauth_failed` | شکست اتصال غرفه با reason امن |
+| `basalam_oauth_connected` | audit اتصال seller به connection و شناسه غرفه |
+| `basalam_category_ai_failed` | شکست AI انتخاب دسته و فعال‌شدن fallback امتیازی |
+| `basalam_publish_validation_failed` | ناقص‌بودن اطلاعات پیش از هر اثر جانبی در باسلام |
+| `basalam_product_failed` | شکست یک محصول با status، category، unit type و تعداد عکس بدون payload کامل |
+| `basalam_publish_failed` | شکست کلی job، مثلا آپلود عکس یا داده مفقود |
+| `basalam_publish_finished` | پایان job و شمار محصولات موفق/ناموفق |
+| `torob_publish_failed` / `torob_publish_succeeded` | نتیجه ارسال ادمین به ترب |
+
+هر پاسخ API هدر `X-Request-ID` دارد. اگر کاربر زمان یا رخداد مشخصی گزارش کرد، request ID شبکه مرورگر سریع‌ترین کلید برای پیدا کردن خطای HTTP است؛ برای کارهای background از `job_id` و `batch_id` استفاده کن.
+
+قاعده محرمانگی: query string، `code/state` باسلام، access/refresh token، کلیدهای AvalAI و ترب، متن ویس، موبایل فروشنده و payload کامل محصول نباید log شوند. پاسخ خام provider فقط در metadata محدود و کنترل‌شده دیتابیس ذخیره می‌شود، نه در خط‌های مانیتورینگ عمومی.
+
+#### تحویل مانیتورینگ به مسئول نگهداری
+
+این برنامه فایل log جداگانه داخل `/data` نمی‌سازد. Python/Uvicorn لاگ را روی `stdout/stderr` کانتینر می‌نویسد و همروش آن را در بخش لاگ‌های پاد نمایش می‌دهد. در پنل همروش وارد اپ `bulkaddwithai` شو، پاد running را باز کن و بخش Logs را ببین. پس از هر deploy نام پاد عوض می‌شود؛ بنابراین همیشه پاد نسخه فعال را انتخاب کن.
+
+چک پیشنهادی در دوره MVP: روزی یک‌بار و همچنین بعد از هر گزارش کاربر، بازه ۲۴ ساعت اخیر را با عبارت‌های زیر جستجو کن:
+
+```text
+http_request_failed
+image_upload_rejected
+upload_batch_failed
+processing_job_failed
+basalam_oauth_failed
+basalam_category_ai_failed
+basalam_publish_validation_failed
+basalam_product_failed
+basalam_publish_failed
+torob_publish_failed
+```
+
+اولویت رسیدگی:
+
+1. `http_request_failed`, `upload_batch_failed` و `basalam_publish_failed`: همان روز بررسی شوند؛ این‌ها شکست غیرمنتظره یا شکست کل عملیات هستند.
+2. `processing_job_failed`: با `code`, `stage`, `attempts`, `batch_id` و `job_id` بررسی شود. تکرار چندباره `provider_temporary` می‌تواند مشکل provider یا شبکه باشد؛ `image_invalid` مشکل همان عکس است.
+3. `basalam_product_failed`: اگر برای چند غرفه یا چند محصول با `http_status` و فیلد مشابه تکرار شد، integration یا payload بررسی شود. یک مورد منفرد ممکن است validation خاص همان محصول یا غرفه باشد.
+4. `basalam_oauth_failed`: `reason` را بررسی کن. افزایش `provider_error` یا `invalid_state` برای چند کاربر نیازمند رسیدگی است؛ `authorization_denied` می‌تواند انصراف خود کاربر باشد.
+5. `basalam_publish_validation_failed`: باگ فنی قطعی نیست؛ نشان می‌دهد کاربر قبل از تکمیل فیلدهای لازم ثبت را شروع کرده است. اگر تعدادش زیاد شد UX تکمیل اطلاعات بررسی شود.
+
+برای تطبیق گزارش کاربر، ابتدا زمان رخداد و `X-Request-ID` تب Network را بگیر. برای jobهای background از `job_id` یا `batch_id` استفاده کن. اگر پنل همروش retention کوتاه دارد، قبل از عمومی‌ترشدن محصول باید sink دائمی مثل Grafana Loki، Sentry یا سرویس مشابه اضافه شود؛ در MVP فعلی منبع لاگ همان stdout/stderr پاد است.
+
 ## تست‌ها
 
 ### Backend

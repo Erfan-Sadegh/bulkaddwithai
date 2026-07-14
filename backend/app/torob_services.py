@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -12,6 +13,8 @@ from .schemas import (
     TorobSubmissionPatch,
     TorobSubmissionRead,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def create_torob_submission(
@@ -129,6 +132,13 @@ def publish_torob_submission(
             item_by_id[item_id].status = "failed"
             item_by_id[item_id].error = "ثبت در ترب انجام نشد."
         session.commit()
+        logger.warning(
+            "torob_publish_failed submission_id=%s shop_id=%s item_count=%s exception_type=%s",
+            submission.id,
+            payload.shop_id,
+            len(bulk_items),
+            type(exc).__name__,
+        )
         return _submission_to_read(session.scalar(_submission_statement(submission.id)))
 
     submission.status = "submitted"
@@ -139,6 +149,12 @@ def publish_torob_submission(
         item_by_id[item_id].error = None
         item_by_id[item_id].response_metadata = response
     session.commit()
+    logger.info(
+        "torob_publish_succeeded submission_id=%s shop_id=%s item_count=%s",
+        submission.id,
+        payload.shop_id,
+        len(bulk_items),
+    )
     return _submission_to_read(session.scalar(_submission_statement(submission.id)))
 
 

@@ -14,6 +14,7 @@ from .database import create_tables, make_engine, make_session_factory
 from .integrations.basalam import BasalamClient
 from .integrations.torob import TorobClient
 from .models import Asset, Batch, ProcessingJob, PublishJob, Seller
+from .observability import observe_http_request
 from .platform_services import (
     create_basalam_oauth_url,
     create_basalam_publish_job,
@@ -92,12 +93,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.basalam_client_factory = lambda app_settings: BasalamClient(app_settings)
     app.state.torob_client_factory = lambda app_settings: TorobClient(app_settings)
 
+    app.middleware("http")(observe_http_request)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID"],
     )
     app.mount("/files", StaticFiles(directory=Path(settings.upload_dir)), name="files")
 

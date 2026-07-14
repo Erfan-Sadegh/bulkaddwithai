@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import time
 from dataclasses import replace
 from datetime import timedelta
@@ -84,6 +85,8 @@ BASALAM_ALLOWED_UNIT_TYPE_IDS = {
     6466,
 }
 
+logger = logging.getLogger(__name__)
+
 
 def list_platform_connections(session: Session, seller_id: int, workspace_id: str | None = None) -> list[PlatformConnection]:
     if not session.get(Seller, seller_id):
@@ -117,18 +120,25 @@ def handle_basalam_callback(
     error_description: str | None = None,
 ) -> str:
     if error:
+        logger.warning("basalam_oauth_failed reason=authorization_denied")
         return _frontend_redirect(settings, {"basalam_status": "failed", "error": error_description or error})
     if not code or not state:
+        logger.warning("basalam_oauth_failed reason=missing_code_or_state")
         return _frontend_redirect(settings, {"basalam_status": "failed", "error": "missing_code_or_state"})
 
     try:
         state_payload = _read_oauth_state(settings, state)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "basalam_oauth_failed reason=invalid_state exception_type=%s",
+            type(exc).__name__,
+        )
         return _frontend_redirect(settings, {"basalam_status": "failed", "error": "invalid_state"})
 
     seller_id = int(state_payload["seller_id"])
     seller = session.get(Seller, seller_id)
     if not seller:
+        logger.warning("basalam_oauth_failed reason=seller_not_found seller_id=%s", seller_id)
         return _frontend_redirect(settings, {"basalam_status": "failed", "error": "seller_not_found"})
 
     try:
@@ -137,11 +147,26 @@ def handle_basalam_callback(
         user = client.get_current_user(access_token)
         vendor = user.get("vendor")
         if not vendor or not vendor.get("id"):
+            logger.warning("basalam_oauth_failed reason=no_vendor_found seller_id=%s", seller_id)
             return _frontend_redirect(settings, {"basalam_status": "failed", "error": "no_vendor_found"})
         connection = upsert_basalam_connection(session, seller, tokens, user, vendor, state_payload.get("workspace_id"))
     except Exception as exc:
         session.rollback()
-        return _frontend_redirect(settings, {"basalam_status": "failed", "error": str(exc)})
+        logger.warning(
+            "basalam_oauth_failed reason=provider_error seller_id=%s exception_type=%s http_status=%s",
+            seller_id,
+            type(exc).__name__,
+            getattr(exc, "status_code", None),
+        )
+        return _frontend_redirect(settings, {"basalam_status": "failed", "error": "provider_error"})
+
+    logger.info(
+        "basalam_oauth_connected seller_id=%s connection_id=%s external_shop_id=%s workspace_present=%s",
+        seller.id,
+        connection.id,
+        connection.external_shop_id,
+        bool(state_payload.get("workspace_id")),
+    )
 
     return _frontend_redirect(
         settings,
@@ -277,6 +302,7 @@ def run_basalam_publish_job(
     job_id: int,
 ) -> None:
     session = session_factory()
+    job: PublishJob | None = None
     try:
         job = session.get(PublishJob, job_id)
         if not job:
@@ -290,6 +316,15 @@ def run_basalam_publish_job(
         connection = session.get(PlatformConnection, job.connection_id)
         if not batch or not connection:
             raise RuntimeError("Publish job data was not found")
+
+        logger.info(
+            "basalam_publish_started job_id=%s batch_id=%s connection_id=%s item_count=%s image_count=%s",
+            job.id,
+            batch.id,
+            connection.id,
+            len(batch.items),
+            sum(1 for asset in batch.assets if asset.type == "image"),
+        )
 
         client = client_factory(settings)
         categories = get_basalam_leaf_categories(settings, client)
@@ -314,6 +349,13 @@ def run_basalam_publish_job(
             job.error = f"{len(validation_errors)} محصول اطلاعات کامل ندارد"
             job.finished_at = utc_now()
             session.commit()
+            logger.warning(
+                "basalam_publish_validation_failed job_id=%s batch_id=%s invalid_item_count=%s total_item_count=%s",
+                job.id,
+                batch.id,
+                len(validation_errors),
+                len(batch.items),
+            )
             return
 
         uploaded_by_asset_id = _upload_batch_photos(session, client, connection, batch.assets)
@@ -344,6 +386,14 @@ def run_basalam_publish_job(
         job.error = None if failure_count == 0 else f"{failure_count} محصول ثبت نشد"
         job.finished_at = utc_now()
         session.commit()
+        logger.info(
+            "basalam_publish_finished job_id=%s batch_id=%s status=%s success_count=%s failure_count=%s",
+            job.id,
+            batch.id,
+            job.status,
+            success_count,
+            failure_count,
+        )
     except Exception as exc:
         session.rollback()
         job = session.get(PublishJob, job_id)
@@ -353,6 +403,16 @@ def run_basalam_publish_job(
             job.error = str(exc)
             job.finished_at = utc_now()
             session.commit()
+        log_method = logger.error if isinstance(exc, BasalamClientError) else logger.exception
+        log_method(
+            "basalam_publish_failed job_id=%s batch_id=%s connection_id=%s step=%s exception_type=%s http_status=%s",
+            job_id,
+            job.batch_id if job else None,
+            job.connection_id if job else None,
+            job.step if job else None,
+            type(exc).__name__,
+            getattr(exc, "status_code", None),
+        )
     finally:
         session.close()
 
@@ -471,6 +531,19 @@ def _publish_item(
         published.status = "failed"
         published.error = str(exc)
         published.response_metadata = _basalam_failure_metadata(exc)
+        metadata = published.response_metadata or {}
+        logger.warning(
+            "basalam_product_failed job_id=%s batch_item_id=%s connection_id=%s exception_type=%s http_status=%s category_id=%s unit_type=%s request_status=%s photo_count=%s",
+            job.id,
+            item.id,
+            connection.id,
+            type(exc).__name__,
+            metadata.get("http_status"),
+            metadata.get("request_payload_category_id"),
+            metadata.get("request_payload_unit_type"),
+            metadata.get("request_payload_status"),
+            metadata.get("request_payload_photo_count"),
+        )
     session.commit()
     session.refresh(published)
     return published
@@ -868,6 +941,12 @@ def _suggest_missing_categories(
     except Exception as exc:
         choice_by_key = {}
         ai_error = str(exc)[:400]
+        logger.warning(
+            "basalam_category_ai_failed item_count=%s exception_type=%s http_status=%s",
+            len(requests),
+            type(exc).__name__,
+            getattr(exc, "status_code", None),
+        )
 
     for item, candidates, request in pending:
         if ai_error:
