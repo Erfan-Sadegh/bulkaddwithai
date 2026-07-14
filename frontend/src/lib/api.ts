@@ -10,21 +10,28 @@ import type {
   Seller,
   TorobSubmission,
 } from './types';
+import { captureApiFailure, getRequestId, trackEvent } from './telemetry';
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '');
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
+  const requestId = getRequestId();
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: init?.body instanceof FormData ? init.headers : { 'Content-Type': 'application/json', ...init?.headers },
+      headers:
+        init?.body instanceof FormData
+          ? { 'X-Request-ID': requestId, ...init.headers }
+          : { 'Content-Type': 'application/json', 'X-Request-ID': requestId, ...init?.headers },
     });
   } catch {
+    captureApiFailure(path, null, requestId);
     throw new Error('ارتباط برقرار نشد. چند لحظه بعد دوباره تلاش کن.');
   }
   if (!response.ok) {
     const text = await response.text();
+    if (response.status >= 500) captureApiFailure(path, response.status, response.headers.get('X-Request-ID'));
     throw new Error(toFriendlyApiError(text, response.status));
   }
   if (response.status === 204) return undefined as T;
@@ -93,11 +100,18 @@ export const api = {
   uploadAssets: (batchId: number, files: File[]) => {
     const body = new FormData();
     files.forEach((file) => body.append('files', file));
-    return request<Asset[]>(`/batches/${batchId}/assets`, { method: 'POST', body });
+    return request<Asset[]>(`/batches/${batchId}/assets`, { method: 'POST', body }).then((assets) => {
+      trackEvent('images_uploaded', { platform: 'workspace', asset_count: assets.length });
+      return assets;
+    });
   },
   listAssets: (batchId: number) => request<Asset[]>(`/batches/${batchId}/assets`),
   deleteAsset: (assetId: number) => request<void>(`/assets/${assetId}`, { method: 'DELETE' }),
-  processBatch: (batchId: number) => request<{ job_id: number }>(`/batches/${batchId}/process`, { method: 'POST', body: JSON.stringify({}) }),
+  processBatch: (batchId: number) =>
+    request<{ job_id: number }>(`/batches/${batchId}/process`, { method: 'POST', body: JSON.stringify({}) }).then((result) => {
+      trackEvent('processing_job_started', { operation: 'ai_list' });
+      return result;
+    }),
   getJob: (jobId: number) => request<Job>(`/jobs/${jobId}`),
   listItems: (batchId: number) => request<ProductItem[]>(`/batches/${batchId}/items`),
   suggestBasalamCategories: (batchId: number) =>
@@ -131,6 +145,9 @@ export const api = {
     request<{ job_id: number }>(`/batches/${batchId}/publish/basalam${queryString({ workspace_id: workspaceId })}`, {
       method: 'POST',
       body: JSON.stringify({}),
+    }).then((result) => {
+      trackEvent('basalam_publish_started', { platform: 'basalam' });
+      return result;
     }),
   getPublishJob: (jobId: number) => request<PublishJob>(`/publish-jobs/${jobId}`),
   listPublishedProducts: (batchId: number) => request<PublishedProduct[]>(`/batches/${batchId}/published-products`),
@@ -138,6 +155,9 @@ export const api = {
     request<{ id: number; status: string; message: string }>(`/batches/${batchId}/torob-submissions`, {
       method: 'POST',
       body: JSON.stringify(payload),
+    }).then((result) => {
+      trackEvent('torob_submission_created', { platform: 'torob' });
+      return result;
     }),
   adminLogin: (password: string) =>
     request<{ ok: boolean }>('/admin/login', { method: 'POST', body: JSON.stringify({ password }) }),

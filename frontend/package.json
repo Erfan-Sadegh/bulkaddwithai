@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@fontsource/vazirmatn": "^5.1.1",
+    "@sentry/react": "^10.22.0",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

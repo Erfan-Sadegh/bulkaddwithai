@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .pytest-tmp/
 .dev-logs/
+.agent-evidence/
 .mypy_cache/
 *.pyc
 *.tsbuildinfo

@@ -2,6 +2,12 @@
 
 FROM node:20-bookworm-slim AS frontend
 WORKDIR /app/frontend
+ARG VITE_SENTRY_DSN=
+ARG VITE_APP_ENVIRONMENT=production
+ARG VITE_APP_RELEASE=
+ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN \
+    VITE_APP_ENVIRONMENT=$VITE_APP_ENVIRONMENT \
+    VITE_APP_RELEASE=$VITE_APP_RELEASE
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
@@ -10,8 +16,11 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
 FROM python:3.12-slim AS runtime
+ARG APP_RELEASE=
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    APP_ENVIRONMENT=production \
+    APP_RELEASE=$APP_RELEASE \
     DATABASE_URL=sqlite:////data/catalog.db \
     UPLOAD_DIR=/data/uploads \
     FRONTEND_DIST_DIR=/app/frontend-dist
