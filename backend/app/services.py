@@ -2,10 +2,13 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import re
 import shutil
+import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import Select, select
@@ -20,6 +23,20 @@ from .schemas import AiExtraction, AiProduct, BatchItemAssetRead, BatchItemBasal
 IMAGE_MIME_PREFIX = "image/"
 AUDIO_MIME_PREFIX = "audio/"
 JOB_STEPS = ("upload_ready", "transcribing", "vision_extracting", "matching", "ready", "failed")
+AI_STAGE_MAX_ATTEMPTS = 3
+AI_RETRY_DELAYS_SECONDS = (1.0, 2.5)
+
+logger = logging.getLogger(__name__)
+StageResult = TypeVar("StageResult")
+
+
+class ProcessingStageFailure(RuntimeError):
+    def __init__(self, *, stage: str, code: str, attempts: int, original: Exception):
+        super().__init__(_processing_error_message(code))
+        self.stage = stage
+        self.code = code
+        self.attempts = attempts
+        self.original = original
 
 
 def create_seller(session: Session, name: str | None, mobile: str | None, shop_name: str | None) -> Seller:
@@ -144,7 +161,10 @@ def create_processing_job(session: Session, batch_id: int) -> tuple[ProcessingJo
 
 
 def run_processing_job(
-    session_factory: sessionmaker[Session], provider_factory: Callable[[], AiProvider], job_id: int
+    session_factory: sessionmaker[Session],
+    provider_factory: Callable[[], AiProvider],
+    job_id: int,
+    sleep_fn: Callable[[float], None] = time.sleep,
 ) -> None:
     session = session_factory()
     try:
@@ -164,16 +184,34 @@ def run_processing_job(
         )
         audio = audio_assets[0] if audio_assets else None
         provider = provider_factory()
-        transcript = provider.transcribe(audio)
+        attempts = {"transcription": 0, "extraction": 0}
+        transcript = None
+        if audio:
+            transcript, attempts["transcription"] = _run_ai_stage_with_retry(
+                lambda: provider.transcribe(audio),
+                stage="transcribing",
+                job_id=job.id,
+                batch_id=batch.id,
+                sleep_fn=sleep_fn,
+            )
 
         _mark_job(session, job, status="running", step="vision_extracting")
-        extraction = provider.extract_products(images, transcript)
+        extraction, attempts["extraction"] = _run_ai_stage_with_retry(
+            lambda: _extract_non_empty_products(provider, images, transcript),
+            stage="vision_extracting",
+            job_id=job.id,
+            batch_id=batch.id,
+            sleep_fn=sleep_fn,
+        )
 
         _mark_job(session, job, status="running", step="matching")
         _replace_items_from_extraction(session, batch, images, extraction, extraction.transcript or transcript)
 
         batch.raw_transcript = extraction.transcript or transcript
-        batch.ai_metadata = extraction.metadata
+        batch.ai_metadata = {
+            **(extraction.metadata or {}),
+            "processing_attempts": attempts,
+        }
         batch.status = "ready"
         _mark_job(session, job, status="succeeded", step="ready", finished=True)
     except Exception as exc:
@@ -181,15 +219,126 @@ def run_processing_job(
         job = session.get(ProcessingJob, job_id)
         if job:
             batch = session.get(Batch, job.batch_id)
+            failure = _processing_failure_details(exc, job.step)
             if batch:
                 batch.status = "failed"
+                batch.ai_metadata = {
+                    **(batch.ai_metadata or {}),
+                    "last_processing_failure": failure,
+                }
             job.status = "failed"
             job.step = "failed"
-            job.error = str(exc)
+            job.error = _processing_error_message(failure["code"])
             job.finished_at = utc_now()
             session.commit()
+            logger.exception(
+                "processing_job_failed job_id=%s batch_id=%s stage=%s code=%s attempts=%s exception_type=%s",
+                job.id,
+                job.batch_id,
+                failure["stage"],
+                failure["code"],
+                failure["attempts"],
+                failure["exception_type"],
+            )
     finally:
         session.close()
+
+
+def _run_ai_stage_with_retry(
+    operation: Callable[[], StageResult],
+    *,
+    stage: str,
+    job_id: int,
+    batch_id: int,
+    sleep_fn: Callable[[float], None],
+) -> tuple[StageResult, int]:
+    for attempt in range(1, AI_STAGE_MAX_ATTEMPTS + 1):
+        try:
+            return operation(), attempt
+        except Exception as exc:
+            code, retryable = _classify_processing_error(exc, stage)
+            if not retryable or attempt >= AI_STAGE_MAX_ATTEMPTS:
+                raise ProcessingStageFailure(
+                    stage=stage,
+                    code=code,
+                    attempts=attempt,
+                    original=exc,
+                ) from exc
+            logger.warning(
+                "processing_stage_retry job_id=%s batch_id=%s stage=%s attempt=%s code=%s exception_type=%s",
+                job_id,
+                batch_id,
+                stage,
+                attempt,
+                code,
+                type(exc).__name__,
+            )
+            sleep_fn(AI_RETRY_DELAYS_SECONDS[attempt - 1])
+    raise AssertionError("AI retry loop ended unexpectedly")
+
+
+def _extract_non_empty_products(provider: AiProvider, images: list[Asset], transcript: str | None) -> AiExtraction:
+    extraction = provider.extract_products(images, transcript)
+    if not extraction.products:
+        raise RuntimeError("AI returned no products")
+    return extraction
+
+
+def _classify_processing_error(exc: Exception, stage: str) -> tuple[str, bool]:
+    normalized = str(exc).lower()
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None and getattr(exc, "response", None) is not None:
+        status_code = getattr(exc.response, "status_code", None)
+
+    if stage == "transcribing" and (
+        status_code in {400, 413, 415}
+        or any(token in normalized for token in ("unsupported audio", "invalid audio", "audio format", "empty file"))
+    ):
+        return "audio_invalid", False
+    if "invalid extraction json" in normalized:
+        return "invalid_output", True
+    if "returned no products" in normalized:
+        return "empty_output", True
+    if (
+        isinstance(exc, (TimeoutError, ConnectionError))
+        or status_code in {408, 409, 429}
+        or isinstance(status_code, int) and status_code >= 500
+        or any(
+            token in normalized
+            for token in ("timeout", "timed out", "connection", "rate limit", "temporarily unavailable")
+        )
+    ):
+        return "provider_temporary", True
+    return ("transcription_failed" if stage == "transcribing" else "extraction_failed"), False
+
+
+def _processing_failure_details(exc: Exception, fallback_stage: str) -> dict:
+    if isinstance(exc, ProcessingStageFailure):
+        return {
+            "code": exc.code,
+            "stage": exc.stage,
+            "attempts": exc.attempts,
+            "exception_type": type(exc.original).__name__,
+        }
+    code, _retryable = _classify_processing_error(exc, fallback_stage)
+    return {
+        "code": code,
+        "stage": fallback_stage,
+        "attempts": 1,
+        "exception_type": type(exc).__name__,
+    }
+
+
+def _processing_error_message(code: str) -> str:
+    if code == "provider_temporary":
+        return "ارتباط با هوش مصنوعی موقتاً برقرار نشد. دوباره تلاش کن."
+    if code == "audio_invalid":
+        return "صدای ضبط‌شده خوانده نشد. دوباره ضبط کن یا بدون صدا ادامه بده."
+    if code in {"invalid_output", "empty_output"}:
+        return "هوش مصنوعی نتوانست لیست معتبر بسازد. دوباره تلاش کن."
+    if code == "transcription_failed":
+        return "خواندن صدای ضبط‌شده انجام نشد. دوباره ضبط کن یا بدون صدا ادامه بده."
+    return "ساخت لیست کامل نشد. عکس‌ها و صدا باقی مانده‌اند؛ دوباره تلاش کن."
 
 
 def list_items(session: Session, batch_id: int) -> list[BatchItemRead]:

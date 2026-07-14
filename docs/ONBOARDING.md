@@ -80,6 +80,8 @@
 
 اگر کاربر دوباره ویس ضبط کند، UX فعلی آن را به‌عنوان نسخه جدید در نظر می‌گیرد. backend برای پردازش، آخرین asset صوتی batch را می‌خواند. این تصمیم عمدی است: فروشنده سنتی نباید با مفهوم چند فایل صوتی، حذف ویس، ترتیب ویس‌ها یا مدیریت فایل درگیر شود. بعداً اگر واقعاً نیاز محصولی پیدا کردیم، می‌توانیم چند ویس را با timeline ساده اضافه کنیم.
 
+ضبط محدودیت زمانی محصولی ندارد و تا زدن «توقف ضبط» ادامه پیدا می‌کند. فایل را با فرمت واقعی مرورگر می‌سازیم: معمولا Chrome خروجی WebM/Opus و Safari خروجی MP4 می‌دهد. MIME و پسوند نباید دستی `webm` شوند؛ فایل MP4 با پسوند جعلی WebM ممکن است در transcription رد شود. فایل بدون داده نیز upload نمی‌شود. هنگام upload صدا فقط وضعیت همان بخش تغییر می‌کند و شبکه عکس spinner نمی‌گیرد.
+
 اگر ویس بگذارد، می‌تواند این چیزها را بگوید:
 
 - با شماره عکس محصول هم می‌تواند توضیح بدهد؛ مثلا «عکس شماره ۲ قیمتش ۲۰۰ هزار تومنه».
@@ -516,7 +518,7 @@ AVALAI_STT_MODEL
 
 نقش هر مدل:
 
-- `AVALAI_STT_MODEL`: فقط برای `client.audio.transcriptions.create` استفاده می‌شود. زبان با `language="fa"` hint می‌شود و خروجی با `response_format="text"` گرفته می‌شود.
+- `AVALAI_STT_MODEL`: فقط برای `client.audio.transcriptions.create` استفاده می‌شود. زبان با `language="fa"` hint می‌شود و خروجی با `response_format="json"` گرفته می‌شود؛ متن از فیلد `text` خوانده می‌شود.
 - `AVALAI_VISION_MODEL`: مدل اصلی extraction است. عکس‌ها و transcript به `client.chat.completions.create` داده می‌شوند و خروجی باید JSON schema معتبر باشد.
 - `AVALAI_TEXT_MODEL`: در کد فعلی فقط fallback است؛ اگر `AVALAI_VISION_MODEL` خالی باشد، extraction با text model انجام می‌شود. چون ورودی شامل تصویر است، در عمل باید مدل vision/multimodal تنظیم باشد.
 
@@ -529,7 +531,7 @@ AVALAI_STT_MODEL
 5. backend خروجی را validate می‌کند.
 6. فقط خروجی معتبر به `BatchItem` و `BatchItemAsset` تبدیل می‌شود.
 
-اگر JSON نامعتبر باشد یا provider خطا بدهد، خروجی نصفه ذخیره نمی‌شود. فایل‌های خام باقی می‌مانند و کاربر retry می‌کند.
+اگر provider timeout/connection/429/5xx بدهد، یا extraction خروجی JSON نامعتبر/خالی برگرداند، هر مرحله حداکثر سه بار با فاصله کوتاه retry می‌شود. اگر باز هم ناموفق بود، خروجی نصفه ذخیره نمی‌شود، فایل‌های خام باقی می‌مانند و کاربر retry می‌کند.
 
 جزئیات prompt و خروجی:
 
@@ -783,6 +785,7 @@ JSON کامل‌تر است و برای debug و integration آینده استف
 
 - اگر آپلود عکس شکست خورد، کاربر همان صفحه می‌ماند و می‌تواند دوباره انتخاب کند.
 - اگر transcription یا vision شکست خورد، فایل‌ها پاک نمی‌شوند.
+- خطاهای موقت provider و خروجی نامعتبر AI قبل از درگیرکردن کاربر حداکثر سه بار retry می‌شوند.
 - اگر job failed شد، دکمه «دوباره تلاش کن» نمایش داده می‌شود.
 - اگر publish شکست خورد، draftهای داخل صفحه حفظ می‌شوند.
 - اگر publish به خاطر اطلاعات ناقص قابل شروع نباشد، پیام در dock پایین صفحه نشان داده می‌شود تا حتی وقتی کاربر پایین لیست است آن را ببیند.
@@ -792,6 +795,18 @@ JSON کامل‌تر است و برای debug و integration آینده استف
 - اگر کاربر بخواهد صفحه را برای محصولات جدید خالی کند، modal تایید نمایش داده می‌شود.
 
 قاعده کلی: کاربر نباید حس کند با یک کلیک اشتباه زحمتش از بین می‌رود.
+
+### Runbook خطای ساخت لیست
+
+پیام عمومی کاربر به‌تنهایی علت فنی را نشان نمی‌دهد. برای ریشه‌یابی production:
+
+1. در log پاد عبارت `processing_job_failed` را جستجو کن.
+2. `job_id`, `batch_id`, `stage`, `code`, `attempts` و `exception_type` را بردار.
+3. در رکورد همان batch، `ai_metadata.last_processing_failure` باید همان اطلاعات غیرحساس را داشته باشد.
+4. `stage=transcribing` معمولا به فایل/فرمت صدا یا سرویس STT مربوط است؛ `stage=vision_extracting` به درخواست تصویر یا Structured Output مربوط است.
+5. `code=provider_temporary` یعنی سه تلاش timeout/connection/rate-limit/5xx تمام شده است. `audio_invalid` یعنی کاربر باید صدا را دوباره ضبط کند. `invalid_output` یا `empty_output` یعنی مدل بعد از retry خروجی معتبر محصول نداده است.
+
+`ProcessingJob.error` عمدا فقط پیام فارسی امن دارد. traceback و متن فنی فقط در log سرور نوشته می‌شود تا کلید، پاسخ خام provider یا اصطلاحات فنی به فروشنده نمایش داده نشود.
 
 ## تست‌ها
 
@@ -811,6 +826,8 @@ JSON کامل‌تر است و برای debug و integration آینده استف
 - export CSV/JSON
 - edit، split، reorder
 - validation خروجی AI
+- retry مرحله transcription/extraction و ثبت metadata شکست
+- سازگاری فایل ضبط‌شده MP4/WebM و جلوگیری از upload صدای خالی
 - ساخت لینک OAuth باسلام و اعتبارسنجی callback با state امضاشده
 - ساخت `PlatformConnection` بعد از callback موفق باسلام
 - جستجوی دسته‌های باسلام و انتخاب دستی دسته برای محصول

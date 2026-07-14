@@ -279,7 +279,7 @@ class AvalAiProvider(AiProvider):
                 model=self.settings.avalai_stt_model,
                 file=audio_file,
                 language="fa",
-                response_format="text",
+                response_format="json",
                 prompt="فروشنده فارسی درباره محصولات، شماره عکس‌ها و قیمت‌ها صحبت می‌کند.",
             )
         return _transcription_text(result)

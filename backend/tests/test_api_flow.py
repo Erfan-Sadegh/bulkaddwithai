@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.models import Asset, Batch, ProcessingJob
 from app.schemas import AiExtraction, AiProduct
 from app.services import _normalize_extracted_price_toman, _price_hint_for_product, _price_hints_from_transcript
-from app.services import _replace_items_from_extraction, create_processing_job
+from app.services import _replace_items_from_extraction, create_processing_job, run_processing_job
 from helpers import audio_file, image_file
 
 
@@ -158,6 +158,117 @@ def test_processing_reuses_active_job_and_allows_reprocess_after_terminal_state(
         assert len(session.scalars(select(ProcessingJob).where(ProcessingJob.batch_id == batch["id"])).all()) == 2
     finally:
         session.close()
+
+
+def test_processing_retries_temporary_ai_failures_and_records_attempts(client: TestClient, batch: dict):
+    client.post(
+        f"/batches/{batch['id']}/assets",
+        files=[image_file("a.jpg"), audio_file()],
+    )
+
+    class FlakyProvider:
+        def __init__(self):
+            self.transcription_calls = 0
+            self.extraction_calls = 0
+
+        def transcribe(self, _audio):
+            self.transcription_calls += 1
+            if self.transcription_calls == 1:
+                raise TimeoutError("temporary transcription timeout")
+            return "قیمت محصول صد هزار تومان است"
+
+        def extract_products(self, _images, transcript):
+            self.extraction_calls += 1
+            if self.extraction_calls == 1:
+                raise RuntimeError("AI returned invalid extraction JSON")
+            return AiExtraction(
+                transcript=transcript,
+                products=[
+                    AiProduct(
+                        title="محصول بازیابی‌شده",
+                        description="توضیحات محصول",
+                        price_toman=100_000,
+                        stock=None,
+                        preparation_days=None,
+                        weight_grams=None,
+                        package_weight_grams=None,
+                        unit_quantity=None,
+                        confidence=0.9,
+                        image_numbers=[1],
+                    )
+                ],
+                metadata={"provider": "test"},
+            )
+
+    provider = FlakyProvider()
+    session = client.app.state.session_factory()
+    try:
+        job, _ = create_processing_job(session, batch["id"])
+    finally:
+        session.close()
+
+    run_processing_job(
+        client.app.state.session_factory,
+        lambda: provider,
+        job.id,
+        sleep_fn=lambda _seconds: None,
+    )
+
+    saved_job = client.get(f"/jobs/{job.id}").json()
+    saved_batch = client.get(f"/batches/{batch['id']}").json()
+    assert saved_job["status"] == "succeeded"
+    assert provider.transcription_calls == 2
+    assert provider.extraction_calls == 2
+    assert saved_batch["ai_metadata"]["processing_attempts"] == {
+        "transcription": 2,
+        "extraction": 2,
+    }
+
+
+def test_processing_failure_is_safe_and_observable_without_losing_uploads(
+    client: TestClient, batch: dict, caplog
+):
+    client.post(
+        f"/batches/{batch['id']}/assets",
+        files=[image_file("a.jpg"), audio_file()],
+    )
+
+    class BrokenProvider:
+        def transcribe(self, _audio):
+            raise TimeoutError("upstream secret diagnostic")
+
+        def extract_products(self, _images, _transcript):
+            raise AssertionError("extraction must not run")
+
+    session = client.app.state.session_factory()
+    try:
+        job, _ = create_processing_job(session, batch["id"])
+    finally:
+        session.close()
+
+    run_processing_job(
+        client.app.state.session_factory,
+        BrokenProvider,
+        job.id,
+        sleep_fn=lambda _seconds: None,
+    )
+
+    saved_job = client.get(f"/jobs/{job.id}").json()
+    saved_batch = client.get(f"/batches/{batch['id']}").json()
+    saved_assets = client.get(f"/batches/{batch['id']}/assets").json()
+    failure = saved_batch["ai_metadata"]["last_processing_failure"]
+    assert saved_job["status"] == "failed"
+    assert saved_job["error"] == "ارتباط با هوش مصنوعی موقتاً برقرار نشد. دوباره تلاش کن."
+    assert "secret" not in saved_job["error"]
+    assert failure == {
+        "code": "provider_temporary",
+        "stage": "transcribing",
+        "attempts": 3,
+        "exception_type": "TimeoutError",
+    }
+    assert sorted(asset["type"] for asset in saved_assets) == ["audio", "image"]
+    assert "processing_job_failed job_id=" in caplog.text
+    assert "stage=transcribing code=provider_temporary attempts=3" in caplog.text
 
 
 def test_fake_processing_creates_editable_items_and_exports(client: TestClient, batch: dict):

@@ -426,6 +426,7 @@ describe('App', () => {
   it('records optional voice before building the AI list', async () => {
     const user = userEvent.setup();
     const uploadKinds: string[] = [];
+    const uploadedFiles: File[] = [];
     let processCalls = 0;
     const stopTrack = vi.fn();
     const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: stopTrack }] });
@@ -434,11 +435,12 @@ describe('App', () => {
       value: { getUserMedia },
     });
     class FakeMediaRecorder {
+      mimeType = 'audio/mp4';
       ondataavailable: ((event: BlobEvent) => void) | null = null;
       onstop: (() => void | Promise<void>) | null = null;
 
       start() {
-        this.ondataavailable?.({ data: new Blob(['voice'], { type: 'audio/webm' }) } as BlobEvent);
+        this.ondataavailable?.({ data: new Blob(['voice'], { type: 'audio/mp4' }) } as BlobEvent);
       }
 
       stop() {
@@ -449,6 +451,8 @@ describe('App', () => {
     vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
     const { container } = renderWithApi({
       uploadKinds,
+      uploadedFiles,
+      uploadDelayMs: 80,
       onProcess: () => {
         processCalls += 1;
       },
@@ -465,8 +469,16 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'ضبط صدا' }));
     await user.click(await screen.findByRole('button', { name: 'توقف ضبط' }));
 
+    expect(await screen.findByText('در حال آماده‌کردن صدا')).toBeInTheDocument();
+    expect(screen.queryByText('در حال آماده‌سازی عکس‌ها')).not.toBeInTheDocument();
+    expect(container.querySelector('.photo-grid .loading-tile')).not.toBeInTheDocument();
+    expect(container.querySelector('.file-button .spin')).not.toBeInTheDocument();
     expect(await screen.findByText('صدا ضبط شد و آماده پردازش است.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ضبط دوباره' })).toBeInTheDocument();
     expect(uploadKinds).toEqual(['image', 'audio']);
+    const recordedFile = uploadedFiles.find((file) => file.type.startsWith('audio/'));
+    expect(recordedFile?.type).toBe('audio/mp4');
+    expect(recordedFile?.name).toMatch(/\.m4a$/);
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
     expect(stopTrack).toHaveBeenCalledTimes(1);
 
@@ -474,6 +486,45 @@ describe('App', () => {
 
     await waitFor(() => expect(processCalls).toBe(1));
     expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
+    expect(container.querySelector('.product-card.basalam-card')).toBeInTheDocument();
+  });
+
+  it('does not upload an empty browser recording', async () => {
+    const user = userEvent.setup();
+    const uploadKinds: string[] = [];
+    const getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] });
+    Object.defineProperty(window.navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    class EmptyMediaRecorder {
+      mimeType = 'audio/webm';
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void | Promise<void>) | null = null;
+
+      start() {
+        this.ondataavailable?.({ data: new Blob([], { type: this.mimeType }) } as BlobEvent);
+      }
+
+      stop() {
+        void this.onstop?.();
+      }
+    }
+    vi.stubGlobal('MediaRecorder', EmptyMediaRecorder);
+    const { container } = renderWithApi({ uploadKinds, uploadAssetCount: 1 });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(
+      container.querySelector('input[accept="image/*"]') as HTMLInputElement,
+      new File(['image'], 'a.jpg', { type: 'image/jpeg' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'ضبط صدا' }));
+    await user.click(screen.getByRole('button', { name: 'توقف ضبط' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('صدایی ضبط نشد. دوباره ضبط کن.');
+    expect(uploadKinds).toEqual(['image']);
+    expect(screen.queryByText('صدا آماده است')).not.toBeInTheDocument();
   });
 
   it('does not show redundant copy when no voice is recorded', async () => {
@@ -1755,7 +1806,7 @@ function renderWithApi({
         const hasAudio = files.some((file) => file instanceof File && file.type.startsWith('audio/'));
         uploadedFiles?.push(...files.filter((file): file is File => file instanceof File));
         uploadKinds?.push(hasAudio ? 'audio' : 'image');
-        if (uploadDelayMs > 0 && !hasAudio) await new Promise((resolve) => window.setTimeout(resolve, uploadDelayMs));
+        if (uploadDelayMs > 0) await new Promise((resolve) => window.setTimeout(resolve, uploadDelayMs));
         if (!hasAudio) availableImageAssets = imageAssets.slice(0, uploadAssetCount);
         return jsonResponse(hasAudio ? [audioAsset] : availableImageAssets, 201);
       }

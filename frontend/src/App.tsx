@@ -123,6 +123,7 @@ function MainApp() {
   const [job, setJob] = useState<Job | null>(null);
   const [booting, setBooting] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadingKind, setUploadingKind] = useState<'image' | 'audio' | null>(null);
   const [processing, setProcessing] = useState(false);
   const [savingList, setSavingList] = useState(false);
   const [suggestingCategories, setSuggestingCategories] = useState(false);
@@ -405,6 +406,7 @@ function MainApp() {
       return;
     }
     uploadRequestRef.current = true;
+    setUploadingKind(hasImage ? 'image' : 'audio');
     setUploading(true);
     setError(null);
     try {
@@ -420,6 +422,7 @@ function MainApp() {
     } finally {
       uploadRequestRef.current = false;
       setUploading(false);
+      setUploadingKind(null);
     }
   }
 
@@ -807,6 +810,8 @@ function MainApp() {
                 images={imageAssets}
                 audios={audioAssets}
                 uploading={uploading}
+                uploadingImages={uploadingKind === 'image'}
+                uploadingAudio={uploadingKind === 'audio'}
                 uploadDisabled={items.length > 0 || processing}
                 voiceDisabled={items.length > 0 || uploading || processing}
                 onUpload={upload}
@@ -1349,6 +1354,8 @@ function UploadPanel({
   images,
   audios,
   uploading,
+  uploadingImages,
+  uploadingAudio,
   uploadDisabled,
   voiceDisabled,
   onUpload,
@@ -1357,6 +1364,8 @@ function UploadPanel({
   images: Asset[];
   audios: Asset[];
   uploading: boolean;
+  uploadingImages: boolean;
+  uploadingAudio: boolean;
   uploadDisabled: boolean;
   voiceDisabled: boolean;
   onUpload: (files: File[]) => void;
@@ -1376,8 +1385,8 @@ function UploadPanel({
           <p>هرچی محصول داری می‌تونی عکسش رو بذاری.</p>
         </div>
         {images.length > 0 && (
-          <label className={`button primary file-button ${uploadDisabled ? 'disabled' : ''}`} aria-disabled={uploadDisabled}>
-            {uploading ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
+          <label className={`button primary file-button ${uploading || uploadDisabled ? 'disabled' : ''}`} aria-disabled={uploading || uploadDisabled}>
+            {uploadingImages ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
             افزودن عکس
             <input type="file" accept="image/*" multiple disabled={uploading || uploadDisabled} onChange={handleFileInput} />
           </label>
@@ -1388,9 +1397,9 @@ function UploadPanel({
         <label className={`drop-zone ${uploading || uploadDisabled ? 'disabled' : ''}`}>
           <input type="file" accept="image/*" multiple disabled={uploading || uploadDisabled} onChange={handleFileInput} />
           <span className="camera-mark">
-            {uploading ? <Loader2 className="spin" size={30} /> : <Upload size={30} />}
+            {uploadingImages ? <Loader2 className="spin" size={30} /> : <Upload size={30} />}
           </span>
-          <strong>{uploading ? 'در حال آماده‌سازی عکس‌ها' : 'افزودن عکس'}</strong>
+          <strong>{uploadingImages ? 'در حال آماده‌سازی عکس‌ها' : 'افزودن عکس'}</strong>
           <span>چند عکس را با هم انتخاب کن.</span>
         </label>
       ) : (
@@ -1406,7 +1415,7 @@ function UploadPanel({
               )}
             </figure>
           ))}
-          {uploading && (
+          {uploadingImages && (
             <div className="photo-tile loading-tile">
               <Loader2 className="spin" size={24} />
               <span>در حال آماده‌سازی</span>
@@ -1421,18 +1430,20 @@ function UploadPanel({
         </div>
       )}
 
-      <VoicePanel audios={audios} disabled={voiceDisabled} onUpload={onUpload} inline />
+      <VoicePanel audios={audios} uploading={uploadingAudio} disabled={voiceDisabled} onUpload={onUpload} inline />
     </section>
   );
 }
 
 function VoicePanel({
   audios,
+  uploading,
   disabled,
   inline = false,
   onUpload,
 }: {
   audios: Asset[];
+  uploading: boolean;
   disabled: boolean;
   inline?: boolean;
   onUpload: (files: File[]) => void;
@@ -1455,26 +1466,35 @@ function VoicePanel({
     }
     setAskingMic(true);
     setVoiceError(null);
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = createAudioMediaRecorder(stream);
       chunksRef.current = [];
       stoppingRef.current = false;
       stopHandledRef.current = false;
-      recorder.ondataavailable = (event) => chunksRef.current.push(event.data);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
       recorder.onstop = () => {
         if (stopHandledRef.current) return;
         stopHandledRef.current = true;
         stoppingRef.current = false;
-        stream.getTracks().forEach((track) => track.stop());
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        onUpload([new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' })]);
+        stream?.getTracks().forEach((track) => track.stop());
+        const file = createRecordedAudioFile(chunksRef.current, recorder);
+        if (!file) {
+          setVoiceError('صدایی ضبط نشد. دوباره ضبط کن.');
+          recorderRef.current = null;
+          return;
+        }
+        onUpload([file]);
         recorderRef.current = null;
       };
-      recorder.start();
+      recorder.start(1000);
       recorderRef.current = recorder;
       setRecording(true);
     } catch {
+      stream?.getTracks().forEach((track) => track.stop());
       setVoiceError('اجازه میکروفون داده نشد. دسترسی میکروفون را فعال کن و دوباره تلاش کن.');
     } finally {
       setAskingMic(false);
@@ -1494,11 +1514,34 @@ function VoicePanel({
             {askingMic ? <Loader2 className="spin" size={18} /> : recording ? <Pause size={18} /> : <Mic size={18} />}
             {!askingMic && !recording && <Sparkles className="mic-spark" size={10} />}
           </span>
-          {askingMic ? 'در حال آماده‌سازی' : recording ? 'توقف ضبط' : 'ضبط صدا'}
+          {askingMic ? 'در حال آماده‌سازی' : recording ? 'توقف ضبط' : audios.length > 0 ? 'ضبط دوباره' : 'ضبط صدا'}
         </button>
       </div>
       {voiceError && <span className="field-error" role="alert">{voiceError}</span>}
-      {audios.length > 0 && <span className="muted">صدا ضبط شد و آماده پردازش است.</span>}
+      {recording && (
+        <div className="voice-status recording" role="status">
+          <span className="recording-dot" />
+          <strong>در حال ضبط صدا</strong>
+        </div>
+      )}
+      {!recording && uploading && (
+        <div className="voice-status processing" role="status">
+          <Loader2 className="spin" size={18} />
+          <span>
+            <strong>در حال آماده‌کردن صدا</strong>
+            <small>چند لحظه صبر کن.</small>
+          </span>
+        </div>
+      )}
+      {!recording && !uploading && audios.length > 0 && (
+        <div className="voice-status ready" role="status">
+          <Check size={18} />
+          <span>
+            <strong>صدا آماده است</strong>
+            <small>صدا ضبط شد و آماده پردازش است.</small>
+          </span>
+        </div>
+      )}
     </section>
   );
 }
@@ -1871,7 +1914,7 @@ function VoiceRefineControl({
   const [localAudioReady, setLocalAudioReady] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
+  const chunksRef = useRef<Blob[]>([]);
   const stoppingRef = useRef(false);
   const stopHandledRef = useRef(false);
   const canReprocess = hasAudio || localAudioReady;
@@ -1886,27 +1929,36 @@ function VoiceRefineControl({
     }
     setVoiceError(null);
     setAskingMic(true);
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
       stoppingRef.current = false;
       stopHandledRef.current = false;
-      const recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = (event) => chunksRef.current.push(event.data);
+      const recorder = createAudioMediaRecorder(stream);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
       recorder.onstop = async () => {
         if (stopHandledRef.current) return;
         stopHandledRef.current = true;
         stoppingRef.current = false;
-        stream.getTracks().forEach((track) => track.stop());
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        await onUpload([new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' })]);
+        stream?.getTracks().forEach((track) => track.stop());
+        const file = createRecordedAudioFile(chunksRef.current, recorder);
+        if (!file) {
+          setVoiceError('صدایی ضبط نشد. دوباره ضبط کن.');
+          recorderRef.current = null;
+          return;
+        }
+        await onUpload([file]);
         setLocalAudioReady(true);
         recorderRef.current = null;
       };
-      recorder.start();
+      recorder.start(1000);
       recorderRef.current = recorder;
       setRecording(true);
     } catch {
+      stream?.getTracks().forEach((track) => track.stop());
       setVoiceError('اجازه میکروفون داده نشد.');
     } finally {
       setAskingMic(false);
@@ -2029,7 +2081,7 @@ function ProductCard({
   }
 
   return (
-    <article className={`panel product-card ${platform === 'torob' ? 'torob-card' : ''} ${missingFields.size > 0 ? 'needs-info' : ''}`} data-product-id={item.id}>
+    <article className={`panel product-card ${platform === 'torob' ? 'torob-card' : 'basalam-card'} ${missingFields.size > 0 ? 'needs-info' : ''}`} data-product-id={item.id}>
       <div
         className="product-photos"
         onTouchStart={(event) => {
@@ -2650,6 +2702,40 @@ async function prepareFilesForUpload(files: File[]): Promise<File[]> {
 async function prepareFileForUpload(file: File): Promise<File> {
   if (!file.type.startsWith('image/') || file.type === 'image/svg+xml') return file;
   return resizeImageForUpload(file).catch(() => file);
+}
+
+const AUDIO_RECORDING_MIME_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/mp4',
+  'audio/webm',
+  'audio/ogg;codecs=opus',
+] as const;
+
+function createAudioMediaRecorder(stream: MediaStream): MediaRecorder {
+  const supportsMimeType = typeof MediaRecorder.isTypeSupported === 'function';
+  const mimeType = supportsMimeType
+    ? AUDIO_RECORDING_MIME_TYPES.find((candidate) => MediaRecorder.isTypeSupported(candidate))
+    : undefined;
+  return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+}
+
+function createRecordedAudioFile(chunks: Blob[], recorder: MediaRecorder): File | null {
+  const nonEmptyChunks = chunks.filter((chunk) => chunk.size > 0);
+  if (nonEmptyChunks.length === 0) return null;
+  const rawMimeType = nonEmptyChunks.find((chunk) => chunk.type)?.type || recorder.mimeType || 'audio/webm';
+  const mimeType = rawMimeType.split(';', 1)[0].toLowerCase();
+  const extension = audioExtensionForMimeType(mimeType);
+  const blob = new Blob(nonEmptyChunks, { type: mimeType });
+  if (blob.size === 0) return null;
+  return new File([blob], `voice-${Date.now()}.${extension}`, { type: mimeType });
+}
+
+function audioExtensionForMimeType(mimeType: string): string {
+  if (mimeType === 'audio/mp4' || mimeType === 'audio/x-m4a') return 'm4a';
+  if (mimeType === 'audio/mpeg' || mimeType === 'audio/mp3') return 'mp3';
+  if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav') return 'wav';
+  if (mimeType === 'audio/ogg') return 'ogg';
+  return 'webm';
 }
 
 async function resizeImageForUpload(file: File): Promise<File> {

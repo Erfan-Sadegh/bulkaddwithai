@@ -505,6 +505,55 @@ a {
   width: 100%;
 }
 
+.voice-status {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border: 1px solid #dce8e6;
+  border-radius: 8px;
+  background: #f7fbfa;
+  color: var(--primary);
+}
+
+.voice-status > span:not(.recording-dot) {
+  display: grid;
+  gap: 1px;
+}
+
+.voice-status strong {
+  font-size: 0.9rem;
+}
+
+.voice-status small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.voice-status.recording {
+  color: var(--danger);
+  border-color: #f2cbc7;
+  background: #fff8f7;
+}
+
+.recording-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: recording-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
 .mic-button {
   position: relative;
 }
@@ -1286,6 +1335,10 @@ a {
 
 @media (prefers-reduced-motion: reduce) {
   .voice-nudge-sheet {
+    animation: none;
+  }
+
+  .recording-dot {
     animation: none;
   }
 }
