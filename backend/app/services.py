@@ -6,6 +6,7 @@ import logging
 import re
 import shutil
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
@@ -16,12 +17,15 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .ai import AiProvider
 from .config import Settings
+from .image_processing import InvalidProductImageError, normalize_image_file
 from .models import Asset, Batch, BatchItem, BatchItemAsset, BatchItemPlatformData, ProcessingJob, Seller, utc_now
 from .schemas import AiExtraction, AiProduct, BatchItemAssetRead, BatchItemBasalamCategoryRead, BatchItemRead
 
 
 IMAGE_MIME_PREFIX = "image/"
 AUDIO_MIME_PREFIX = "audio/"
+IMAGE_FILE_SUFFIXES = {".avif", ".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+AUDIO_FILE_SUFFIXES = {".m4a", ".mp3", ".mp4", ".ogg", ".wav", ".webm"}
 JOB_STEPS = ("upload_ready", "transcribing", "vision_extracting", "matching", "ready", "failed")
 AI_STAGE_MAX_ATTEMPTS = 3
 AI_RETRY_DELAYS_SECONDS = (1.0, 2.5)
@@ -78,29 +82,71 @@ def create_batch(session: Session, seller_id: int) -> Batch:
     return batch
 
 
-def store_upload(settings: Settings, session: Session, batch_id: int, file: UploadFile) -> Asset:
+def store_upload(
+    settings: Settings,
+    session: Session,
+    batch_id: int,
+    file: UploadFile,
+    *,
+    commit: bool = True,
+) -> Asset:
     batch = session.get(Batch, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
 
     content_type = file.content_type or "application/octet-stream"
-    asset_type = _asset_type_from_mime(content_type)
+    asset_type = _asset_type_from_mime(content_type, file.filename)
     if asset_type not in {"image", "audio"}:
         raise HTTPException(status_code=415, detail="Only image and audio uploads are supported")
 
     upload_order = _next_upload_order(session, batch_id, asset_type)
     target_dir = Path(settings.upload_dir) / str(batch_id) / asset_type
     target_dir.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename or "upload").suffix
+    suffix = ".jpg" if asset_type == "image" else Path(file.filename or "upload").suffix
     target_path = _unique_upload_path(target_dir, upload_order, suffix)
+    temporary_path = target_dir / f".{uuid.uuid4().hex}.upload"
 
     digest = hashlib.sha256()
     size = 0
-    with target_path.open("wb") as output:
-        while chunk := file.file.read(1024 * 1024):
-            size += len(chunk)
-            digest.update(chunk)
-            output.write(chunk)
+    try:
+        with temporary_path.open("wb") as output:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                output.write(chunk)
+        if size == 0:
+            raise InvalidProductImageError("empty image") if asset_type == "image" else HTTPException(
+                status_code=422, detail="صدای ضبط‌شده خالی است. دوباره ضبط کن."
+            )
+        if asset_type == "image":
+            normalize_image_file(temporary_path, target_path)
+            content_type = "image/jpeg"
+        else:
+            temporary_path.replace(target_path)
+        normalized_size = target_path.stat().st_size
+        with target_path.open("rb") as stored:
+            while chunk := stored.read(1024 * 1024):
+                digest.update(chunk)
+    except InvalidProductImageError as exc:
+        temporary_path.unlink(missing_ok=True)
+        target_path.unlink(missing_ok=True)
+        logger.warning(
+            "image_upload_rejected batch_id=%s suffix=%s declared_mime=%s input_bytes=%s error_type=%s",
+            batch_id,
+            Path(file.filename or "").suffix.lower(),
+            content_type,
+            size,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail="این عکس خوانده نشد. یک عکس سالم انتخاب کن و دوباره تلاش کن.",
+        ) from exc
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        target_path.unlink(missing_ok=True)
+        raise
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
     asset = Asset(
         batch_id=batch_id,
@@ -109,14 +155,33 @@ def store_upload(settings: Settings, session: Session, batch_id: int, file: Uplo
         file_path=str(target_path),
         original_filename=file.filename or target_path.name,
         mime_type=content_type,
-        size_bytes=size,
+        size_bytes=normalized_size,
         checksum=digest.hexdigest(),
     )
     batch.status = "upload_ready"
     session.add(asset)
-    session.commit()
-    session.refresh(asset)
+    if commit:
+        session.commit()
+        session.refresh(asset)
+    else:
+        session.flush()
     return asset
+
+
+def store_uploads(settings: Settings, session: Session, batch_id: int, files: list[UploadFile]) -> list[Asset]:
+    assets: list[Asset] = []
+    try:
+        for file in files:
+            assets.append(store_upload(settings, session, batch_id, file, commit=False))
+        session.commit()
+        for asset in assets:
+            session.refresh(asset)
+        return assets
+    except Exception:
+        session.rollback()
+        for asset in assets:
+            Path(asset.file_path).unlink(missing_ok=True)
+        raise
 
 
 def delete_asset(session: Session, asset_id: int) -> None:
@@ -232,13 +297,14 @@ def run_processing_job(
             job.finished_at = utc_now()
             session.commit()
             logger.exception(
-                "processing_job_failed job_id=%s batch_id=%s stage=%s code=%s attempts=%s exception_type=%s",
+                "processing_job_failed job_id=%s batch_id=%s stage=%s code=%s attempts=%s exception_type=%s image_number=%s",
                 job.id,
                 job.batch_id,
                 failure["stage"],
                 failure["code"],
                 failure["attempts"],
                 failure["exception_type"],
+                failure.get("image_number"),
             )
     finally:
         session.close()
@@ -290,6 +356,9 @@ def _classify_processing_error(exc: Exception, stage: str) -> tuple[str, bool]:
     if status_code is None and getattr(exc, "response", None) is not None:
         status_code = getattr(exc.response, "status_code", None)
 
+    original = exc.original if isinstance(exc, ProcessingStageFailure) else exc
+    if isinstance(original, InvalidProductImageError):
+        return "image_invalid", False
     if stage == "transcribing" and (
         status_code in {400, 413, 415}
         or any(token in normalized for token in ("unsupported audio", "invalid audio", "audio format", "empty file"))
@@ -314,12 +383,15 @@ def _classify_processing_error(exc: Exception, stage: str) -> tuple[str, bool]:
 
 def _processing_failure_details(exc: Exception, fallback_stage: str) -> dict:
     if isinstance(exc, ProcessingStageFailure):
-        return {
+        details = {
             "code": exc.code,
             "stage": exc.stage,
             "attempts": exc.attempts,
             "exception_type": type(exc.original).__name__,
         }
+        if isinstance(exc.original, InvalidProductImageError) and exc.original.upload_order is not None:
+            details["image_number"] = exc.original.upload_order
+        return details
     code, _retryable = _classify_processing_error(exc, fallback_stage)
     return {
         "code": code,
@@ -334,11 +406,13 @@ def _processing_error_message(code: str) -> str:
         return "ارتباط با هوش مصنوعی موقتاً برقرار نشد. دوباره تلاش کن."
     if code == "audio_invalid":
         return "صدای ضبط‌شده خوانده نشد. دوباره ضبط کن یا بدون صدا ادامه بده."
+    if code == "image_invalid":
+        return "یکی از عکس‌ها خوانده نشد. آن عکس را حذف کن، دوباره اضافه کن و تلاش کن."
     if code in {"invalid_output", "empty_output"}:
         return "هوش مصنوعی نتوانست لیست معتبر بسازد. دوباره تلاش کن."
     if code == "transcription_failed":
         return "خواندن صدای ضبط‌شده انجام نشد. دوباره ضبط کن یا بدون صدا ادامه بده."
-    return "ساخت لیست کامل نشد. عکس‌ها و صدا باقی مانده‌اند؛ دوباره تلاش کن."
+    return "ساخت لیست کامل نشد. عکس‌ها باقی مانده‌اند؛ دوباره تلاش کن."
 
 
 def list_items(session: Session, batch_id: int) -> list[BatchItemRead]:
@@ -846,10 +920,15 @@ def _mark_job(
     session.commit()
 
 
-def _asset_type_from_mime(mime_type: str) -> str:
+def _asset_type_from_mime(mime_type: str, filename: str | None = None) -> str:
     if mime_type.startswith(IMAGE_MIME_PREFIX):
         return "image"
     if mime_type.startswith(AUDIO_MIME_PREFIX):
+        return "audio"
+    suffix = Path(filename or "").suffix.lower()
+    if suffix in IMAGE_FILE_SUFFIXES:
+        return "image"
+    if suffix in AUDIO_FILE_SUFFIXES:
         return "audio"
     return "unknown"
 

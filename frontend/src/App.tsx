@@ -1603,7 +1603,7 @@ function ProgressPanel({
     <section className={`panel progress-panel ${failed ? 'failed' : ''}`}>
       <div>
         <h2>{job ? jobLabels[job.step] : 'در حال ساخت لیست'}</h2>
-        <p>{failed ? 'عکس‌ها و صدا پاک نشده‌اند. می‌توانی دوباره تلاش کنی.' : 'این کار ممکن است کمی زمان ببرد.'}</p>
+        <p>{failed ? 'عکس‌ها پاک نشده‌اند. می‌توانی دوباره تلاش کنی.' : 'این کار ممکن است کمی زمان ببرد.'}</p>
       </div>
       {processing ? <Loader2 className="spin" size={22} /> : failed ? <RotateCcw size={22} /> : <Check size={22} />}
       {job?.error && <div className="error inline">{humanizeProcessingError(job.error)}</div>}
@@ -2799,7 +2799,7 @@ function humanizePublishError(error: string | null): string {
 function humanizeProcessingError(error: string | null): string {
   if (!error) return 'ساخت لیست کامل نشد. دوباره تلاش کن.';
   if (/[A-Za-z]{3,}/.test(error) || /\b(4\d\d|5\d\d)\b/.test(error)) {
-    return 'ساخت لیست کامل نشد. عکس‌ها و صدا پاک نشده‌اند؛ دوباره تلاش کن.';
+    return 'ساخت لیست کامل نشد. عکس‌ها پاک نشده‌اند؛ دوباره تلاش کن.';
   }
   return error;
 }

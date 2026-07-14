@@ -1,6 +1,4 @@
-import base64
 import json
-import mimetypes
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -8,6 +6,7 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import Settings
+from .image_processing import InvalidProductImageError, normalized_image_data_url
 from .models import Asset
 from .schemas import AiExtraction, AiProduct
 
@@ -320,13 +319,17 @@ class AvalAiProvider(AiProvider):
                     "text": f"تصویر شماره {asset.upload_order}: {asset.original_filename}",
                 }
             )
+            try:
+                image_url = _image_data_url(Path(asset.file_path), asset.mime_type)
+            except InvalidProductImageError as exc:
+                raise InvalidProductImageError(
+                    "uploaded image could not be prepared for vision",
+                    upload_order=asset.upload_order,
+                ) from exc
             content.append(
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": _image_data_url(Path(asset.file_path), asset.mime_type),
-                        "detail": "low",
-                    },
+                    "image_url": {"url": image_url, "detail": "low"},
                 }
             )
 
@@ -538,9 +541,8 @@ def get_ai_provider(settings: Settings) -> AiProvider:
 
 
 def _image_data_url(path: Path, mime_type: str | None) -> str:
-    guessed_type = mime_type or mimetypes.guess_type(path.name)[0] or "image/jpeg"
-    payload = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{guessed_type};base64,{payload}"
+    del mime_type
+    return normalized_image_data_url(path)
 
 
 def _transcription_text(result: object) -> str:

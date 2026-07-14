@@ -220,8 +220,8 @@ test('processing failure keeps uploads and retries without English errors', asyn
   await page.getByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }).click();
 
   await expect(page.getByText('ساخت لیست ناموفق بود')).toBeVisible();
-  await expect(page.getByText('عکس‌ها و صدا پاک نشده‌اند. می‌توانی دوباره تلاش کنی.')).toBeVisible();
-  await expect(page.getByText('ساخت لیست کامل نشد. عکس‌ها و صدا پاک نشده‌اند؛ دوباره تلاش کن.')).toBeVisible();
+  await expect(page.getByText('عکس‌ها پاک نشده‌اند. می‌توانی دوباره تلاش کنی.')).toBeVisible();
+  await expect(page.getByText('ساخت لیست کامل نشد. عکس‌ها پاک نشده‌اند؛ دوباره تلاش کن.')).toBeVisible();
   await expect(page.getByText(/AI provider|timeout|503/i)).toHaveCount(0);
   await expect(page.getByText('۲ عکس اضافه شده')).toBeVisible();
 

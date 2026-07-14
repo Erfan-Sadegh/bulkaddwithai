@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -5,7 +8,7 @@ from app.models import Asset, Batch, ProcessingJob
 from app.schemas import AiExtraction, AiProduct
 from app.services import _normalize_extracted_price_toman, _price_hint_for_product, _price_hints_from_transcript
 from app.services import _replace_items_from_extraction, create_processing_job, run_processing_job
-from helpers import audio_file, image_file
+from helpers import audio_file, image_bytes, image_file
 
 
 def test_short_seller_price_is_normalized_to_toman():
@@ -77,10 +80,73 @@ def test_upload_order_stays_stable_for_images(client: TestClient, batch: dict):
     assert image_orders == [1, 2, 3]
 
 
+def test_upload_normalizes_image_content_and_mime_on_the_server(client: TestClient, batch: dict):
+    from io import BytesIO
+
+    from PIL import Image
+
+    png = BytesIO()
+    Image.new("RGBA", (48, 36), (20, 130, 110, 100)).save(png, format="PNG")
+
+    response = client.post(
+        f"/batches/{batch['id']}/assets",
+        files=[image_file("iphone.heic", png.getvalue(), "image/heic")],
+    )
+
+    assert response.status_code == 201
+    asset = response.json()[0]
+    assert asset["mime_type"] == "image/jpeg"
+    assert asset["url"].endswith(".jpg")
+    stored = client.get(asset["url"])
+    assert stored.status_code == 200
+    assert stored.headers["content-type"].startswith("image/jpeg")
+    with Image.open(BytesIO(stored.content)) as normalized:
+        assert normalized.format == "JPEG"
+        assert normalized.mode == "RGB"
+
+
+def test_upload_accepts_real_heic_even_when_browser_omits_mime(client: TestClient, batch: dict):
+    from io import BytesIO
+
+    from PIL import Image
+    from pillow_heif import from_pillow
+
+    heic = BytesIO()
+    from_pillow(Image.new("RGB", (64, 48), "red")).save(heic)
+
+    response = client.post(
+        f"/batches/{batch['id']}/assets",
+        files=[image_file("iphone.heic", heic.getvalue(), "application/octet-stream")],
+    )
+
+    assert response.status_code == 201
+    asset = response.json()[0]
+    assert asset["mime_type"] == "image/jpeg"
+    assert asset["url"].endswith(".jpg")
+
+
+def test_multi_image_upload_is_atomic_when_one_image_is_unreadable(client: TestClient, batch: dict):
+    response = client.post(
+        f"/batches/{batch['id']}/assets",
+        files=[
+            image_file("valid.jpg"),
+            image_file("broken.jpg", b"not-an-image"),
+        ],
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "این عکس خوانده نشد. یک عکس سالم انتخاب کن و دوباره تلاش کن."
+    assert client.get(f"/batches/{batch['id']}/assets").json() == []
+
+
 def test_uploaded_image_can_be_deleted_before_processing(client: TestClient, batch: dict):
     uploaded = client.post(
         f"/batches/{batch['id']}/assets",
-        files=[image_file("a.jpg", b"first"), image_file("b.jpg", b"second"), image_file("c.jpg", b"third")],
+        files=[
+            image_file("a.jpg", image_bytes((220, 20, 20))),
+            image_file("b.jpg", image_bytes((20, 220, 20))),
+            image_file("c.jpg", image_bytes((20, 20, 220))),
+        ],
     ).json()
 
     response = client.delete(f"/assets/{uploaded[0]['id']}")
@@ -94,11 +160,13 @@ def test_uploaded_image_can_be_deleted_before_processing(client: TestClient, bat
 def test_reupload_after_delete_does_not_overwrite_renumbered_photo_file(client: TestClient, batch: dict):
     uploaded = client.post(
         f"/batches/{batch['id']}/assets",
-        files=[image_file("a.jpg", b"first"), image_file("b.jpg", b"second")],
+        files=[image_file("a.jpg", image_bytes((220, 20, 20))), image_file("b.jpg", image_bytes((20, 220, 20)))],
     ).json()
     client.delete(f"/assets/{uploaded[0]['id']}")
 
-    reuploaded = client.post(f"/batches/{batch['id']}/assets", files=[image_file("c.jpg", b"third")]).json()[0]
+    reuploaded = client.post(
+        f"/batches/{batch['id']}/assets", files=[image_file("c.jpg", image_bytes((20, 20, 220)))]
+    ).json()[0]
 
     assert reuploaded["upload_order"] == 2
     assets = client.get(f"/batches/{batch['id']}/assets").json()
@@ -109,8 +177,14 @@ def test_reupload_after_delete_does_not_overwrite_renumbered_photo_file(client: 
             select(Asset).where(Asset.batch_id == batch["id"], Asset.type == "image").order_by(Asset.upload_order)
         ).all()
         assert len({asset.file_path for asset in db_assets}) == 2
-        assert open(db_assets[0].file_path, "rb").read() == b"second"
-        assert open(db_assets[1].file_path, "rb").read() == b"third"
+        from PIL import Image
+
+        with Image.open(db_assets[0].file_path) as second:
+            second_pixel = second.getpixel((0, 0))
+        with Image.open(db_assets[1].file_path) as third:
+            third_pixel = third.getpixel((0, 0))
+        assert second_pixel[1] > second_pixel[0] and second_pixel[1] > second_pixel[2]
+        assert third_pixel[2] > third_pixel[0] and third_pixel[2] > third_pixel[1]
     finally:
         session.close()
 
@@ -269,6 +343,54 @@ def test_processing_failure_is_safe_and_observable_without_losing_uploads(
     assert sorted(asset["type"] for asset in saved_assets) == ["audio", "image"]
     assert "processing_job_failed job_id=" in caplog.text
     assert "stage=transcribing code=provider_temporary attempts=3" in caplog.text
+
+
+def test_processing_without_voice_reports_an_unreadable_image_and_keeps_uploads(
+    client: TestClient, batch: dict
+):
+    uploaded = client.post(f"/batches/{batch['id']}/assets", files=[image_file("a.jpg")]).json()[0]
+    session = client.app.state.session_factory()
+    try:
+        asset = session.get(Asset, uploaded["id"])
+        assert asset is not None
+        asset_path = asset.file_path
+        job, _ = create_processing_job(session, batch["id"])
+    finally:
+        session.close()
+    Path(asset_path).write_bytes(b"damaged-after-upload")
+
+    from types import SimpleNamespace
+
+    from app.ai import AvalAiProvider
+    from app.config import Settings
+
+    provider = AvalAiProvider(Settings(AVALAI_API_KEY="test-key"))
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **_kwargs: pytest.fail("provider must not be called"))
+        )
+    )
+
+    run_processing_job(
+        client.app.state.session_factory,
+        lambda: provider,
+        job.id,
+        sleep_fn=lambda _seconds: None,
+    )
+
+    saved_job = client.get(f"/jobs/{job.id}").json()
+    saved_batch = client.get(f"/batches/{batch['id']}").json()
+    saved_assets = client.get(f"/batches/{batch['id']}/assets").json()
+    assert saved_job["status"] == "failed"
+    assert saved_job["error"] == "یکی از عکس‌ها خوانده نشد. آن عکس را حذف کن، دوباره اضافه کن و تلاش کن."
+    assert saved_batch["ai_metadata"]["last_processing_failure"] == {
+        "code": "image_invalid",
+        "stage": "vision_extracting",
+        "attempts": 1,
+        "exception_type": "InvalidProductImageError",
+        "image_number": 1,
+    }
+    assert len(saved_assets) == 1
 
 
 def test_fake_processing_creates_editable_items_and_exports(client: TestClient, batch: dict):

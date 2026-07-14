@@ -570,7 +570,7 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: /ساخت لیست محصولات با هوش مصنوعی/ }));
 
     expect(await screen.findByText('ساخت لیست ناموفق بود')).toBeInTheDocument();
-    expect(screen.getByText('عکس‌ها و صدا پاک نشده‌اند. می‌توانی دوباره تلاش کنی.')).toBeInTheDocument();
+    expect(screen.getByText('عکس‌ها پاک نشده‌اند. می‌توانی دوباره تلاش کنی.')).toBeInTheDocument();
     expect(screen.getByText('۱ عکس اضافه شده')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'دوباره تلاش کن' }));

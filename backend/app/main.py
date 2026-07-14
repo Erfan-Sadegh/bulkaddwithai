@@ -66,7 +66,7 @@ from .services import (
     reorder_photos,
     run_processing_job,
     split_item,
-    store_upload,
+    store_uploads,
     update_item,
     update_seller,
 )
@@ -178,7 +178,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         files: list[UploadFile] = File(...),
         session: Session = Depends(get_session),
     ):
-        assets = [store_upload(settings, session, batch_id, file) for file in files]
+        assets = store_uploads(settings, session, batch_id, files)
         return [_asset_to_read(asset) for asset in assets]
 
     @app.get("/batches/{batch_id}/assets", response_model=list[AssetRead])

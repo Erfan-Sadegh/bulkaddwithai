@@ -70,6 +70,8 @@
 
 برای عکس‌های بزرگ، frontend قبل از upload آن‌ها را در مرورگر کوچک و فشرده می‌کند. این کار با concurrency محدود انجام می‌شود تا چند عکس بزرگ همزمان حافظه مرورگر را قفل نکنند، اما خروجی نهایی دقیقاً با همان ترتیب انتخاب کاربر به backend فرستاده می‌شود. این invariant مهم است: بهینه‌سازی upload نباید شماره عکس‌ها را جابه‌جا کند.
 
+frontend تنها لایه دفاعی نیست؛ بعضی مرورگرها HEIC را decode نمی‌کنند یا فایل موبایل را بدون MIME درست می‌فرستند. backend محتوای واقعی هر عکس را با Pillow و `pillow-heif` باز می‌کند، جهت EXIF را اصلاح می‌کند، ضلع بزرگ را حداکثر ۱۶۰۰ پیکسل نگه می‌دارد و فایل ذخیره‌شده را به JPEG استاندارد تبدیل می‌کند. بنابراین thumbnail، ورودی AI و بعداً آپلود باسلام به MIME ادعایی مرورگر وابسته نیستند. اگر یکی از عکس‌های یک درخواست چندفایلی خراب باشد، کل همان درخواست rollback می‌شود تا فایل نیمه‌کاره در batch نماند.
+
 ### 3. ویس اختیاری
 
 ویس اجباری نیست. کاربر می‌تواند بدون ویس ادامه بدهد.
@@ -525,7 +527,7 @@ AVALAI_STT_MODEL
 جریان پردازش:
 
 1. اگر ویس وجود داشته باشد، با زبان `fa` transcript گرفته می‌شود.
-2. عکس‌ها با شماره ثابت و به شکل base64 data URL به مدل vision داده می‌شوند.
+2. عکس‌ها دوباره server-side decode می‌شوند و به JPEG استاندارد base64 data URL تبدیل می‌شوند؛ این مرحله باعث می‌شود batchهای قدیمی HEIC/PNG هم بعد از deploy قابل retry باشند.
 3. متن ویس و برداشت تصویر ترکیب می‌شود.
 4. مدل خروجی JSON ساختاریافته می‌دهد.
 5. backend خروجی را validate می‌کند.
@@ -803,8 +805,9 @@ JSON کامل‌تر است و برای debug و integration آینده استف
 1. در log پاد عبارت `processing_job_failed` را جستجو کن.
 2. `job_id`, `batch_id`, `stage`, `code`, `attempts` و `exception_type` را بردار.
 3. در رکورد همان batch، `ai_metadata.last_processing_failure` باید همان اطلاعات غیرحساس را داشته باشد.
-4. `stage=transcribing` معمولا به فایل/فرمت صدا یا سرویس STT مربوط است؛ `stage=vision_extracting` به درخواست تصویر یا Structured Output مربوط است.
-5. `code=provider_temporary` یعنی سه تلاش timeout/connection/rate-limit/5xx تمام شده است. `audio_invalid` یعنی کاربر باید صدا را دوباره ضبط کند. `invalid_output` یا `empty_output` یعنی مدل بعد از retry خروجی معتبر محصول نداده است.
+4. `stage=transcribing` معمولا به فایل/فرمت صدا یا سرویس STT مربوط است؛ `stage=vision_extracting` به خواندن تصویر، درخواست vision یا Structured Output مربوط است.
+5. `code=provider_temporary` یعنی سه تلاش timeout/connection/rate-limit/5xx تمام شده است. `audio_invalid` یعنی کاربر باید صدا را دوباره ضبط کند. `image_invalid` یعنی یکی از فایل‌های تصویر decode نشده است و `image_number` شماره عکس مشکل‌دار را نشان می‌دهد. `invalid_output` یا `empty_output` یعنی مدل بعد از retry خروجی معتبر محصول نداده است.
+6. خطای upload تصویر با عبارت `image_upload_rejected` و اطلاعات غیرحساس `batch_id`، پسوند، MIME اعلام‌شده، اندازه و نوع خطا log می‌شود.
 
 `ProcessingJob.error` عمدا فقط پیام فارسی امن دارد. traceback و متن فنی فقط در log سرور نوشته می‌شود تا کلید، پاسخ خام provider یا اصطلاحات فنی به فروشنده نمایش داده نشود.
 
@@ -827,6 +830,7 @@ JSON کامل‌تر است و برای debug و integration آینده استف
 - edit، split، reorder
 - validation خروجی AI
 - retry مرحله transcription/extraction و ثبت metadata شکست
+- decode و استانداردسازی JPEG/PNG/HEIC، محدودکردن ابعاد عکس برای AI، تشخیص فایل خراب و اتمیک‌بودن آپلود چندعکسی
 - سازگاری فایل ضبط‌شده MP4/WebM و جلوگیری از upload صدای خالی
 - ساخت لینک OAuth باسلام و اعتبارسنجی callback با state امضاشده
 - ساخت `PlatformConnection` بعد از callback موفق باسلام
