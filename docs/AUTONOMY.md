@@ -49,6 +49,18 @@ SENTRY_TRACES_SAMPLE_RATE=0
 .\automation\configure-secrets.ps1
 ```
 
+لازم نیست همه‌ی مقدارها را یک‌جا وارد کنی. برای ثبت یا تعویض فقط یک مورد، بدون پاک‌شدن موارد قبلی، از `-Only` استفاده کن:
+
+```powershell
+.\automation\configure-secrets.ps1 -Only CLARITY_API_TOKEN
+.\automation\configure-secrets.ps1 -Only PRODUCTION_OBSERVABILITY_TOKEN
+.\automation\configure-secrets.ps1 -Only PRODUCTION_OBSERVABILITY_URL
+.\automation\configure-secrets.ps1 -Only PRODUCTION_HEALTH_URL
+.\automation\configure-secrets.ps1 -Only GITHUB_TOKEN
+```
+
+مقدار در prompt امن PowerShell وارد می‌شود و روی صفحه نمایش داده نمی‌شود. token را در chat، فایل `.env` داخل Git یا command line قرار نده.
+
 `SENTRY_PROJECTS` می‌تواند چند project slug جداشده با ویرگول باشد. `PRODUCTION_HEALTH_URL` باید به `/health` دامنه production اشاره کند. خالی‌گذاشتن هر مقدار همان collector را غیرفعال می‌کند و عامل اجازه ندارد به‌جای مدرک حدس بزند.
 
 برای تشخیص خطا بدون پنل همروش، یک مقدار تصادفی و قوی را با نام `OBSERVABILITY_READ_TOKEN` در متغیرهای backend همروش قرار بده. همان مقدار را در `PRODUCTION_OBSERVABILITY_TOKEN` و آدرس کامل `https://<domain>/observability/events` را در `PRODUCTION_OBSERVABILITY_URL` وارد کن. این endpoint فقط eventهای مهم و فیلدهای allowlist‌شده را می‌دهد؛ متن لاگ، traceback، موبایل، token و payload را برنمی‌گرداند و داده‌های قدیمی‌تر از ۳۰ روز حذف می‌شوند.
@@ -65,6 +77,12 @@ SENTRY_TRACES_SAMPLE_RATE=0
 
 ```powershell
 .\backend\.venv\Scripts\python.exe -m automation.runner --report-only --no-agent
+```
+
+برای آزمایش کامل و غیرمخرب چرخه‌ی «لاگ ساختگی → تست قرمز → fix → تست سبز → review → داشبورد» در repository موقت:
+
+```powershell
+.\backend\.venv\Scripts\python.exe -m automation.simulation
 ```
 
 گزارش در `%LOCALAPPDATA%\BulkAddWithAi-agent\dashboard\index.html` ساخته می‌شود.

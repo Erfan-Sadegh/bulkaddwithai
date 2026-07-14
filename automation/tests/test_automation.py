@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -17,6 +20,7 @@ from automation.security import (
     validate_diff,
     validate_reproducer_diff,
 )
+from automation.simulation import run_self_improvement_simulation
 from automation.state import apply_retention, phase_for_completed_runs
 
 
@@ -29,6 +33,36 @@ POLICY = {
 
 
 class AutomationTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt" and shutil.which("powershell"), "Windows PowerShell only")
+    def test_single_secret_setup_preserves_previously_saved_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary)
+            script = Path(__file__).resolve().parents[1] / "configure-secrets.ps1"
+            environment = {**os.environ, "BULKADD_TEST_SECRET": "synthetic-secret"}
+            for name in ("CLARITY_API_TOKEN", "GITHUB_TOKEN"):
+                subprocess.run(
+                    [
+                        "powershell", "-NoProfile", "-File", str(script),
+                        "-StateRoot", str(state), "-Only", name,
+                        "-ValueFromEnvironment", "BULKADD_TEST_SECRET",
+                    ],
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                    env=environment,
+                )
+            result = subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-Command",
+                    f"@((Import-Clixml -LiteralPath '{state / 'collector-secrets.clixml'}').UserName) -join ','",
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.stdout.strip(), "CLARITY_API_TOKEN,GITHUB_TOKEN")
+
     def test_local_log_collector_groups_structured_and_legacy_events(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -116,6 +150,18 @@ class AutomationTests(unittest.TestCase):
     def test_product_event_collector_never_guesses_without_credentials(self):
         with self.assertRaises(CollectorError):
             collect_product_events({})
+
+    def test_full_self_improvement_cycle_in_an_isolated_repository(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result = run_self_improvement_simulation(Path(temporary))
+
+        self.assertEqual(result["signal_count"], 1)
+        self.assertEqual(result["fix_status"], "fixed_in_test")
+        self.assertEqual(result["regression_before_exit"], 1)
+        self.assertEqual(result["final_test_exit"], 0)
+        self.assertEqual(result["review_verdict"], "approve")
+        self.assertTrue(result["dashboard_created"])
+        self.assertTrue(result["worktree_cleaned"])
 
     def test_rollout_phases_are_conservative(self):
         self.assertEqual(phase_for_completed_runs(0), ("report_only", 0))
