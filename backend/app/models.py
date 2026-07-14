@@ -277,3 +277,22 @@ class PublishedProduct(Base):
     batch_item: Mapped[BatchItem] = relationship(back_populates="published_products")
     publish_job: Mapped[PublishJob] = relationship(back_populates="products")
     connection: Mapped[PlatformConnection] = relationship(back_populates="published_products")
+
+
+class OperationalEvent(Base):
+    """A deliberately small, PII-free production signal for the read-only agent feed."""
+
+    __tablename__ = "operational_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    environment: Mapped[str] = mapped_column(String(32), nullable=False)
+    release: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    batch_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    stage: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)

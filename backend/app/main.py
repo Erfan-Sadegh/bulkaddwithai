@@ -1,5 +1,7 @@
 from collections.abc import Generator
+from datetime import datetime
 from pathlib import Path
+import secrets
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,8 +15,8 @@ from .config import Settings, get_settings
 from .database import create_tables, make_engine, make_session_factory
 from .integrations.basalam import BasalamClient
 from .integrations.torob import TorobClient
-from .models import Asset, Batch, ProcessingJob, PublishJob, Seller
-from .observability import observe_http_request
+from .models import Asset, Batch, OperationalEvent, ProcessingJob, PublishJob, Seller
+from .observability import configure_event_store, configure_observability, observe_http_request
 from .platform_services import (
     create_basalam_oauth_url,
     create_basalam_publish_job,
@@ -82,10 +84,12 @@ from .torob_services import (
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    configure_observability(settings)
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     engine = make_engine(settings.database_url)
     session_factory = make_session_factory(engine)
     create_tables(engine)
+    configure_event_store(session_factory, settings)
 
     app = FastAPI(title="Bulk Add With AI", version="0.1.0")
     app.state.settings = settings
@@ -127,9 +131,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if x_admin_password != settings.admin_password:
             raise HTTPException(status_code=401, detail="Admin password is invalid")
 
+    def require_observability_reader(authorization: str | None = Header(default=None)):
+        expected = settings.observability_read_token
+        supplied = authorization.removeprefix("Bearer ") if authorization else ""
+        if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+            raise HTTPException(status_code=401, detail="Observability token is invalid")
+
     @app.get("/health")
     def health():
         return {"ok": True}
+
+    @app.get("/observability/events", dependencies=[Depends(require_observability_reader)])
+    def get_operational_events(
+        since: datetime | None = None,
+        limit: int = 200,
+        session: Session = Depends(get_session),
+    ):
+        safe_limit = min(max(limit, 1), 500)
+        statement = select(OperationalEvent).order_by(OperationalEvent.created_at.desc()).limit(safe_limit)
+        if since is not None:
+            statement = statement.where(OperationalEvent.created_at >= since)
+        events = session.scalars(statement).all()
+        return [
+            {
+                "event": item.event,
+                "severity": item.severity,
+                "environment": item.environment,
+                "release": item.release,
+                "request_id": item.request_id,
+                "job_id": item.job_id,
+                "batch_id": item.batch_id,
+                "stage": item.stage,
+                "code": item.code,
+                "last_seen_at": item.created_at,
+                "count": 1,
+                **(item.context or {}),
+            }
+            for item in events
+        ]
 
     @app.post("/admin/login", response_model=AdminLoginResponse)
     def post_admin_login(payload: AdminLoginRequest):

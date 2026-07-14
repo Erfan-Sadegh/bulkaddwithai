@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "verdict": {"enum": ["approve", "reject"]},
+    "summary_fa": {"type": "string"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {"enum": ["high", "medium", "low"]},
+          "message_fa": {"type": "string"},
+          "file": {"type": ["string", "null"]}
+        },
+        "required": ["severity", "message_fa", "file"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["verdict", "summary_fa", "findings"],
+  "additionalProperties": false
+}

@@ -73,6 +73,10 @@ npm run e2e
 
 جزئیات بیشتر در [docs/ONBOARDING.md](docs/ONBOARDING.md).
 
+## عامل نگهداری خودکار
+
+عامل محلی report-only، جمع‌آوری Sentry/Clarity/log، داشبورد فارسی، worktree ایزوله و PR بدون merge در [docs/AUTONOMY.md](docs/AUTONOMY.md) مستند شده است.
+
 ## Release Milestone
 
 مرز ریلیز کوچک فعلی در [docs/RELEASE.md](docs/RELEASE.md) ثبت شده است. برای جلوگیری از loop بی‌پایان، این milestone با عنوان `v0.1-basalam-feedback` فقط روی publish باسلام برای بازخورد واقعی و مسیر ترب تا ساخت لیست/ثبت درخواست تمرکز دارد.

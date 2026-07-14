@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "schedule": {
+    "nightly_time": "03:17",
+    "weekly_time": "04:17",
+    "timezone": "Asia/Tehran",
+    "timeout_minutes": 180,
+    "report_only_runs": 7,
+    "one_fix_runs": 14,
+    "steady_state_max_fixes": 3
+  },
+  "limits": {
+    "max_changed_files": 8,
+    "max_changed_lines": 500,
+    "retention_days": 30,
+    "max_candidate_signals": 20
+  },
+  "sources": {
+    "local_log_globs": [".dev-logs/*.log", "*.log"],
+    "max_local_log_bytes": 2097152
+  },
+  "forbidden_paths": [
+    ".github/workflows/**",
+    "automation/policy.json",
+    "automation/prompts/**",
+    "automation/schemas/**",
+    "backend/alembic/**",
+    "backend/app/models.py",
+    "backend/app/config.py",
+    "backend/app/integrations/**",
+    "backend/requirements.txt",
+    "frontend/package.json",
+    "frontend/package-lock.json",
+    "Dockerfile",
+    "**/.env*"
+  ],
+  "test_file_patterns": [
+    "backend/tests/test_*.py",
+    "frontend/src/*.test.tsx",
+    "frontend/src/**/*.test.ts",
+    "frontend/tests/*.spec.ts"
+  ],
+  "setup_commands": [
+    {"name": "frontend dependencies", "cwd": "frontend", "command": "npm ci --ignore-scripts"}
+  ],
+  "gates": [
+    {"name": "backend tests", "cwd": "backend", "command": "\"{repo}\\backend\\.venv\\Scripts\\python.exe\" -m pytest --basetemp .pytest-tmp\\autonomy -q"},
+    {"name": "frontend tests", "cwd": "frontend", "command": "npm test"},
+    {"name": "frontend build", "cwd": "frontend", "command": "npm run build"},
+    {"name": "frontend e2e", "cwd": "frontend", "command": "npm run e2e"},
+    {"name": "diff check", "cwd": ".", "command": "git diff --check"}
+  ]
+}

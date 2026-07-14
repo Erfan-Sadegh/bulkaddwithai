@@ -9,3 +9,4 @@ pillow-heif==1.4.0
 pytest==8.3.4
 httpx==0.28.1
 alembic==1.14.0
+sentry-sdk[fastapi]==2.47.0

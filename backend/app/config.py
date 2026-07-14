@@ -24,6 +24,16 @@ class Settings(BaseSettings):
         default="gpt-4o-mini-transcribe", validation_alias="AVALAI_STT_MODEL"
     )
     frontend_url: str = Field(default="http://127.0.0.1:5173", validation_alias="FRONTEND_URL")
+    environment: str = Field(default="development", validation_alias="APP_ENVIRONMENT")
+    release: str | None = Field(default=None, validation_alias="APP_RELEASE")
+    structured_logs: bool = Field(default=True, validation_alias="STRUCTURED_LOGS")
+    sentry_dsn: str | None = Field(default=None, validation_alias="SENTRY_DSN")
+    sentry_traces_sample_rate: float = Field(
+        default=0.0, validation_alias="SENTRY_TRACES_SAMPLE_RATE"
+    )
+    observability_read_token: str | None = Field(
+        default=None, validation_alias="OBSERVABILITY_READ_TOKEN"
+    )
     basalam_client_id: str | None = Field(default=None, validation_alias="BASALAM_CLIENT_ID")
     basalam_client_secret: str | None = Field(default=None, validation_alias="BASALAM_CLIENT_SECRET")
     basalam_redirect_uri: str | None = Field(default=None, validation_alias="BASALAM_REDIRECT_URI")
@@ -66,6 +76,11 @@ class Settings(BaseSettings):
         if value in ("", None):
             return BASALAM_PUBLISHED_STATUS
         return value
+
+    @field_validator("sentry_traces_sample_rate")
+    @classmethod
+    def valid_sentry_sample_rate(cls, value: float) -> float:
+        return min(1.0, max(0.0, value))
 
 
 @lru_cache
