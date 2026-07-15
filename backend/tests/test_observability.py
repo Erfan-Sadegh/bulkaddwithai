@@ -281,6 +281,26 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
                 "outcome": "server",
             },
         )
+        action_blocked = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_blocked",
+                "control": "publish_basalam",
+                "attempt_id": "33333333-3333-4333-8333-333333333333",
+                "outcome": "validation",
+                "failure_field": "package_weight_grams",
+            },
+        )
+        invalid_failure_field = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_blocked",
+                "control": "publish_basalam",
+                "attempt_id": "44444444-4444-4444-8444-444444444444",
+                "outcome": "validation",
+                "failure_field": "private product title",
+            },
+        )
         invalid_action = test_client.post(
             "/observability/ux-events",
             json={
@@ -304,6 +324,8 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
     assert invalid_rage.status_code == 422
     assert action_started.status_code == 204
     assert action_failed.status_code == 204
+    assert action_blocked.status_code == 204
+    assert invalid_failure_field.status_code == 422
     assert invalid_action.status_code == 422
     events = {item["event"]: item for item in feed.json()}
     assert events["image_picker_blocked"]["control"] == "add_photo_button"
@@ -315,6 +337,7 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
     assert events["ui_action_started"]["attempt_id"] == "22222222-2222-4222-8222-222222222222"
     assert events["ui_action_failed"]["control"] == "publish_basalam"
     assert events["ui_action_failed"]["outcome"] == "server"
+    assert events["ui_action_blocked"]["failure_field"] == "package_weight_grams"
 
 
 def test_public_runtime_event_accepts_only_safe_enums(tmp_path):

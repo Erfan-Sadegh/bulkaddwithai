@@ -255,14 +255,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         elif payload.event.startswith("ui_action_"):
             log = ux_logger.warning if payload.event in {"ui_action_blocked", "ui_action_failed"} else ux_logger.info
-            log(
-                "%s session_key=%s control=%s attempt_id=%s outcome=%s",
-                payload.event,
-                session_key,
-                payload.control,
-                payload.attempt_id,
-                payload.outcome or "none",
-            )
+            if payload.failure_field:
+                log(
+                    "%s session_key=%s control=%s attempt_id=%s outcome=%s failure_field=%s",
+                    payload.event,
+                    session_key,
+                    payload.control,
+                    payload.attempt_id,
+                    payload.outcome or "none",
+                    payload.failure_field,
+                )
+            else:
+                log(
+                    "%s session_key=%s control=%s attempt_id=%s outcome=%s",
+                    payload.event,
+                    session_key,
+                    payload.control,
+                    payload.attempt_id,
+                    payload.outcome or "none",
+                )
         elif payload.event == "image_picker_blocked":
             ux_logger.info(
                 "%s session_key=%s control=%s reason=%s",

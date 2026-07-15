@@ -11,6 +11,7 @@ import type {
   TorobSubmission,
 } from './types';
 import { captureApiFailure, getRequestId, trackEvent } from './telemetry';
+import type { ObservedControl, ObservedFailureField } from './telemetry';
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '');
 
@@ -91,23 +92,13 @@ export const api = {
         | 'ui_action_accepted'
         | 'ui_action_blocked'
         | 'ui_action_failed';
-    control:
-      | 'photo_drop_zone'
-      | 'add_photo_button'
-      | 'build_product_list'
-      | 'publish_basalam'
-      | 'submit_torob'
-      | 'connect_basalam'
-      | 'record_voice'
-      | 'change_platform'
-      | 'delete_photo'
-      | 'split_photo'
-      | 'start_new_products';
+    control: ObservedControl;
     reason?: 'list_exists' | 'processing';
     attempt_id?: string;
     file_count?: number;
       click_count?: number;
       outcome?: 'validation' | 'state' | 'network' | 'server' | 'unknown';
+      failure_field?: ObservedFailureField;
   }) => request<void>('/observability/ux-events', { method: 'POST', body: JSON.stringify(payload) }),
   reportRuntimeEvent: (payload: {
     event: 'frontend_runtime_failed';

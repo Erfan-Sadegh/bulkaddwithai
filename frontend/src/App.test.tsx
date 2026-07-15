@@ -745,7 +745,12 @@ describe('App', () => {
     expect(container.querySelector('.product-card.needs-info')).toBeInTheDocument();
     expect(uxEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ event: 'ui_action_blocked', control: 'publish_basalam', outcome: 'validation' }),
+        expect.objectContaining({
+          event: 'ui_action_blocked',
+          control: 'publish_basalam',
+          outcome: 'validation',
+          failure_field: 'stock',
+        }),
       ]),
     );
   });

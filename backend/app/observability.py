@@ -59,7 +59,7 @@ PERSISTED_FIELDS = {
     "suffix", "declared_mime", "input_bytes", "error_type", "control", "reason", "attempt_id", "file_count",
     "session_key",
     "batch_item_id", "connection_id", "http_status", "category_id", "unit_type", "request_status", "photo_count",
-    "click_count", "image_number", "outcome", "surface",
+    "click_count", "image_number", "outcome", "failure_field", "surface",
 }
 
 

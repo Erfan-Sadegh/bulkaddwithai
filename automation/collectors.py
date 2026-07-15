@@ -55,12 +55,56 @@ EVENT_PRIORITY = {
     "browser_product_review_missing": "high",
     "http_response_failed": "high",
 }
+CONTROL_LABELS_FA = {
+    "photo_drop_zone": "باکس افزودن عکس",
+    "add_photo_button": "دکمه افزودن عکس",
+    "build_product_list": "ساخت فهرست محصولات",
+    "publish_basalam": "ثبت در باسلام",
+    "submit_torob": "ارسال به ترب",
+    "connect_basalam": "اتصال غرفه باسلام",
+    "record_voice": "ضبط صدا",
+    "change_platform": "انتخاب مسیر فروش",
+    "delete_photo": "حذف عکس",
+    "split_photo": "جداسازی عکس",
+    "start_new_products": "شروع محصولات جدید",
+    "category_picker": "انتخاب دسته‌بندی",
+    "fill_missing_fields": "رفتن به فیلدهای ناقص",
+    "apply_preparation_days": "اعمال زمان آماده‌سازی",
+}
+FIELD_LABELS_FA = {
+    "title": "نام محصول",
+    "price_toman": "قیمت",
+    "stock": "موجودی",
+    "preparation_days": "زمان آماده‌سازی",
+    "weight_grams": "وزن محصول",
+    "package_weight_grams": "وزن با بسته‌بندی",
+    "unit_quantity": "تعداد در هر واحد",
+    "category": "دسته‌بندی",
+    "shop_name": "نام فروشگاه",
+    "contact_mobile": "شماره تماس",
+}
 EVENT_PATTERN = re.compile(r"\b(" + "|".join(map(re.escape, EVENT_PRIORITY)) + r")\b")
 FIELD_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)")
 
 
 class CollectorError(RuntimeError):
     pass
+
+
+def _product_event_summary(item: dict[str, Any], event: str, count: int) -> str:
+    control = str(item.get("control") or "")
+    control_label = CONTROL_LABELS_FA.get(control, control or "کنترل نامشخص")
+    failure_field = str(item.get("failure_field") or "")
+    field_label = FIELD_LABELS_FA.get(failure_field, failure_field)
+    if event == "ui_action_blocked" and item.get("outcome") == "validation" and field_label:
+        return f"{control_label} {count} بار به‌دلیل نامعتبر یا ناقص بودن «{field_label}» متوقف شده است."
+    if event == "ui_action_blocked":
+        return f"{control_label} {count} بار به‌دلیل وضعیت فعلی صفحه قابل ادامه نبوده است."
+    if event == "ui_action_failed":
+        return f"{control_label} {count} بار پس از شروع با خطا تمام شده است."
+    if event == "ui_rage_click":
+        return f"روی {control_label} کلیک عصبی ثبت شده است."
+    return f"رویداد {event} در خود محصول production ثبت شده است."
 
 
 def collect_browser_probe(
@@ -577,7 +621,7 @@ def collect_product_events(
                 source="product_events",
                 event=event,
                 priority=EVENT_PRIORITY[event],
-                summary_fa=f"رویداد {event} در خود محصول production ثبت شده است.",
+                summary_fa=_product_event_summary(item, event, max(1, count)),
                 count=max(1, count),
                 occurred_at=str(item.get("last_seen_at") or datetime.now(timezone.utc).isoformat()),
                 evidence=evidence,

@@ -91,11 +91,11 @@ describe('telemetry', () => {
     button.dataset.observeControl = 'build_product_list';
     document.body.append(button);
 
-    button.click();
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
     vi.advanceTimersByTime(100);
-    button.click();
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
     vi.advanceTimersByTime(100);
-    button.click();
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
 
     expect(report).toHaveBeenCalledWith({ event: 'ui_rage_click', control: 'build_product_list', click_count: 3 });
     expect(window.clarity).toHaveBeenCalledWith('event', 'ui_rage_click');
@@ -135,6 +135,43 @@ describe('telemetry', () => {
       attempt_id: started.attempt_id,
       outcome: 'server',
     });
+  });
+
+  it('detects repeated pointer attempts on a disabled product control', () => {
+    vi.useFakeTimers();
+    const report = vi.fn();
+    const stop = installInteractionObserver(report);
+    const button = document.createElement('button');
+    button.disabled = true;
+    button.dataset.observeControl = 'publish_basalam';
+    document.body.append(button);
+
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    vi.advanceTimersByTime(100);
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    vi.advanceTimersByTime(100);
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+
+    expect(report).toHaveBeenCalledWith({ event: 'ui_rage_click', control: 'publish_basalam', click_count: 3 });
+    stop();
+    vi.useRealTimers();
+  });
+
+  it('reports the exact allowlisted validation field without its value', () => {
+    const report = vi.fn();
+    const action = beginObservedAction('publish_basalam', report);
+
+    action.blocked('validation', 'package_weight_grams');
+
+    const started = report.mock.calls[0][0];
+    expect(report.mock.calls[1][0]).toEqual({
+      event: 'ui_action_blocked',
+      control: 'publish_basalam',
+      attempt_id: started.attempt_id,
+      outcome: 'validation',
+      failure_field: 'package_weight_grams',
+    });
+    expect(window.clarity).toHaveBeenCalledWith('set', 'failure_field', 'package_weight_grams');
   });
 
   it('reports browser runtime failures without message, stack, or URL', () => {

@@ -110,6 +110,33 @@
         {"path": "frontend/src/lib/telemetry.ts", "text": "| 'start_new_products'"},
         {"path": "backend/app/schemas.py", "text": "\"start_new_products\""}
       ]
+    },
+    {
+      "control": "category_picker",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"category_picker\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('category_picker')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'category_picker'"},
+        {"path": "backend/app/schemas.py", "text": "\"category_picker\""}
+      ]
+    },
+    {
+      "control": "fill_missing_fields",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"fill_missing_fields\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('fill_missing_fields')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'fill_missing_fields'"},
+        {"path": "backend/app/schemas.py", "text": "\"fill_missing_fields\""}
+      ]
+    },
+    {
+      "control": "apply_preparation_days",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"apply_preparation_days\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('apply_preparation_days')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'apply_preparation_days'"},
+        {"path": "backend/app/schemas.py", "text": "\"apply_preparation_days\""}
+      ]
     }
   ]
 }

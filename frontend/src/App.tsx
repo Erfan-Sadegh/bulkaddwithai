@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { API_BASE, api } from './lib/api';
 import { beginObservedAction, installInteractionObserver, installRuntimeFailureObserver, trackEvent } from './lib/telemetry';
-import type { ObservedControl } from './lib/telemetry';
+import type { ObservedControl, ObservedFailureField } from './lib/telemetry';
 import type {
   Asset,
   BasalamCategory,
@@ -49,15 +49,7 @@ type ProductDraft = Pick<ProductItem, 'title' | 'description'> & {
 type DraftMap = Record<number, ProductDraft>;
 type DraftField = keyof ProductDraft;
 type DraftTouchedMap = Record<number, Partial<Record<DraftField, true>>>;
-type RequiredField =
-  | 'title'
-  | 'price_toman'
-  | 'stock'
-  | 'preparation_days'
-  | 'weight_grams'
-  | 'package_weight_grams'
-  | 'unit_quantity'
-  | 'category';
+type RequiredField = Exclude<ObservedFailureField, 'shop_name' | 'contact_mobile'>;
 type PublishValidationIssue = {
   itemId: number;
   title: string;
@@ -558,11 +550,14 @@ function MainApp() {
   }
 
   async function selectBasalamCategory(itemId: number, category: BasalamCategory) {
+    const action = beginProductAction('category_picker');
     setError(null);
     try {
       const updated = await api.setBasalamCategory(itemId, category.id);
       setItems((current) => current.map((item) => (item.id === itemId ? updated : item)));
+      action.accepted();
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'دسته‌بندی محصول ذخیره نشد.');
     }
   }
@@ -601,7 +596,7 @@ function MainApp() {
     setPublishJob(null);
     setPublishedProducts([]);
     if (publishValidationIssues.length > 0) {
-      action.blocked('validation');
+      action.blocked('validation', publishValidationIssues[0]?.fields[0]);
       return;
     }
     if (!basalamConnection) {
@@ -647,7 +642,7 @@ function MainApp() {
     const shopName = torobShopName.trim();
     const contactMobile = torobContactMobile.trim();
     if (!shopName || !contactMobile) {
-      action.blocked('validation');
+      action.blocked('validation', !shopName ? 'shop_name' : 'contact_mobile');
       setError('برای ترب، اسم فروشگاه و شماره تماس را وارد کن.');
       document.querySelector('.torob-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -731,10 +726,12 @@ function MainApp() {
   }
 
   async function startNextBasalamListAfterSuccess() {
+    const action = beginProductAction('start_new_products');
     if (!seller) {
       setBasalamSuccessOpen(false);
       resetCurrentBatchState();
       setPlatform('basalam');
+      action.blocked('state');
       return;
     }
     setBasalamSuccessOpen(false);
@@ -757,42 +754,58 @@ function MainApp() {
       setShowPublishValidation(false);
       setVoiceNudgeVisible(false);
       setTorobSuccessMessage(null);
+      action.accepted();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'صفحه برای محصولات بعدی آماده نشد. دوباره تلاش کن.');
     }
   }
 
   async function selectPlatform(nextPlatform: Platform | null) {
-    const action = nextPlatform === null ? beginProductAction('change_platform') : null;
+    const action = beginProductAction('change_platform');
     const requestId = ++platformRequestRef.current;
     setPlatform(nextPlatform);
     setError(null);
     resetCurrentBatchState();
     if (!nextPlatform) {
-      action?.accepted();
+      action.accepted();
       return;
     }
     if (!seller) {
+      action.blocked('state');
       setError('صفحه هنوز آماده نیست. چند لحظه صبر کن.');
       return;
     }
     try {
       const created = await api.createBatch(seller.id);
-      if (platformRequestRef.current !== requestId) return;
+      if (platformRequestRef.current !== requestId) {
+        action.blocked('state');
+        return;
+      }
       setBatch(created);
       if (nextPlatform === 'basalam') rememberActiveBasalamBatchId(created.id);
+      action.accepted();
     } catch (err) {
-      if (platformRequestRef.current !== requestId) return;
+      if (platformRequestRef.current !== requestId) {
+        action.blocked('state');
+        return;
+      }
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'مسیر آماده نشد. دوباره تلاش کن.');
       setPlatform(null);
     }
   }
 
   function scrollToFirstIssue() {
+    const action = beginProductAction('fill_missing_fields');
     const firstIssue = publishValidationIssues[0];
-    if (!firstIssue) return;
+    if (!firstIssue) {
+      action.blocked('state');
+      return;
+    }
     document.querySelector(`[data-product-id="${firstIssue.itemId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    action.accepted();
   }
 
   function dismissVoiceNudge() {
@@ -914,6 +927,7 @@ function MainApp() {
               onReprocessWithVoice={processBatch}
               onGoToFirstIssue={scrollToFirstIssue}
               onApplyPreparationDays={(days) => {
+                const action = beginProductAction('apply_preparation_days');
                 markDraftTouched(draftTouchedRef.current, items.map((item) => item.id), ['preparation_days']);
                 setDrafts((current) =>
                   Object.fromEntries(
@@ -926,6 +940,7 @@ function MainApp() {
                     ]),
                   ),
                 );
+                action.accepted();
               }}
               onSelectBasalamCategory={selectBasalamCategory}
               onPublishBasalam={publishToBasalam}
@@ -956,6 +971,7 @@ function MainApp() {
           cancelLabel="نه، برگرد"
           onConfirm={startFreshList}
           onCancel={() => setFreshConfirmOpen(false)}
+          observeControl="start_new_products"
         />
       )}
 
@@ -987,7 +1003,7 @@ function BasalamSuccessDialog({ onConfirm }: { onConfirm: () => void }) {
         <h2 id="success-title">محصول‌ها به غرفه اضافه شدند</h2>
         <p>ثبت محصول‌ها با موفقیت انجام شد. حالا می‌تونی محصولات بعدی را اضافه کنی.</p>
         <div className="modal-actions">
-          <button className="button primary" type="button" onClick={onConfirm}>
+          <button data-observe-control="start_new_products" className="button primary" type="button" onClick={onConfirm}>
             <Upload size={18} />
             افزودن محصولات بعدی
           </button>
@@ -1342,6 +1358,7 @@ function PlatformChooser({ platform, onChange }: { platform: Platform | null; on
   return (
     <section className="platform-chooser" aria-label="انتخاب مسیر فروشگاه">
       <button
+        data-observe-control="change_platform"
         className={`platform-card ${platform === 'basalam' ? 'active' : ''}`}
         type="button"
         onClick={() => onChange('basalam')}
@@ -1350,6 +1367,7 @@ function PlatformChooser({ platform, onChange }: { platform: Platform | null; on
         <strong>افزودن محصولات به باسلام</strong>
       </button>
       <button
+        data-observe-control="change_platform"
         className={`platform-card ${platform === 'torob' ? 'active' : ''}`}
         type="button"
         onClick={() => onChange('torob')}
@@ -1724,7 +1742,7 @@ function BasalamPanel({
       ) : (
         <>
           <p>برای ثبت مستقیم محصول‌ها، غرفه‌ات را وصل کن.</p>
-          <button className="button primary full" type="button" onClick={onConnect} disabled={connecting}>
+          <button data-observe-control="connect_basalam" className="button primary full" type="button" onClick={onConnect} disabled={connecting}>
             {connecting ? <Loader2 className="spin" size={17} /> : <Store size={17} />}
             اتصال غرفه
           </button>
@@ -1755,7 +1773,7 @@ function ProgressPanel({
       {processing ? <Loader2 className="spin" size={22} /> : failed ? <RotateCcw size={22} /> : <Check size={22} />}
       {job?.error && <div className="error inline">{humanizeProcessingError(job.error)}</div>}
       {canRetry && (
-        <button className="button secondary" type="button" onClick={onRetry}>
+        <button data-observe-control="build_product_list" className="button secondary" type="button" onClick={onRetry}>
           <RotateCcw size={18} />
           دوباره تلاش کن
         </button>
@@ -1936,6 +1954,7 @@ function BulkPreparationBox({ onApply }: { onApply: (days: number) => void }) {
         </div>
       </label>
       <button
+        data-observe-control="apply_preparation_days"
         className="prep-apply"
         type="button"
         disabled={days === null}
@@ -2013,7 +2032,7 @@ function PublishValidationPanel({
         )}
       </div>
       <div className="dock-message-actions">
-        <button className="link-button" type="button" onClick={onGoToFirstIssue}>
+        <button data-observe-control="fill_missing_fields" className="link-button" type="button" onClick={onGoToFirstIssue}>
           تکمیل فیلدها
         </button>
         <VoiceRefineControl
@@ -2465,7 +2484,7 @@ function BasalamCategoryPicker({
           <strong>انتخاب نشده</strong>
         )}
         {!needsCategory && (
-          <button className="category-edit-button" type="button" onClick={() => setEditing((value) => !value)}>
+          <button data-observe-control="category_picker" className="category-edit-button" type="button" onClick={() => setEditing((value) => !value)}>
             {editing ? 'بستن' : 'تغییر'}
           </button>
         )}
@@ -2495,6 +2514,7 @@ function BasalamCategoryPicker({
             <div className="category-results">
               {results.map((category) => (
                 <button
+                  data-observe-control="category_picker"
                   key={category.id}
                   type="button"
                   onClick={() => selectCategory(category)}
@@ -2519,6 +2539,7 @@ function ConfirmDialog({
   cancelLabel,
   onConfirm,
   onCancel,
+  observeControl,
 }: {
   title: string;
   body: string;
@@ -2526,6 +2547,7 @@ function ConfirmDialog({
   cancelLabel?: string;
   onConfirm: () => void;
   onCancel?: () => void;
+  observeControl?: ObservedControl;
 }) {
   return (
     <div className="modal-backdrop" role="presentation">
@@ -2538,7 +2560,7 @@ function ConfirmDialog({
               {cancelLabel}
             </button>
           )}
-          <button className="button primary" type="button" onClick={onConfirm}>
+          <button data-observe-control={observeControl} className="button primary" type="button" onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>

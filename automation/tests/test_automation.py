@@ -196,6 +196,31 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(signals[0].evidence["control"], "build_product_list")
         self.assertEqual(signals[0].evidence["click_count"], 5)
 
+    def test_product_event_collector_keeps_safe_validation_field(self):
+        payload = [
+            {
+                "event": "ui_action_blocked",
+                "control": "publish_basalam",
+                "outcome": "validation",
+                "failure_field": "package_weight_grams",
+                "count": 3,
+                "last_seen_at": "2026-07-15T00:00:00Z",
+            }
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        self.assertEqual(signals[0].event, "ui_action_blocked")
+        self.assertEqual(signals[0].evidence["control"], "publish_basalam")
+        self.assertEqual(signals[0].evidence["failure_field"], "package_weight_grams")
+        self.assertIn("وزن با بسته‌بندی", signals[0].summary_fa)
+        self.assertIn("ثبت در باسلام", signals[0].summary_fa)
+
     def test_product_event_collector_correlates_rage_and_stall_only_inside_one_anonymous_session(self):
         now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
         payload = [

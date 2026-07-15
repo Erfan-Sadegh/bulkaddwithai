@@ -23,7 +23,22 @@ export type ObservedControl =
   | 'change_platform'
   | 'delete_photo'
   | 'split_photo'
-  | 'start_new_products';
+  | 'start_new_products'
+  | 'category_picker'
+  | 'fill_missing_fields'
+  | 'apply_preparation_days';
+
+export type ObservedFailureField =
+  | 'title'
+  | 'price_toman'
+  | 'stock'
+  | 'preparation_days'
+  | 'weight_grams'
+  | 'package_weight_grams'
+  | 'unit_quantity'
+  | 'category'
+  | 'shop_name'
+  | 'contact_mobile';
 
 type RageClickEvent = { event: 'ui_rage_click'; control: ObservedControl; click_count: number };
 export type ObservedActionEvent = {
@@ -31,6 +46,7 @@ export type ObservedActionEvent = {
   control: ObservedControl;
   attempt_id: string;
   outcome?: 'validation' | 'state' | 'network' | 'server' | 'unknown';
+  failure_field?: ObservedFailureField;
 };
 export type RuntimeFailureEvent = {
   event: 'frontend_runtime_failed';
@@ -121,7 +137,7 @@ export function captureApiFailure(path: string, status: number | null, _requestI
 export function installInteractionObserver(report: (event: RageClickEvent) => void): () => void {
   const clicks = new Map<ObservedControl, number[]>();
   const lastReported = new Map<ObservedControl, number>();
-  const handler = (event: MouseEvent) => {
+  const handler = (event: PointerEvent) => {
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-observe-control]') : null;
     const control = target?.dataset.observeControl as ObservedControl | undefined;
     if (!control) return;
@@ -134,8 +150,8 @@ export function installInteractionObserver(report: (event: RageClickEvent) => vo
     trackEvent(payload.event, { control: payload.control, click_count: payload.click_count });
     report(payload);
   };
-  document.addEventListener('click', handler, true);
-  return () => document.removeEventListener('click', handler, true);
+  document.addEventListener('pointerdown', handler, true);
+  return () => document.removeEventListener('pointerdown', handler, true);
 }
 
 export function beginObservedAction(
@@ -143,13 +159,18 @@ export function beginObservedAction(
   report: (event: ObservedActionEvent) => void,
 ): {
   accepted: () => void;
-  blocked: (outcome: 'validation' | 'state') => void;
+  blocked: (outcome: 'validation' | 'state', failureField?: ObservedFailureField) => void;
   failed: (outcome: 'network' | 'server' | 'unknown') => void;
 } {
   const attemptId = createUuid();
   let terminal = false;
   const emit = (event: ObservedActionEvent) => {
-    trackEvent(event.event, { control: event.control, attempt_id: event.attempt_id, outcome: event.outcome });
+    trackEvent(event.event, {
+      control: event.control,
+      attempt_id: event.attempt_id,
+      outcome: event.outcome,
+      failure_field: event.failure_field,
+    });
     report(event);
   };
   const finish = (event: ObservedActionEvent) => {
@@ -160,7 +181,13 @@ export function beginObservedAction(
   emit({ event: 'ui_action_started', control, attempt_id: attemptId });
   return {
     accepted: () => finish({ event: 'ui_action_accepted', control, attempt_id: attemptId }),
-    blocked: (outcome) => finish({ event: 'ui_action_blocked', control, attempt_id: attemptId, outcome }),
+    blocked: (outcome, failureField) => finish({
+      event: 'ui_action_blocked',
+      control,
+      attempt_id: attemptId,
+      outcome,
+      failure_field: outcome === 'validation' ? failureField : undefined,
+    }),
     failed: (outcome) => finish({ event: 'ui_action_failed', control, attempt_id: attemptId, outcome }),
   };
 }
