@@ -26,6 +26,7 @@ EVENT_PRIORITY = {
     "basalam_product_failed": "high",
     "torob_publish_failed": "high",
     "basalam_oauth_failed": "medium",
+    "basalam_oauth_restore_failed": "urgent",
     "basalam_publish_validation_failed": "ux",
     "image_upload_rejected": "ux",
     "image_picker_blocked": "ux",
@@ -101,6 +102,8 @@ def _product_event_summary(item: dict[str, Any], event: str, count: int) -> str:
     control_label = CONTROL_LABELS_FA.get(control, control or "کنترل نامشخص")
     failure_field = str(item.get("failure_field") or "")
     field_label = FIELD_LABELS_FA.get(failure_field, failure_field)
+    if event == "basalam_oauth_restore_failed":
+        return f"پس از بازگشت OAuth باسلام، فهرست یا فایل‌های کاربر {count} بار کامل بازیابی نشده است."
     if event == "ui_action_blocked" and item.get("outcome") == "validation":
         if field_label:
             return f"{control_label} {count} بار به‌دلیل نامعتبر یا ناقص بودن «{field_label}» متوقف شده است."

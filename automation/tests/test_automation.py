@@ -174,6 +174,34 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(signals[0].count, 4)
         self.assertEqual(signals[0].evidence["stage"], "vision_extracting")
 
+    def test_product_event_collector_promotes_oauth_restore_data_loss_signal(self):
+        payload = [
+            {
+                "event": "basalam_oauth_restore_failed",
+                "severity": "error",
+                "count": 2,
+                "last_seen_at": "2026-07-15T00:00:00Z",
+                "stage": "items",
+                "reason": "count_mismatch",
+                "expected_item_count": 3,
+                "restored_item_count": 0,
+            }
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].event, "basalam_oauth_restore_failed")
+        self.assertEqual(signals[0].priority, "urgent")
+        self.assertEqual(signals[0].evidence["expected_item_count"], 3)
+        self.assertEqual(signals[0].evidence["restored_item_count"], 0)
+        self.assertIn("OAuth", signals[0].summary_fa)
+
     def test_product_event_collector_keeps_exact_control_for_product_rage_click(self):
         payload = [
             {
