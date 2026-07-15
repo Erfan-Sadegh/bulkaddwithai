@@ -22,13 +22,20 @@ class Signal:
 
     @property
     def fingerprint(self) -> str:
-        discriminator = (
-            self.evidence.get("issue_id")
-            or self.evidence.get("path")
-            or self.evidence.get("metric")
-            or self.evidence.get("stage")
-            or ""
-        )
+        if self.event == "ui_action_blocked":
+            discriminator = ":".join(
+                str(self.evidence.get(key) or "")
+                for key in ("control", "outcome", "failure_field")
+            )
+        else:
+            discriminator = (
+                self.evidence.get("issue_id")
+                or self.evidence.get("path")
+                or self.evidence.get("metric")
+                or self.evidence.get("control")
+                or self.evidence.get("stage")
+                or ""
+            )
         raw = f"{self.source}:{self.event}:{discriminator}:{self.evidence.get('stage', '')}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
@@ -56,9 +63,11 @@ class RunReport:
     run_id: str
     started_at: str
     phase: str
+    run_kind: str = "manual"
     status: str = "running"
     signals: list[dict[str, Any]] = field(default_factory=list)
     candidates: list[dict[str, Any]] = field(default_factory=list)
+    diagnoses: list[dict[str, Any]] = field(default_factory=list)
     fixes: list[dict[str, Any]] = field(default_factory=list)
     source_health: dict[str, str] = field(default_factory=dict)
     finished_at: str | None = None

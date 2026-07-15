@@ -1,6 +1,79 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class UxEventCreate(BaseModel):
+    event: Literal[
+        "image_picker_blocked", "image_picker_opened", "image_files_selected", "image_picker_cancelled",
+        "ui_rage_click", "ui_dead_click", "ui_action_started", "ui_action_accepted", "ui_action_blocked", "ui_action_failed",
+    ]
+    control: Literal[
+        "photo_drop_zone", "add_photo_button", "build_product_list", "publish_basalam",
+        "submit_torob", "connect_basalam", "record_voice", "change_platform",
+        "delete_photo", "split_photo", "start_new_products", "category_picker",
+        "fill_missing_fields", "apply_preparation_days",
+    ]
+    reason: Literal["list_exists", "processing"] | None = None
+    attempt_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+    file_count: int | None = Field(default=None, ge=1, le=100)
+    click_count: int | None = Field(default=None, ge=3, le=12)
+    outcome: Literal["validation", "state", "network", "server", "unknown"] | None = None
+    failure_field: Literal[
+        "title", "price_toman", "stock", "preparation_days", "weight_grams",
+        "package_weight_grams", "unit_quantity", "category", "shop_name", "contact_mobile",
+    ] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_event_shape(self):
+        if self.event.startswith("ui_action_"):
+            if self.attempt_id is None or any(value is not None for value in (self.reason, self.file_count, self.click_count)):
+                raise ValueError("action event shape is invalid")
+            if self.event in {"ui_action_started", "ui_action_accepted"}:
+                if self.outcome is not None or self.failure_field is not None:
+                    raise ValueError("action start/accept must not include outcome")
+            elif self.event == "ui_action_blocked":
+                if self.outcome not in {"validation", "state"}:
+                    raise ValueError("blocked action outcome is invalid")
+                if self.outcome == "state" and self.failure_field is not None:
+                    raise ValueError("state-blocked action cannot include a validation field")
+            elif self.outcome not in {"network", "server", "unknown"}:
+                raise ValueError("failed action outcome is invalid")
+            elif self.failure_field is not None:
+                raise ValueError("failed action cannot include a validation field")
+            return self
+        if self.event == "ui_rage_click":
+            if self.failure_field is not None:
+                raise ValueError("rage click event shape is invalid")
+            if self.click_count is None or any(value is not None for value in (self.reason, self.attempt_id, self.file_count, self.outcome)):
+                raise ValueError("rage click event shape is invalid")
+            return self
+        if self.event == "ui_dead_click":
+            if any(value is not None for value in (self.reason, self.attempt_id, self.file_count, self.click_count, self.outcome, self.failure_field)):
+                raise ValueError("dead click event shape is invalid")
+            return self
+        if self.control not in {"photo_drop_zone", "add_photo_button"} or self.click_count is not None or self.outcome is not None or self.failure_field is not None:
+            raise ValueError("image picker control shape is invalid")
+        if self.event == "image_picker_blocked":
+            if self.reason is None or self.attempt_id is not None or self.file_count is not None:
+                raise ValueError("blocked picker event shape is invalid")
+            return self
+        if self.attempt_id is None or self.reason is not None:
+            raise ValueError("picker lifecycle event shape is invalid")
+        if (self.event == "image_files_selected") != (self.file_count is not None):
+            raise ValueError("selected picker event requires file_count")
+        return self
+
+
+class RuntimeEventCreate(BaseModel):
+    event: Literal["frontend_runtime_failed"]
+    code: Literal["script_error", "unhandled_rejection"]
+    surface: Literal["catalog", "admin"]
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class SellerCreate(BaseModel):

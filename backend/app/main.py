@@ -1,9 +1,12 @@
 from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
+import hashlib
+import json
+import logging
 import secrets
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +18,7 @@ from .config import Settings, get_settings
 from .database import create_tables, make_engine, make_session_factory
 from .integrations.basalam import BasalamClient
 from .integrations.torob import TorobClient
-from .models import Asset, Batch, OperationalEvent, ProcessingJob, PublishJob, Seller
+from .models import Asset, Batch, OperationalEvent, ProcessingJob, PublishedProduct, PublishJob, Seller
 from .observability import configure_event_store, configure_observability, observe_http_request
 from .platform_services import (
     create_basalam_oauth_url,
@@ -56,6 +59,8 @@ from .schemas import (
     TorobSubmissionPatch,
     TorobSubmissionRead,
     TorobSubmissionStartResponse,
+    UxEventCreate,
+    RuntimeEventCreate,
 )
 from .services import (
     create_batch,
@@ -82,6 +87,59 @@ from .torob_services import (
 )
 
 
+SAFE_PROVIDER_FAILURE_FIELDS = {
+    "package_weight",
+    "weight",
+    "status",
+    "category_id",
+    "unit_type",
+    "primary_price",
+    "stock",
+    "preparation_days",
+    "photos",
+    "name",
+}
+
+
+def _safe_failure_field(metadata: dict) -> str | None:
+    response_text = metadata.get("response_text")
+    if not isinstance(response_text, str):
+        return None
+    try:
+        payload = json.loads(response_text)
+    except (TypeError, ValueError):
+        return None
+    candidates = payload.get("messages") or payload.get("openapi_raw_data") or [] if isinstance(payload, dict) else []
+    for candidate in candidates if isinstance(candidates, list) else []:
+        fields = candidate.get("fields") if isinstance(candidate, dict) else None
+        for field in fields if isinstance(fields, list) else []:
+            if field in SAFE_PROVIDER_FAILURE_FIELDS:
+                return field
+    return None
+
+
+def _safe_published_product_failure(item: PublishedProduct, settings: Settings) -> dict:
+    metadata = item.response_metadata if isinstance(item.response_metadata, dict) else {}
+    return {
+        "event": "basalam_product_failed",
+        "severity": "warning",
+        "environment": settings.environment,
+        "release": settings.release,
+        "job_id": item.publish_job_id,
+        "item_id": item.batch_item_id,
+        "platform": item.platform,
+        "http_status": metadata.get("http_status"),
+        "category_id": metadata.get("request_payload_category_id"),
+        "unit_type": metadata.get("request_payload_unit_type"),
+        "request_status": metadata.get("request_payload_status"),
+        "photo_count": metadata.get("request_payload_photo_count"),
+        "failure_field": _safe_failure_field(metadata),
+        "last_seen_at": item.created_at,
+        "count": 1,
+        "evidence_source": "published_products",
+    }
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_observability(settings)
@@ -90,6 +148,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     session_factory = make_session_factory(engine)
     create_tables(engine)
     configure_event_store(session_factory, settings)
+    ux_logger = logging.getLogger("app.ux")
 
     app = FastAPI(title="Bulk Add With AI", version="0.1.0")
     app.state.settings = settings
@@ -152,7 +211,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if since is not None:
             statement = statement.where(OperationalEvent.created_at >= since)
         events = session.scalars(statement).all()
-        return [
+        operational = [
             {
                 "event": item.event,
                 "severity": item.severity,
@@ -169,6 +228,95 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
             for item in events
         ]
+        failed_statement = (
+            select(PublishedProduct)
+            .where(PublishedProduct.status == "failed")
+            .order_by(PublishedProduct.created_at.desc())
+            .limit(safe_limit)
+        )
+        if since is not None:
+            failed_statement = failed_statement.where(PublishedProduct.created_at >= since)
+        durable_failures = [_safe_published_product_failure(item, settings) for item in session.scalars(failed_statement)]
+        combined = [*operational, *durable_failures]
+        combined.sort(key=lambda item: str(item.get("last_seen_at") or ""), reverse=True)
+        return combined[:safe_limit]
+
+    @app.post("/observability/ux-events", status_code=204)
+    def post_ux_event(payload: UxEventCreate, request: Request):
+        # The schema accepts no user text, URL, identifier, or arbitrary event.
+        session_key = hashlib.sha256(request.state.request_id.encode("utf-8")).hexdigest()[:16]
+        if payload.event == "ui_rage_click":
+            ux_logger.warning(
+                "%s session_key=%s control=%s click_count=%s",
+                payload.event,
+                session_key,
+                payload.control,
+                payload.click_count,
+            )
+        elif payload.event == "ui_dead_click":
+            ux_logger.warning(
+                "%s session_key=%s control=%s",
+                payload.event,
+                session_key,
+                payload.control,
+            )
+        elif payload.event.startswith("ui_action_"):
+            log = ux_logger.warning if payload.event in {"ui_action_blocked", "ui_action_failed"} else ux_logger.info
+            if payload.failure_field:
+                log(
+                    "%s session_key=%s control=%s attempt_id=%s outcome=%s failure_field=%s",
+                    payload.event,
+                    session_key,
+                    payload.control,
+                    payload.attempt_id,
+                    payload.outcome or "none",
+                    payload.failure_field,
+                )
+            else:
+                log(
+                    "%s session_key=%s control=%s attempt_id=%s outcome=%s",
+                    payload.event,
+                    session_key,
+                    payload.control,
+                    payload.attempt_id,
+                    payload.outcome or "none",
+                )
+        elif payload.event == "image_picker_blocked":
+            ux_logger.info(
+                "%s session_key=%s control=%s reason=%s",
+                payload.event,
+                session_key,
+                payload.control,
+                payload.reason,
+            )
+        elif payload.event == "image_files_selected":
+            ux_logger.info(
+                "%s session_key=%s control=%s attempt_id=%s file_count=%s",
+                payload.event,
+                session_key,
+                payload.control,
+                payload.attempt_id,
+                payload.file_count,
+            )
+        else:
+            ux_logger.info(
+                "%s session_key=%s control=%s attempt_id=%s",
+                payload.event,
+                session_key,
+                payload.control,
+                payload.attempt_id,
+            )
+        return Response(status_code=204)
+
+    @app.post("/observability/runtime-events", status_code=204)
+    def post_runtime_event(payload: RuntimeEventCreate):
+        ux_logger.warning(
+            "%s code=%s surface=%s",
+            payload.event,
+            payload.code,
+            payload.surface,
+        )
+        return Response(status_code=204)
 
     @app.post("/admin/login", response_model=AdminLoginResponse)
     def post_admin_login(payload: AdminLoginRequest):

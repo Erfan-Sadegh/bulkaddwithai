@@ -11,6 +11,7 @@ import type {
   TorobSubmission,
 } from './types';
 import { captureApiFailure, getRequestId, trackEvent } from './telemetry';
+import type { ObservedControl, ObservedFailureField } from './telemetry';
 
 export const API_BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '');
 
@@ -80,6 +81,31 @@ function extractDetail(text: string): string {
 }
 
 export const api = {
+  reportUxEvent: (payload: {
+      event:
+        | 'image_picker_blocked'
+        | 'image_picker_opened'
+        | 'image_files_selected'
+        | 'image_picker_cancelled'
+        | 'ui_rage_click'
+        | 'ui_dead_click'
+        | 'ui_action_started'
+        | 'ui_action_accepted'
+        | 'ui_action_blocked'
+        | 'ui_action_failed';
+    control: ObservedControl;
+    reason?: 'list_exists' | 'processing';
+    attempt_id?: string;
+    file_count?: number;
+      click_count?: number;
+      outcome?: 'validation' | 'state' | 'network' | 'server' | 'unknown';
+      failure_field?: ObservedFailureField;
+  }) => request<void>('/observability/ux-events', { method: 'POST', body: JSON.stringify(payload) }),
+  reportRuntimeEvent: (payload: {
+    event: 'frontend_runtime_failed';
+    code: 'script_error' | 'unhandled_rejection';
+    surface: 'catalog' | 'admin';
+  }) => request<void>('/observability/runtime-events', { method: 'POST', body: JSON.stringify(payload) }),
   listSellers: () => request<Seller[]>('/sellers'),
   getSeller: (sellerId: number) => request<Seller>(`/sellers/${sellerId}`),
   createSeller: (payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) =>

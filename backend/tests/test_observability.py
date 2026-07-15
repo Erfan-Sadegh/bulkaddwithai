@@ -1,14 +1,16 @@
 import logging
 import json
+import re
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.models import OperationalEvent
-from app.observability import JsonLogFormatter, _before_send, redact_text
+from app.models import Batch, BatchItem, PlatformConnection, PublishJob, PublishedProduct, Seller, OperationalEvent
+from app.observability import JsonLogFormatter, _before_send, configure_observability, redact_text
 
 
 def test_every_http_response_has_a_safe_request_id(client):
@@ -83,10 +85,16 @@ def test_sentry_payload_and_text_are_redacted():
         "request": {
             "url": "https://example.test/callback?code=one-time-code",
             "query_string": "code=one-time-code",
-            "headers": {"Authorization": "Bearer secret", "Accept": "application/json"},
+            "headers": {
+                "Authorization": "Bearer secret",
+                "X-Request-ID": "raw-session-id",
+                "Accept": "application/json",
+            },
             "data": {"mobile": "09120000000"},
         },
-        "extra": {"access_token": "secret-token", "safe": "ok"},
+        "tags": {"request_id": "raw-session-id"},
+        "logentry": {"message": "ui_rage_click request_id=raw-session-id control=photo_drop_zone"},
+        "extra": {"access_token": "secret-token", "safe": "ok", "request_id": "raw-session-id"},
     }
 
     scrubbed = _before_send(event, {})
@@ -96,9 +104,26 @@ def test_sentry_payload_and_text_are_redacted():
     assert "query_string" not in scrubbed["request"]
     assert scrubbed["request"]["url"] == "https://example.test/callback"
     assert "Authorization" not in scrubbed["request"]["headers"]
+    assert "X-Request-ID" not in scrubbed["request"]["headers"]
     assert scrubbed["extra"]["access_token"] == "[REDACTED]"
+    assert "raw-session-id" not in json.dumps(scrubbed)
     assert redact_text("Authorization: Bearer abcdefghijklmnop") == "Authorization: Bearer [REDACTED]"
     assert redact_text("access_token=abcdefghijk") == "access_token=[REDACTED]"
+
+
+def test_sentry_transactions_use_the_same_privacy_scrubber(tmp_path):
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'events.db'}",
+        upload_dir=tmp_path / "uploads",
+        AI_PROVIDER="fake",
+        SENTRY_DSN="https://public@example.ingest.sentry.io/1",
+        SENTRY_TRACES_SAMPLE_RATE=0.1,
+    )
+    with patch("sentry_sdk.init") as init:
+        configure_observability(settings)
+
+    assert init.call_args.kwargs["before_send"] is _before_send
+    assert init.call_args.kwargs["before_send_transaction"] is _before_send
 
 
 def test_production_event_feed_requires_its_own_read_only_token(tmp_path):
@@ -158,6 +183,307 @@ def test_important_events_are_persisted_and_exported_without_sensitive_text(tmp_
     assert "09120000000" not in serialized
     assert "super-secret-token" not in serialized
     assert "message" not in serialized
+
+
+def test_rejected_image_feed_keeps_safe_diagnostic_fields(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+
+    with TestClient(app) as test_client:
+        logging.getLogger("app.uploads").warning(
+            "image_upload_rejected batch_id=5 suffix=.heic declared_mime=image/heic "
+            "input_bytes=2048 error_type=InvalidProductImageError"
+        )
+        response = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    event = response.json()[0]
+    assert event["suffix"] == ".heic"
+    assert event["declared_mime"] == "image/heic"
+    assert event["input_bytes"] == 2048
+    assert event["error_type"] == "InvalidProductImageError"
+
+
+def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+
+    with TestClient(app) as test_client:
+        accepted = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "image_picker_blocked",
+                "control": "add_photo_button",
+                "reason": "list_exists",
+            },
+        )
+        rejected = test_client.post(
+            "/observability/ux-events",
+            json={"event": "arbitrary_event", "control": "secret", "reason": "anything"},
+        )
+        opened = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "image_picker_opened",
+                "control": "photo_drop_zone",
+                "attempt_id": "11111111-1111-4111-8111-111111111111",
+            },
+        )
+        selected = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "image_files_selected",
+                "control": "photo_drop_zone",
+                "attempt_id": "11111111-1111-4111-8111-111111111111",
+                "file_count": 2,
+            },
+        )
+        invalid_selected = test_client.post(
+            "/observability/ux-events",
+            json={"event": "image_files_selected", "control": "photo_drop_zone", "file_count": 2},
+        )
+        rage = test_client.post(
+            "/observability/ux-events",
+            json={"event": "ui_rage_click", "control": "build_product_list", "click_count": 4},
+        )
+        invalid_rage = test_client.post(
+            "/observability/ux-events",
+            json={"event": "ui_rage_click", "control": "private_user_text", "click_count": 4},
+        )
+        action_started = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_started",
+                "control": "publish_basalam",
+                "attempt_id": "22222222-2222-4222-8222-222222222222",
+            },
+        )
+        action_failed = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_failed",
+                "control": "publish_basalam",
+                "attempt_id": "22222222-2222-4222-8222-222222222222",
+                "outcome": "server",
+            },
+        )
+        dead_click = test_client.post(
+            "/observability/ux-events",
+            json={"event": "ui_dead_click", "control": "build_product_list"},
+        )
+        action_blocked = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_blocked",
+                "control": "publish_basalam",
+                "attempt_id": "33333333-3333-4333-8333-333333333333",
+                "outcome": "validation",
+                "failure_field": "package_weight_grams",
+            },
+        )
+        invalid_failure_field = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_blocked",
+                "control": "publish_basalam",
+                "attempt_id": "44444444-4444-4444-8444-444444444444",
+                "outcome": "validation",
+                "failure_field": "private product title",
+            },
+        )
+        invalid_action = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_failed",
+                "control": "publish_basalam",
+                "attempt_id": "22222222-2222-4222-8222-222222222222",
+                "outcome": "private provider message",
+            },
+        )
+        feed = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    assert accepted.status_code == 204
+    assert rejected.status_code == 422
+    assert opened.status_code == 204
+    assert selected.status_code == 204
+    assert invalid_selected.status_code == 422
+    assert rage.status_code == 204
+    assert dead_click.status_code == 204
+    assert invalid_rage.status_code == 422
+    assert action_started.status_code == 204
+    assert action_failed.status_code == 204
+    assert action_blocked.status_code == 204
+    assert invalid_failure_field.status_code == 422
+    assert invalid_action.status_code == 422
+    events = {item["event"]: item for item in feed.json()}
+    assert events["image_picker_blocked"]["control"] == "add_photo_button"
+    assert events["image_picker_blocked"]["reason"] == "list_exists"
+    assert events["image_picker_opened"]["attempt_id"] == "11111111-1111-4111-8111-111111111111"
+    assert events["image_files_selected"]["file_count"] == 2
+    assert events["ui_rage_click"]["control"] == "build_product_list"
+    assert events["ui_rage_click"]["click_count"] == 4
+    assert events["ui_dead_click"]["control"] == "build_product_list"
+    assert events["ui_action_started"]["attempt_id"] == "22222222-2222-4222-8222-222222222222"
+    assert events["ui_action_failed"]["control"] == "publish_basalam"
+    assert events["ui_action_failed"]["outcome"] == "server"
+    assert events["ui_action_blocked"]["failure_field"] == "package_weight_grams"
+
+
+def test_public_runtime_event_accepts_only_safe_enums(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+    with TestClient(app) as test_client:
+        accepted = test_client.post(
+            "/observability/runtime-events",
+            json={"event": "frontend_runtime_failed", "code": "script_error", "surface": "catalog"},
+        )
+        rejected = test_client.post(
+            "/observability/runtime-events",
+            json={
+                "event": "frontend_runtime_failed",
+                "code": "private message and token",
+                "surface": "catalog",
+                "message": "private stack",
+            },
+        )
+        feed = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    assert accepted.status_code == 204
+    assert rejected.status_code == 422
+    event = next(item for item in feed.json() if item["event"] == "frontend_runtime_failed")
+    assert event["code"] == "script_error"
+    assert event["surface"] == "catalog"
+    assert "message" not in event
+
+
+def test_ux_events_hash_the_anonymous_session_id_before_persisting_it(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+    session_id = "anonymous-session-123"
+    with TestClient(app) as test_client:
+        for payload in (
+            {"event": "ui_rage_click", "control": "photo_drop_zone", "click_count": 4},
+            {
+                "event": "image_picker_opened",
+                "control": "photo_drop_zone",
+                "attempt_id": "11111111-1111-4111-8111-111111111111",
+            },
+        ):
+            response = test_client.post(
+                "/observability/ux-events",
+                headers={"X-Request-ID": session_id},
+                json=payload,
+            )
+            assert response.status_code == 204
+        feed = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    related = [item for item in feed.json() if item["event"] in {"ui_rage_click", "image_picker_opened"}]
+    assert len(related) == 2
+    assert all(item["request_id"] is None for item in related)
+    session_keys = {item["session_key"] for item in related}
+    assert len(session_keys) == 1
+    assert session_id not in session_keys
+    assert all(re.fullmatch(r"[0-9a-f]{16}", key) for key in session_keys)
+
+
+def test_failed_published_product_is_exported_safely_even_without_transient_log_event(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+    with app.state.session_factory() as session:
+        seller = Seller(name="test", mobile="", shop_name="test")
+        session.add(seller)
+        session.flush()
+        batch = Batch(seller_id=seller.id)
+        session.add(batch)
+        session.flush()
+        item = BatchItem(batch_id=batch.id, title="private product title")
+        connection = PlatformConnection(
+            seller_id=seller.id,
+            platform="basalam",
+            external_shop_id="test-shop",
+            external_shop_name="private shop",
+            access_token="secret-token",
+        )
+        session.add_all([item, connection])
+        session.flush()
+        job = PublishJob(batch_id=batch.id, connection_id=connection.id, platform="basalam")
+        session.add(job)
+        session.flush()
+        session.add(
+            PublishedProduct(
+                batch_item_id=item.id,
+                publish_job_id=job.id,
+                connection_id=connection.id,
+                platform="basalam",
+                status="failed",
+                error="private provider error and product title",
+                response_metadata={
+                    "http_status": 422,
+                    "response_text": '{"messages":[{"fields":["package_weight"],"message":"private value"}]}',
+                    "request_payload_category_id": 485,
+                    "request_payload_photo_count": 1,
+                },
+            )
+        )
+        session.commit()
+
+    with TestClient(app) as test_client:
+        response = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    assert response.status_code == 200
+    event = response.json()[0]
+    assert event["event"] == "basalam_product_failed"
+    assert event["failure_field"] == "package_weight"
+    assert event["http_status"] == 422
+    assert event["category_id"] == 485
+    assert event["photo_count"] == 1
+    serialized = json.dumps(event)
+    assert "private" not in serialized
+    assert "secret-token" not in serialized
 
 
 def test_operational_event_store_removes_expired_records(tmp_path):

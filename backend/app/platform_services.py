@@ -478,6 +478,8 @@ def _publish_validation_error(settings: Settings, item: BatchItem) -> str | None
         return "برای ثبت محصول در باسلام، وزن محصول را به گرم وارد کن."
     if item.package_weight_grams is None:
         return "برای ثبت محصول در باسلام، وزن محصول با بسته‌بندی را به گرم وارد کن."
+    if item.weight_grams > 100 and item.package_weight_grams > item.weight_grams * 3:
+        return "برای محصول بالای ۱۰۰ گرم، وزن با بسته‌بندی حداکثر سه برابر وزن محصول است."
     if item.unit_quantity is None:
         return "برای ثبت محصول در باسلام، مشخص کن هر فروش چندتا محصول دارد."
     category_data = _publishable_category_data(settings, item)

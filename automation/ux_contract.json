@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "global_markers": [
+    {"path": "frontend/src/App.tsx", "text": "installRuntimeFailureObserver("},
+    {"path": "frontend/src/lib/telemetry.ts", "text": "event: 'ui_dead_click'"},
+    {"path": "backend/app/schemas.py", "text": "\"ui_dead_click\""},
+    {"path": "automation/collectors.py", "text": "\"ui_dead_click\": \"ux\""},
+    {"path": "automation/dashboard.py", "text": "\"ui_dead_click\""},
+    {"path": "frontend/src/lib/telemetry.ts", "text": "frontend_runtime_failed"},
+    {"path": "backend/app/main.py", "text": "/observability/runtime-events"},
+    {"path": "backend/app/schemas.py", "text": "class RuntimeEventCreate"},
+    {"path": "automation/collectors.py", "text": "\"frontend_runtime_failed\": \"high\""},
+    {"path": "frontend/scripts/production-probe.mjs", "text": "mutation_attempt"},
+    {"path": "automation/collectors.py", "text": "def collect_browser_probe("},
+    {"path": "automation/runner.py", "text": "\"browser_probe\": lambda: collect_browser_probe(repo, run_dir)"},
+    {"path": "automation/dashboard.py", "text": "production-mobile.png"}
+  ],
+  "controls": [
+    {
+      "control": "photo_drop_zone",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"photo_drop_zone\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction(sourceControl"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'photo_drop_zone'"},
+        {"path": "backend/app/schemas.py", "text": "\"photo_drop_zone\""}
+      ]
+    },
+    {
+      "control": "add_photo_button",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"add_photo_button\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction(sourceControl"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'add_photo_button'"},
+        {"path": "backend/app/schemas.py", "text": "\"add_photo_button\""}
+      ]
+    },
+    {
+      "control": "build_product_list",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"build_product_list\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('build_product_list')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'build_product_list'"},
+        {"path": "backend/app/schemas.py", "text": "\"build_product_list\""}
+      ]
+    },
+    {
+      "control": "publish_basalam",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "'publish_basalam'"},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('publish_basalam')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'publish_basalam'"},
+        {"path": "backend/app/schemas.py", "text": "\"publish_basalam\""}
+      ]
+    },
+    {
+      "control": "submit_torob",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "'submit_torob'"},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('submit_torob')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'submit_torob'"},
+        {"path": "backend/app/schemas.py", "text": "\"submit_torob\""}
+      ]
+    },
+    {
+      "control": "connect_basalam",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "'connect_basalam'"},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('connect_basalam')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'connect_basalam'"},
+        {"path": "backend/app/schemas.py", "text": "\"connect_basalam\""}
+      ]
+    },
+    {
+      "control": "record_voice",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"record_voice\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('record_voice')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'record_voice'"},
+        {"path": "backend/app/schemas.py", "text": "\"record_voice\""}
+      ]
+    },
+    {
+      "control": "change_platform",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"change_platform\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('change_platform')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'change_platform'"},
+        {"path": "backend/app/schemas.py", "text": "\"change_platform\""}
+      ]
+    },
+    {
+      "control": "delete_photo",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"delete_photo\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('delete_photo')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'delete_photo'"},
+        {"path": "backend/app/schemas.py", "text": "\"delete_photo\""}
+      ]
+    },
+    {
+      "control": "split_photo",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"split_photo\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('split_photo')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'split_photo'"},
+        {"path": "backend/app/schemas.py", "text": "\"split_photo\""}
+      ]
+    },
+    {
+      "control": "start_new_products",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"start_new_products\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('start_new_products')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'start_new_products'"},
+        {"path": "backend/app/schemas.py", "text": "\"start_new_products\""}
+      ]
+    },
+    {
+      "control": "category_picker",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"category_picker\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('category_picker')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'category_picker'"},
+        {"path": "backend/app/schemas.py", "text": "\"category_picker\""}
+      ]
+    },
+    {
+      "control": "fill_missing_fields",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"fill_missing_fields\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('fill_missing_fields')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'fill_missing_fields'"},
+        {"path": "backend/app/schemas.py", "text": "\"fill_missing_fields\""}
+      ]
+    },
+    {
+      "control": "apply_preparation_days",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"apply_preparation_days\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('apply_preparation_days')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'apply_preparation_days'"},
+        {"path": "backend/app/schemas.py", "text": "\"apply_preparation_days\""}
+      ]
+    }
+  ]
+}

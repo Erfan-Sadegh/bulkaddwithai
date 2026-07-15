@@ -18,6 +18,8 @@ import type { ChangeEvent, MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { API_BASE, api } from './lib/api';
+import { beginObservedAction, installInteractionObserver, installRuntimeFailureObserver, trackEvent } from './lib/telemetry';
+import type { ObservedControl, ObservedFailureField } from './lib/telemetry';
 import type {
   Asset,
   BasalamCategory,
@@ -31,6 +33,10 @@ import type {
   TorobSubmission,
 } from './lib/types';
 
+function beginProductAction(control: ObservedControl) {
+  return beginObservedAction(control, (event) => void api.reportUxEvent(event).catch(() => undefined));
+}
+
 type Platform = 'basalam' | 'torob';
 type ProductDraft = Pick<ProductItem, 'title' | 'description'> & {
   price_toman: string;
@@ -43,15 +49,7 @@ type ProductDraft = Pick<ProductItem, 'title' | 'description'> & {
 type DraftMap = Record<number, ProductDraft>;
 type DraftField = keyof ProductDraft;
 type DraftTouchedMap = Record<number, Partial<Record<DraftField, true>>>;
-type RequiredField =
-  | 'title'
-  | 'price_toman'
-  | 'stock'
-  | 'preparation_days'
-  | 'weight_grams'
-  | 'package_weight_grams'
-  | 'unit_quantity'
-  | 'category';
+type RequiredField = Exclude<ObservedFailureField, 'shop_name' | 'contact_mobile'>;
 type PublishValidationIssue = {
   itemId: number;
   title: string;
@@ -105,7 +103,15 @@ const publishLabels: Record<PublishJob['step'], string> = {
 };
 
 export function App() {
-  if (window.location.pathname.startsWith('/admin')) return <AdminApp />;
+  const isAdmin = window.location.pathname.startsWith('/admin');
+  useEffect(
+    () => installRuntimeFailureObserver(
+      (event) => void api.reportRuntimeEvent(event).catch(() => undefined),
+      isAdmin ? 'admin' : 'catalog',
+    ),
+    [isAdmin],
+  );
+  if (isAdmin) return <AdminApp />;
   return <MainApp />;
 }
 
@@ -151,6 +157,11 @@ function MainApp() {
   const torobSubmittingRef = useRef(false);
   const draftTouchedRef = useRef<DraftTouchedMap>({});
   const voiceNudgeShownBatchIdRef = useRef<number | null>(null);
+
+  useEffect(
+    () => installInteractionObserver((event) => void api.reportUxEvent(event).catch(() => undefined)),
+    [],
+  );
 
   const imageAssets = useMemo(
     () => assets.filter((asset) => asset.type === 'image').sort((a, b) => a.upload_order - b.upload_order),
@@ -372,6 +383,7 @@ function MainApp() {
 
   async function startFreshList() {
     if (!seller) return;
+    const action = beginProductAction('start_new_products');
     setFreshConfirmOpen(false);
     setProcessing(false);
     setUploading(false);
@@ -391,17 +403,27 @@ function MainApp() {
       setShowPublishValidation(false);
       setVoiceNudgeVisible(false);
       setTorobSuccessMessage(null);
+      action.accepted();
       showToast('صفحه برای محصولات جدید آماده شد.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'شروع دوباره ناموفق بود.');
     }
   }
 
-  async function upload(files: File[]) {
+  function askToStartFreshList() {
+    const action = beginProductAction('start_new_products');
+    setFreshConfirmOpen(true);
+    action.accepted();
+  }
+
+  async function upload(files: File[], sourceControl?: ObservedControl) {
     if (!batch || files.length === 0 || uploading || uploadRequestRef.current) return;
     const hasImage = files.some((file) => file.type.startsWith('image/'));
+    const action = beginProductAction(sourceControl ?? (hasImage ? 'photo_drop_zone' : 'record_voice'));
     if (items.length > 0 && hasImage) {
+      action.blocked('state');
       setError('برای عکس‌های جدید، اول روی «افزودن محصولات جدید» بزن.');
       return;
     }
@@ -417,7 +439,9 @@ function MainApp() {
         const base = hasNewAudio ? current.filter((asset) => asset.type !== 'audio') : current;
         return [...base, ...uploaded].sort((a, b) => a.type.localeCompare(b.type) || a.upload_order - b.upload_order);
       });
+      action.accepted();
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'فایل‌ها اضافه نشدند. دوباره امتحان کن.');
     } finally {
       uploadRequestRef.current = false;
@@ -428,6 +452,7 @@ function MainApp() {
 
   async function deleteUploadedAsset(assetId: number) {
     if (items.length > 0 || uploading || processing) return;
+    const action = beginProductAction('delete_photo');
     setError(null);
     try {
       await api.deleteAsset(assetId);
@@ -436,13 +461,16 @@ function MainApp() {
       } else {
         setAssets((current) => current.filter((asset) => asset.id !== assetId));
       }
+      action.accepted();
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'عکس حذف نشد. دوباره تلاش کن.');
     }
   }
 
   async function processBatch() {
     if (!batch || !platform || imageAssets.length === 0 || processing || processingRequestRef.current) return;
+    const action = beginProductAction('build_product_list');
     processingRequestRef.current = true;
     setProcessing(true);
     setError(null);
@@ -451,6 +479,7 @@ function MainApp() {
       const result = await api.processBatch(batch.id);
       const firstJob = await api.getJob(result.job_id);
       setJob(firstJob);
+      action.accepted();
       if (firstJob.status === 'succeeded') {
         await loadItemsForPlatform(batch.id, platform);
         setShowPublishValidation(false);
@@ -462,6 +491,7 @@ function MainApp() {
         setProcessing(false);
       }
     } catch (err) {
+      action.failed('unknown');
       processingRequestRef.current = false;
       setProcessing(false);
       setError(err instanceof Error ? err.message : 'پردازش انجام نشد. فایل‌ها باقی مانده‌اند و می‌توانی دوباره تلاش کنی.');
@@ -526,17 +556,21 @@ function MainApp() {
   }
 
   async function selectBasalamCategory(itemId: number, category: BasalamCategory) {
+    const action = beginProductAction('category_picker');
     setError(null);
     try {
       const updated = await api.setBasalamCategory(itemId, category.id);
       setItems((current) => current.map((item) => (item.id === itemId ? updated : item)));
+      action.accepted();
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'دسته‌بندی محصول ذخیره نشد.');
     }
   }
 
   async function connectBasalam(options: { saveCurrentList?: boolean } = {}) {
     if (!seller) return;
+    const action = beginProductAction('connect_basalam');
     setConnectingBasalam(true);
     setError(null);
     try {
@@ -544,14 +578,17 @@ function MainApp() {
       if (options.saveCurrentList && items.length > 0) {
         const saved = await persistDrafts();
         if (!saved) {
+          action.failed('unknown');
           setConnectingBasalam(false);
           return;
         }
       }
       const result = await api.getBasalamOAuthUrl(seller.id, workspaceId);
       if (!result.url) throw new Error(result.error || 'اتصال باسلام هنوز تنظیم نشده است.');
+      action.accepted();
       window.location.href = result.url;
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'لینک اتصال باسلام ساخته نشد.');
       setConnectingBasalam(false);
     }
@@ -559,14 +596,17 @@ function MainApp() {
 
   async function publishToBasalam() {
     if (!batch || publishingBasalam || basalamPublishingRef.current) return;
+    const action = beginProductAction('publish_basalam');
     dismissVoiceNudge();
     setShowPublishValidation(true);
     setPublishJob(null);
     setPublishedProducts([]);
     if (publishValidationIssues.length > 0) {
+      action.blocked('validation', publishValidationIssues[0]?.fields[0]);
       return;
     }
     if (!basalamConnection) {
+      action.blocked('state');
       await connectBasalam({ saveCurrentList: true });
       return;
     }
@@ -576,6 +616,7 @@ function MainApp() {
     try {
       const saved = await persistDrafts();
       if (!saved) {
+        action.failed('unknown');
         basalamPublishingRef.current = false;
         setPublishingBasalam(false);
         return;
@@ -583,6 +624,7 @@ function MainApp() {
       const started = await api.publishToBasalam(batch.id, workspaceId);
       const firstJob = await api.getPublishJob(started.job_id);
       setPublishJob(firstJob);
+      action.accepted();
       if (['succeeded', 'partial_failed', 'failed'].includes(firstJob.status)) {
         basalamPublishingRef.current = false;
         setPublishingBasalam(false);
@@ -590,6 +632,7 @@ function MainApp() {
         if (firstJob.status === 'succeeded') setBasalamSuccessOpen(true);
       }
     } catch (err) {
+      action.failed('unknown');
       basalamPublishingRef.current = false;
       setPublishingBasalam(false);
       setError(err instanceof Error ? err.message : 'ثبت محصول‌ها در باسلام انجام نشد.');
@@ -598,12 +641,14 @@ function MainApp() {
 
   async function submitToTorob() {
     if (!batch || submittingTorob || torobSubmittingRef.current) return;
+    const action = beginProductAction('submit_torob');
     setTorobInfoTouched(true);
     setPublishJob(null);
     setPublishedProducts([]);
     const shopName = torobShopName.trim();
     const contactMobile = torobContactMobile.trim();
     if (!shopName || !contactMobile) {
+      action.blocked('validation', !shopName ? 'shop_name' : 'contact_mobile');
       setError('برای ترب، اسم فروشگاه و شماره تماس را وارد کن.');
       document.querySelector('.torob-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -614,6 +659,7 @@ function MainApp() {
     try {
       const saved = await persistDrafts();
       if (!saved) {
+        action.failed('unknown');
         setSubmittingTorob(false);
         return;
       }
@@ -621,9 +667,11 @@ function MainApp() {
         shop_name: shopName,
         contact_mobile: contactMobile,
       });
+      action.accepted();
       setTorobSuccessMessage(humanizeTorobSubmissionMessage(created.message));
       showToast('درخواست ترب ثبت شد.');
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'درخواست ترب ثبت نشد. دوباره تلاش کن.');
     } finally {
       torobSubmittingRef.current = false;
@@ -633,14 +681,17 @@ function MainApp() {
 
   async function splitPhoto(itemId: number, assetId: number) {
     if (!batch) return;
+    const action = beginProductAction('split_photo');
     const key = `${itemId}-${assetId}`;
     setSplittingPhotoKey(key);
     setError(null);
     try {
       await api.splitItem(itemId, [assetId]);
       setItems(await api.listItems(batch.id));
+      action.accepted();
       showToast('عکس به‌عنوان محصول جدا نمایش داده شد.');
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'عکس جدا نشد. دوباره تلاش کن.');
     } finally {
       setSplittingPhotoKey(null);
@@ -681,10 +732,12 @@ function MainApp() {
   }
 
   async function startNextBasalamListAfterSuccess() {
+    const action = beginProductAction('start_new_products');
     if (!seller) {
       setBasalamSuccessOpen(false);
       resetCurrentBatchState();
       setPlatform('basalam');
+      action.blocked('state');
       return;
     }
     setBasalamSuccessOpen(false);
@@ -707,38 +760,58 @@ function MainApp() {
       setShowPublishValidation(false);
       setVoiceNudgeVisible(false);
       setTorobSuccessMessage(null);
+      action.accepted();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'صفحه برای محصولات بعدی آماده نشد. دوباره تلاش کن.');
     }
   }
 
   async function selectPlatform(nextPlatform: Platform | null) {
+    const action = beginProductAction('change_platform');
     const requestId = ++platformRequestRef.current;
     setPlatform(nextPlatform);
     setError(null);
     resetCurrentBatchState();
-    if (!nextPlatform) return;
+    if (!nextPlatform) {
+      action.accepted();
+      return;
+    }
     if (!seller) {
+      action.blocked('state');
       setError('صفحه هنوز آماده نیست. چند لحظه صبر کن.');
       return;
     }
     try {
       const created = await api.createBatch(seller.id);
-      if (platformRequestRef.current !== requestId) return;
+      if (platformRequestRef.current !== requestId) {
+        action.blocked('state');
+        return;
+      }
       setBatch(created);
       if (nextPlatform === 'basalam') rememberActiveBasalamBatchId(created.id);
+      action.accepted();
     } catch (err) {
-      if (platformRequestRef.current !== requestId) return;
+      if (platformRequestRef.current !== requestId) {
+        action.blocked('state');
+        return;
+      }
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'مسیر آماده نشد. دوباره تلاش کن.');
       setPlatform(null);
     }
   }
 
   function scrollToFirstIssue() {
+    const action = beginProductAction('fill_missing_fields');
     const firstIssue = publishValidationIssues[0];
-    if (!firstIssue) return;
+    if (!firstIssue) {
+      action.blocked('state');
+      return;
+    }
     document.querySelector(`[data-product-id="${firstIssue.itemId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    action.accepted();
   }
 
   function dismissVoiceNudge() {
@@ -813,6 +886,7 @@ function MainApp() {
                 uploadingImages={uploadingKind === 'image'}
                 uploadingAudio={uploadingKind === 'audio'}
                 uploadDisabled={items.length > 0 || processing}
+                uploadDisabledReason={items.length > 0 ? 'list_exists' : processing ? 'processing' : null}
                 voiceDisabled={items.length > 0 || uploading || processing}
                 onUpload={upload}
                 onDeleteAsset={deleteUploadedAsset}
@@ -829,9 +903,9 @@ function MainApp() {
             />
           )}
 
-          {platform && batch && hasPhotos && items.length === 0 && (
+          {platform && batch && hasPhotos && items.length === 0 && job?.status !== 'failed' && (
             <div className="sticky-action">
-              <button className="button primary action-button" type="button" onClick={processBatch} disabled={!canProcess}>
+              <button data-observe-control="build_product_list" className="button primary action-button" type="button" onClick={processBatch} disabled={!canProcess}>
                 {processing ? <Loader2 className="spin" size={19} /> : <Sparkles size={19} />}
                 {processing ? 'در حال ساخت لیست' : 'ساخت لیست محصولات با هوش مصنوعی'}
               </button>
@@ -859,6 +933,7 @@ function MainApp() {
               onReprocessWithVoice={processBatch}
               onGoToFirstIssue={scrollToFirstIssue}
               onApplyPreparationDays={(days) => {
+                const action = beginProductAction('apply_preparation_days');
                 markDraftTouched(draftTouchedRef.current, items.map((item) => item.id), ['preparation_days']);
                 setDrafts((current) =>
                   Object.fromEntries(
@@ -871,12 +946,13 @@ function MainApp() {
                     ]),
                   ),
                 );
+                action.accepted();
               }}
               onSelectBasalamCategory={selectBasalamCategory}
               onPublishBasalam={publishToBasalam}
               onSubmitTorob={submitToTorob}
               onSplitPhoto={splitPhoto}
-              onAskStartFresh={() => setFreshConfirmOpen(true)}
+              onAskStartFresh={askToStartFreshList}
               validationIssues={activeValidationIssues}
             />
           )}
@@ -901,6 +977,7 @@ function MainApp() {
           cancelLabel="نه، برگرد"
           onConfirm={startFreshList}
           onCancel={() => setFreshConfirmOpen(false)}
+          observeControl="start_new_products"
         />
       )}
 
@@ -932,7 +1009,7 @@ function BasalamSuccessDialog({ onConfirm }: { onConfirm: () => void }) {
         <h2 id="success-title">محصول‌ها به غرفه اضافه شدند</h2>
         <p>ثبت محصول‌ها با موفقیت انجام شد. حالا می‌تونی محصولات بعدی را اضافه کنی.</p>
         <div className="modal-actions">
-          <button className="button primary" type="button" onClick={onConfirm}>
+          <button data-observe-control="start_new_products" className="button primary" type="button" onClick={onConfirm}>
             <Upload size={18} />
             افزودن محصولات بعدی
           </button>
@@ -1287,6 +1364,7 @@ function PlatformChooser({ platform, onChange }: { platform: Platform | null; on
   return (
     <section className="platform-chooser" aria-label="انتخاب مسیر فروشگاه">
       <button
+        data-observe-control="change_platform"
         className={`platform-card ${platform === 'basalam' ? 'active' : ''}`}
         type="button"
         onClick={() => onChange('basalam')}
@@ -1295,6 +1373,7 @@ function PlatformChooser({ platform, onChange }: { platform: Platform | null; on
         <strong>افزودن محصولات به باسلام</strong>
       </button>
       <button
+        data-observe-control="change_platform"
         className={`platform-card ${platform === 'torob' ? 'active' : ''}`}
         type="button"
         onClick={() => onChange('torob')}
@@ -1326,7 +1405,7 @@ function TorobPanel({
       <div className="torob-panel-head">
         <Store size={18} />
         <strong>فروشگاه ترب</strong>
-        <button className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
+        <button data-observe-control="change_platform" className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
           تغییر مسیر
         </button>
       </div>
@@ -1357,6 +1436,7 @@ function UploadPanel({
   uploadingImages,
   uploadingAudio,
   uploadDisabled,
+  uploadDisabledReason,
   voiceDisabled,
   onUpload,
   onDeleteAsset,
@@ -1367,14 +1447,60 @@ function UploadPanel({
   uploadingImages: boolean;
   uploadingAudio: boolean;
   uploadDisabled: boolean;
+  uploadDisabledReason: 'list_exists' | 'processing' | null;
   voiceDisabled: boolean;
-  onUpload: (files: File[]) => void;
+  onUpload: (files: File[], control?: ObservedControl) => void;
   onDeleteAsset: (assetId: number) => void;
 }) {
+  const pickerAttemptRef = useRef<string | null>(null);
+
   function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
+    const control = (event.target.dataset.control ?? 'photo_drop_zone') as 'photo_drop_zone' | 'add_photo_button';
+    trackEvent('image_files_selected', { control, file_count: files.length });
+    const attemptId = pickerAttemptRef.current;
+    if (attemptId && files.length > 0) {
+      void api.reportUxEvent({
+        event: 'image_files_selected',
+        control,
+        attempt_id: attemptId,
+        file_count: files.length,
+      }).catch(() => undefined);
+    }
+    pickerAttemptRef.current = null;
     event.target.value = '';
-    onUpload(files);
+    if (files.length > 0) onUpload(files, control);
+  }
+
+  function reportBlocked(control: 'photo_drop_zone' | 'add_photo_button') {
+    if (!uploadDisabledReason) return;
+    trackEvent('image_picker_blocked', { control, reason: uploadDisabledReason });
+    void api.reportUxEvent({
+      event: 'image_picker_blocked',
+      control,
+      reason: uploadDisabledReason,
+    }).catch(() => undefined);
+  }
+
+  function reportPickerOpened(control: 'photo_drop_zone' | 'add_photo_button') {
+    const attemptId = createPickerAttemptId();
+    pickerAttemptRef.current = attemptId;
+    trackEvent('image_picker_opened', { control, state: 'ready' });
+    void api.reportUxEvent({ event: 'image_picker_opened', control, attempt_id: attemptId }).catch(() => undefined);
+  }
+
+  function reportPickerCancelled(control: 'photo_drop_zone' | 'add_photo_button') {
+    const attemptId = pickerAttemptRef.current;
+    if (!attemptId) return;
+    trackEvent('image_picker_cancelled', { control });
+    void api.reportUxEvent({ event: 'image_picker_cancelled', control, attempt_id: attemptId }).catch(() => undefined);
+    pickerAttemptRef.current = null;
+  }
+
+  function bindPickerCancel(input: HTMLInputElement | null, control: 'photo_drop_zone' | 'add_photo_button') {
+    if (!input || input.dataset.cancelListener === 'true') return;
+    input.dataset.cancelListener = 'true';
+    input.addEventListener('cancel', () => reportPickerCancelled(control));
   }
 
   return (
@@ -1385,17 +1511,45 @@ function UploadPanel({
           <p>هرچی محصول داری می‌تونی عکسش رو بذاری.</p>
         </div>
         {images.length > 0 && (
-          <label className={`button primary file-button ${uploading || uploadDisabled ? 'disabled' : ''}`} aria-disabled={uploading || uploadDisabled}>
+          <label
+            data-observe-control="add_photo_button"
+            className={`button primary file-button ${uploading || uploadDisabled ? 'disabled' : ''}`}
+            aria-disabled={uploading || uploadDisabled}
+            onClick={() => uploadDisabled && reportBlocked('add_photo_button')}
+          >
             {uploadingImages ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
             افزودن عکس
-            <input type="file" accept="image/*" multiple disabled={uploading || uploadDisabled} onChange={handleFileInput} />
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              data-control="add_photo_button"
+              ref={(input) => bindPickerCancel(input, 'add_photo_button')}
+              disabled={uploading || uploadDisabled}
+              onClick={() => reportPickerOpened('add_photo_button')}
+              onChange={handleFileInput}
+            />
           </label>
         )}
       </div>
 
       {images.length === 0 ? (
-        <label className={`drop-zone ${uploading || uploadDisabled ? 'disabled' : ''}`}>
-          <input type="file" accept="image/*" multiple disabled={uploading || uploadDisabled} onChange={handleFileInput} />
+        <label
+          data-observe-control="photo_drop_zone"
+          className={`drop-zone ${uploading || uploadDisabled ? 'disabled' : ''}`}
+          aria-disabled={uploading || uploadDisabled}
+          onClick={() => uploadDisabled && reportBlocked('photo_drop_zone')}
+        >
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            data-control="photo_drop_zone"
+            ref={(input) => bindPickerCancel(input, 'photo_drop_zone')}
+            disabled={uploading || uploadDisabled}
+            onClick={() => reportPickerOpened('photo_drop_zone')}
+            onChange={handleFileInput}
+          />
           <span className="camera-mark">
             {uploadingImages ? <Loader2 className="spin" size={30} /> : <Upload size={30} />}
           </span>
@@ -1409,7 +1563,7 @@ function UploadPanel({
               <img src={`${API_BASE}${asset.url}`} alt={`عکس شماره ${toPersianDigits(asset.upload_order)}`} />
               <figcaption>شماره {toPersianDigits(asset.upload_order)}</figcaption>
               {!uploadDisabled && (
-                <button className="photo-delete" type="button" aria-label="حذف عکس" onClick={() => onDeleteAsset(asset.id)}>
+                <button data-observe-control="delete_photo" className="photo-delete" type="button" aria-label="حذف عکس" onClick={() => onDeleteAsset(asset.id)}>
                   <X size={15} />
                 </button>
               )}
@@ -1422,6 +1576,14 @@ function UploadPanel({
             </div>
           )}
         </div>
+      )}
+
+      {uploadDisabledReason && (
+        <p className="upload-lock-note" role="status">
+          {uploadDisabledReason === 'list_exists'
+            ? 'برای افزودن عکس‌های جدید، اول روی «افزودن محصولات جدید» بزن.'
+            : 'ساخت لیست در حال انجام است؛ بعد از تمام شدن پردازش دوباره تلاش کن.'}
+        </p>
       )}
 
       {images.length > 0 && (
@@ -1455,15 +1617,18 @@ function VoicePanel({
   const chunksRef = useRef<Blob[]>([]);
   const stoppingRef = useRef(false);
   const stopHandledRef = useRef(false);
+  const stopActionRef = useRef<ReturnType<typeof beginProductAction> | null>(null);
 
   async function toggleRecording() {
     if (recording) {
       if (stoppingRef.current) return;
+      stopActionRef.current = beginProductAction('record_voice');
       stoppingRef.current = true;
       recorderRef.current?.stop();
       setRecording(false);
       return;
     }
+    const action = beginProductAction('record_voice');
     setAskingMic(true);
     setVoiceError(null);
     let stream: MediaStream | null = null;
@@ -1483,17 +1648,23 @@ function VoicePanel({
         stream?.getTracks().forEach((track) => track.stop());
         const file = createRecordedAudioFile(chunksRef.current, recorder);
         if (!file) {
+          stopActionRef.current?.failed('unknown');
+          stopActionRef.current = null;
           setVoiceError('صدایی ضبط نشد. دوباره ضبط کن.');
           recorderRef.current = null;
           return;
         }
+        stopActionRef.current?.accepted();
+        stopActionRef.current = null;
         onUpload([file]);
         recorderRef.current = null;
       };
       recorder.start(1000);
       recorderRef.current = recorder;
       setRecording(true);
+      action.accepted();
     } catch {
+      action.failed('unknown');
       stream?.getTracks().forEach((track) => track.stop());
       setVoiceError('اجازه میکروفون داده نشد. دسترسی میکروفون را فعال کن و دوباره تلاش کن.');
     } finally {
@@ -1509,7 +1680,7 @@ function VoicePanel({
           <li>با شماره عکس محصول هم می‌تونی توضیح بدی؛ مثلا «عکس شماره ۲ قیمتش ۲۰۰ هزار تومنه».</li>
         </ul>
       <div className="voice-actions">
-        <button className={`button mic-button ${recording ? 'danger' : 'secondary'}`} type="button" onClick={toggleRecording} disabled={disabled || askingMic}>
+        <button data-observe-control="record_voice" className={`button mic-button ${recording ? 'danger' : 'secondary'}`} type="button" onClick={toggleRecording} disabled={disabled || askingMic}>
           <span className="mic-ai-icon">
             {askingMic ? <Loader2 className="spin" size={18} /> : recording ? <Pause size={18} /> : <Mic size={18} />}
             {!askingMic && !recording && <Sparkles className="mic-spark" size={10} />}
@@ -1563,7 +1734,7 @@ function BasalamPanel({
         <Store size={18} />
         <strong>غرفه باسلام</strong>
       </div>
-      <button className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
+      <button data-observe-control="change_platform" className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
         تغییر مسیر
       </button>
       {connection ? (
@@ -1577,7 +1748,7 @@ function BasalamPanel({
       ) : (
         <>
           <p>برای ثبت مستقیم محصول‌ها، غرفه‌ات را وصل کن.</p>
-          <button className="button primary full" type="button" onClick={onConnect} disabled={connecting}>
+          <button data-observe-control="connect_basalam" className="button primary full" type="button" onClick={onConnect} disabled={connecting}>
             {connecting ? <Loader2 className="spin" size={17} /> : <Store size={17} />}
             اتصال غرفه
           </button>
@@ -1608,7 +1779,7 @@ function ProgressPanel({
       {processing ? <Loader2 className="spin" size={22} /> : failed ? <RotateCcw size={22} /> : <Check size={22} />}
       {job?.error && <div className="error inline">{humanizeProcessingError(job.error)}</div>}
       {canRetry && (
-        <button className="button secondary" type="button" onClick={onRetry}>
+        <button data-observe-control="build_product_list" className="button secondary" type="button" onClick={onRetry}>
           <RotateCcw size={18} />
           دوباره تلاش کن
         </button>
@@ -1685,7 +1856,7 @@ function PreviewPanel({
           <p>{platform === 'basalam' ? 'چک کن، اصلاح کن، بعد محصول‌ها را در غرفه ثبت کن.' : 'چک کن، اصلاح کن، بعد درخواست ترب را ثبت کن.'}</p>
         </div>
         <div className="actions">
-          <button className="button secondary" type="button" onClick={onAskStartFresh}>
+          <button data-observe-control="start_new_products" className="button secondary" type="button" onClick={onAskStartFresh}>
             <Upload size={18} />
             افزودن محصولات جدید
           </button>
@@ -1733,10 +1904,11 @@ function PreviewPanel({
           <DockPublishProblem job={publishJob} products={publishedProducts} />
         )}
         <button
+          data-observe-control={platform === 'basalam' ? 'publish_basalam' : 'submit_torob'}
           className="button primary save-list-button"
           type="button"
           onClick={platform === 'basalam' ? onPublishBasalam : onSubmitTorob}
-          disabled={saving || publishing || processing || hasValidationIssues}
+          disabled={saving || publishing || processing}
         >
           {publishing || processing ? (
             <Loader2 className="spin" size={18} />
@@ -1788,6 +1960,7 @@ function BulkPreparationBox({ onApply }: { onApply: (days: number) => void }) {
         </div>
       </label>
       <button
+        data-observe-control="apply_preparation_days"
         className="prep-apply"
         type="button"
         disabled={days === null}
@@ -1865,7 +2038,7 @@ function PublishValidationPanel({
         )}
       </div>
       <div className="dock-message-actions">
-        <button className="link-button" type="button" onClick={onGoToFirstIssue}>
+        <button data-observe-control="fill_missing_fields" className="link-button" type="button" onClick={onGoToFirstIssue}>
           تکمیل فیلدها
         </button>
         <VoiceRefineControl
@@ -1918,15 +2091,18 @@ function VoiceRefineControl({
   const stoppingRef = useRef(false);
   const stopHandledRef = useRef(false);
   const canReprocess = hasAudio || localAudioReady;
+  const stopActionRef = useRef<ReturnType<typeof beginProductAction> | null>(null);
 
   async function toggleRecording() {
     if (recording) {
       if (stoppingRef.current) return;
+      stopActionRef.current = beginProductAction('record_voice');
       stoppingRef.current = true;
       recorderRef.current?.stop();
       setRecording(false);
       return;
     }
+    const action = beginProductAction('record_voice');
     setVoiceError(null);
     setAskingMic(true);
     let stream: MediaStream | null = null;
@@ -1946,18 +2122,24 @@ function VoiceRefineControl({
         stream?.getTracks().forEach((track) => track.stop());
         const file = createRecordedAudioFile(chunksRef.current, recorder);
         if (!file) {
+          stopActionRef.current?.failed('unknown');
+          stopActionRef.current = null;
           setVoiceError('صدایی ضبط نشد. دوباره ضبط کن.');
           recorderRef.current = null;
           return;
         }
         await onUpload([file]);
+        stopActionRef.current?.accepted();
+        stopActionRef.current = null;
         setLocalAudioReady(true);
         recorderRef.current = null;
       };
       recorder.start(1000);
       recorderRef.current = recorder;
       setRecording(true);
+      action.accepted();
     } catch {
+      action.failed('unknown');
       stream?.getTracks().forEach((track) => track.stop());
       setVoiceError('اجازه میکروفون داده نشد.');
     } finally {
@@ -1967,11 +2149,11 @@ function VoiceRefineControl({
 
   return (
     <div className="voice-refine">
-      <button className="link-button" type="button" onClick={toggleRecording} disabled={askingMic || processing}>
+      <button data-observe-control="record_voice" className="link-button" type="button" onClick={toggleRecording} disabled={askingMic || processing}>
         {askingMic ? <Loader2 className="spin" size={15} /> : recording ? <Pause size={15} /> : <Mic size={15} />}
         {recording ? 'توقف ضبط' : 'ضبط صدا'}
       </button>
-      <button className="link-button primary-link" type="button" onClick={onReprocess} disabled={!canReprocess || processing || recording}>
+      <button data-observe-control="build_product_list" className="link-button primary-link" type="button" onClick={onReprocess} disabled={!canReprocess || processing || recording}>
         {processing ? <Loader2 className="spin" size={15} /> : <Sparkles size={15} />}
         بازبینی
       </button>
@@ -2123,6 +2305,7 @@ function ProductCard({
         {needsPhotoCheck && activePhoto && (
           <div className="photo-actions">
             <button
+              data-observe-control="split_photo"
               className="split-photo-button"
               type="button"
               onClick={() => onSplitPhoto(item.id, activePhoto.asset_id)}
@@ -2297,6 +2480,12 @@ function BasalamCategoryPicker({
     }
   }
 
+  function toggleCategoryEditor() {
+    const action = beginProductAction('category_picker');
+    setEditing((value) => !value);
+    action.accepted();
+  }
+
   return (
     <div className={`category-picker ${needsCategory ? 'needs-category' : ''} ${hasValidationError ? 'missing' : ''}`}>
       <div className="category-current">
@@ -2307,7 +2496,7 @@ function BasalamCategoryPicker({
           <strong>انتخاب نشده</strong>
         )}
         {!needsCategory && (
-          <button className="category-edit-button" type="button" onClick={() => setEditing((value) => !value)}>
+          <button data-observe-control="category_picker" className="category-edit-button" type="button" onClick={toggleCategoryEditor}>
             {editing ? 'بستن' : 'تغییر'}
           </button>
         )}
@@ -2337,6 +2526,7 @@ function BasalamCategoryPicker({
             <div className="category-results">
               {results.map((category) => (
                 <button
+                  data-observe-control="category_picker"
                   key={category.id}
                   type="button"
                   onClick={() => selectCategory(category)}
@@ -2361,6 +2551,7 @@ function ConfirmDialog({
   cancelLabel,
   onConfirm,
   onCancel,
+  observeControl,
 }: {
   title: string;
   body: string;
@@ -2368,6 +2559,7 @@ function ConfirmDialog({
   cancelLabel?: string;
   onConfirm: () => void;
   onCancel?: () => void;
+  observeControl?: ObservedControl;
 }) {
   return (
     <div className="modal-backdrop" role="presentation">
@@ -2380,7 +2572,7 @@ function ConfirmDialog({
               {cancelLabel}
             </button>
           )}
-          <button className="button primary" type="button" onClick={onConfirm}>
+          <button data-observe-control={observeControl} className="button primary" type="button" onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>
@@ -2635,8 +2827,19 @@ function validateItemsForBasalam(items: ProductItem[], drafts: DraftMap): Publis
       if (parseStockValue(draft.stock) === null) fields.push('stock');
       const preparationDays = parsePositiveInt(draft.preparation_days);
       if (preparationDays === null) fields.push('preparation_days');
-      if (parsePositiveInt(draft.weight_grams) === null) fields.push('weight_grams');
-      if (parsePositiveInt(draft.package_weight_grams) === null) fields.push('package_weight_grams');
+      const weightGrams = parsePositiveInt(draft.weight_grams);
+      const packageWeightGrams = parsePositiveInt(draft.package_weight_grams);
+      if (weightGrams === null) fields.push('weight_grams');
+      if (packageWeightGrams === null) fields.push('package_weight_grams');
+      if (
+        weightGrams !== null &&
+        packageWeightGrams !== null &&
+        weightGrams > 100 &&
+        packageWeightGrams > weightGrams * 3 &&
+        !fields.includes('package_weight_grams')
+      ) {
+        fields.push('package_weight_grams');
+      }
       if (parsePositiveInt(draft.unit_quantity) === null) fields.push('unit_quantity');
       const category = item.basalam_category;
       const categoryIsReady = Boolean(category?.category_id);
@@ -2683,6 +2886,15 @@ function parsePositiveInt(value: string): number | null {
 function parseStockValue(value: string): number | null {
   const parsed = parseNullableInt(value);
   return parsed !== null && parsed >= 0 ? parsed : null;
+}
+
+function createPickerAttemptId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = character === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
 }
 
 async function prepareFilesForUpload(files: File[]): Promise<File[]> {
@@ -2769,6 +2981,9 @@ function imageUploadName(name: string): string {
 function humanizePublishError(error: string | null): string {
   if (!error) return 'این محصول ثبت نشد. فیلدهای قیمت، عکس و دسته‌بندی را چک کن.';
   const normalized = error.toLowerCase();
+  if (normalized.includes('package_weight') || normalized.includes('وزن با بسته‌بندی')) {
+    return 'برای محصول بالای ۱۰۰ گرم، وزن با بسته‌بندی حداکثر سه برابر وزن محصول است.';
+  }
   if (/product\(s\) failed|product failed/i.test(error)) {
     return 'ثبت این محصول ناموفق بود. فیلدهای لازم را چک کن و دوباره تلاش کن.';
   }
