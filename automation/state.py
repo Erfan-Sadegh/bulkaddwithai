@@ -33,11 +33,9 @@ def save_state(root: Path, state: dict) -> None:
 
 
 def phase_for_completed_runs(completed_runs: int) -> tuple[str, int]:
-    if completed_runs < 7:
-        return "report_only", 0
-    if completed_runs < 21:
-        return "one_fix", 1
-    return "guarded", 3
+    # Scheduled autonomy is diagnosis-only. Product changes always require an
+    # explicit human instruction, regardless of how long the agent has run.
+    return "diagnosis", 0
 
 
 TEHRAN = timezone(timedelta(hours=3, minutes=30))
@@ -96,7 +94,7 @@ def apply_retention(root: Path, days: int = 30) -> None:
         protected = any(
             fix.get("pr_state") in {"open", "rollback", "failed"}
             for fix in report.get("fixes", [])
-        )
+        ) or any(item.get("status") == "reproduced" for item in report.get("diagnoses", []))
         if started < cutoff and not protected:
             shutil.rmtree(run_dir)
 

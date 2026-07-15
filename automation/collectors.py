@@ -27,6 +27,7 @@ EVENT_PRIORITY = {
     "image_upload_rejected": "ux",
     "image_picker_blocked": "ux",
     "image_picker_unresponsive": "ux",
+    "ui_rage_click": "ux",
     "http_response_failed": "high",
 }
 EVENT_PATTERN = re.compile(r"\b(" + "|".join(map(re.escape, EVENT_PRIORITY)) + r")\b")

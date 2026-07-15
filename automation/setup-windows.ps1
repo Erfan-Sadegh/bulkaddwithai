@@ -59,4 +59,4 @@ $shortcut.Save()
 
 Write-Host "Scheduled task installed every $EveryHours hours, anchored at $At."
 Write-Host "Dashboard shortcut: $shortcutPath"
-Write-Host "The first seven calendar days are report-only; remediation remains limited to once per day."
+Write-Host "Every run may diagnose and prove issues with tests; product fixes always require explicit human instruction."

@@ -9,7 +9,7 @@ vi.mock('@sentry/react', () => ({
 }));
 
 import * as Sentry from '@sentry/react';
-import { captureApiFailure, getRequestId, trackEvent } from './telemetry';
+import { captureApiFailure, getRequestId, installInteractionObserver, trackEvent } from './telemetry';
 
 describe('telemetry', () => {
   beforeEach(() => {
@@ -40,5 +40,40 @@ describe('telemetry', () => {
 
     expect(Sentry.captureMessage).toHaveBeenCalledWith('frontend_http_request_failed', 'warning');
     expect(window.clarity).toHaveBeenCalledWith('set', 'path', '/integrations/basalam/callback');
+  });
+
+  it('reports repeated clicks with the exact allowlisted product control', () => {
+    vi.useFakeTimers();
+    const report = vi.fn();
+    const stop = installInteractionObserver(report);
+    const button = document.createElement('button');
+    button.dataset.observeControl = 'build_product_list';
+    document.body.append(button);
+
+    button.click();
+    vi.advanceTimersByTime(100);
+    button.click();
+    vi.advanceTimersByTime(100);
+    button.click();
+
+    expect(report).toHaveBeenCalledWith({ event: 'ui_rage_click', control: 'build_product_list', click_count: 3 });
+    expect(window.clarity).toHaveBeenCalledWith('event', 'ui_rage_click');
+    stop();
+    vi.useRealTimers();
+  });
+
+  it('ignores repeated clicks on uninstrumented elements', () => {
+    const report = vi.fn();
+    const stop = installInteractionObserver(report);
+    const button = document.createElement('button');
+    button.textContent = 'private user-facing text';
+    document.body.append(button);
+
+    button.click();
+    button.click();
+    button.click();
+
+    expect(report).not.toHaveBeenCalled();
+    stop();
   });
 });

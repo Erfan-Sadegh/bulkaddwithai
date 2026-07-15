@@ -231,6 +231,14 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
             "/observability/ux-events",
             json={"event": "image_files_selected", "control": "photo_drop_zone", "file_count": 2},
         )
+        rage = test_client.post(
+            "/observability/ux-events",
+            json={"event": "ui_rage_click", "control": "build_product_list", "click_count": 4},
+        )
+        invalid_rage = test_client.post(
+            "/observability/ux-events",
+            json={"event": "ui_rage_click", "control": "private_user_text", "click_count": 4},
+        )
         feed = test_client.get(
             "/observability/events",
             headers={"Authorization": "Bearer collector-only-token"},
@@ -241,11 +249,15 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
     assert opened.status_code == 204
     assert selected.status_code == 204
     assert invalid_selected.status_code == 422
+    assert rage.status_code == 204
+    assert invalid_rage.status_code == 422
     events = {item["event"]: item for item in feed.json()}
     assert events["image_picker_blocked"]["control"] == "add_photo_button"
     assert events["image_picker_blocked"]["reason"] == "list_exists"
     assert events["image_picker_opened"]["attempt_id"] == "11111111-1111-4111-8111-111111111111"
     assert events["image_files_selected"]["file_count"] == 2
+    assert events["ui_rage_click"]["control"] == "build_product_list"
+    assert events["ui_rage_click"]["click_count"] == 4
 
 
 def test_failed_published_product_is_exported_safely_even_without_transient_log_event(tmp_path):

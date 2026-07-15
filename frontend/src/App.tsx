@@ -18,7 +18,7 @@ import type { ChangeEvent, MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { API_BASE, api } from './lib/api';
-import { trackEvent } from './lib/telemetry';
+import { installInteractionObserver, trackEvent } from './lib/telemetry';
 import type {
   Asset,
   BasalamCategory,
@@ -152,6 +152,11 @@ function MainApp() {
   const torobSubmittingRef = useRef(false);
   const draftTouchedRef = useRef<DraftTouchedMap>({});
   const voiceNudgeShownBatchIdRef = useRef<number | null>(null);
+
+  useEffect(
+    () => installInteractionObserver((event) => void api.reportUxEvent(event).catch(() => undefined)),
+    [],
+  );
 
   const imageAssets = useMemo(
     () => assets.filter((asset) => asset.type === 'image').sort((a, b) => a.upload_order - b.upload_order),
@@ -833,7 +838,7 @@ function MainApp() {
 
           {platform && batch && hasPhotos && items.length === 0 && (
             <div className="sticky-action">
-              <button className="button primary action-button" type="button" onClick={processBatch} disabled={!canProcess}>
+              <button data-observe-control="build_product_list" className="button primary action-button" type="button" onClick={processBatch} disabled={!canProcess}>
                 {processing ? <Loader2 className="spin" size={19} /> : <Sparkles size={19} />}
                 {processing ? 'در حال ساخت لیست' : 'ساخت لیست محصولات با هوش مصنوعی'}
               </button>
@@ -1328,7 +1333,7 @@ function TorobPanel({
       <div className="torob-panel-head">
         <Store size={18} />
         <strong>فروشگاه ترب</strong>
-        <button className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
+        <button data-observe-control="change_platform" className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
           تغییر مسیر
         </button>
       </div>
@@ -1435,6 +1440,7 @@ function UploadPanel({
         </div>
         {images.length > 0 && (
           <label
+            data-observe-control="add_photo_button"
             className={`button primary file-button ${uploading || uploadDisabled ? 'disabled' : ''}`}
             aria-disabled={uploading || uploadDisabled}
             onClick={() => uploadDisabled && reportBlocked('add_photo_button')}
@@ -1457,6 +1463,7 @@ function UploadPanel({
 
       {images.length === 0 ? (
         <label
+          data-observe-control="photo_drop_zone"
           className={`drop-zone ${uploading || uploadDisabled ? 'disabled' : ''}`}
           aria-disabled={uploading || uploadDisabled}
           onClick={() => uploadDisabled && reportBlocked('photo_drop_zone')}
@@ -1484,7 +1491,7 @@ function UploadPanel({
               <img src={`${API_BASE}${asset.url}`} alt={`عکس شماره ${toPersianDigits(asset.upload_order)}`} />
               <figcaption>شماره {toPersianDigits(asset.upload_order)}</figcaption>
               {!uploadDisabled && (
-                <button className="photo-delete" type="button" aria-label="حذف عکس" onClick={() => onDeleteAsset(asset.id)}>
+                <button data-observe-control="delete_photo" className="photo-delete" type="button" aria-label="حذف عکس" onClick={() => onDeleteAsset(asset.id)}>
                   <X size={15} />
                 </button>
               )}
@@ -1592,7 +1599,7 @@ function VoicePanel({
           <li>با شماره عکس محصول هم می‌تونی توضیح بدی؛ مثلا «عکس شماره ۲ قیمتش ۲۰۰ هزار تومنه».</li>
         </ul>
       <div className="voice-actions">
-        <button className={`button mic-button ${recording ? 'danger' : 'secondary'}`} type="button" onClick={toggleRecording} disabled={disabled || askingMic}>
+        <button data-observe-control="record_voice" className={`button mic-button ${recording ? 'danger' : 'secondary'}`} type="button" onClick={toggleRecording} disabled={disabled || askingMic}>
           <span className="mic-ai-icon">
             {askingMic ? <Loader2 className="spin" size={18} /> : recording ? <Pause size={18} /> : <Mic size={18} />}
             {!askingMic && !recording && <Sparkles className="mic-spark" size={10} />}
@@ -1646,7 +1653,7 @@ function BasalamPanel({
         <Store size={18} />
         <strong>غرفه باسلام</strong>
       </div>
-      <button className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
+      <button data-observe-control="change_platform" className="link-button change-platform-button" type="button" onClick={onChangePlatform}>
         تغییر مسیر
       </button>
       {connection ? (
@@ -1768,7 +1775,7 @@ function PreviewPanel({
           <p>{platform === 'basalam' ? 'چک کن، اصلاح کن، بعد محصول‌ها را در غرفه ثبت کن.' : 'چک کن، اصلاح کن، بعد درخواست ترب را ثبت کن.'}</p>
         </div>
         <div className="actions">
-          <button className="button secondary" type="button" onClick={onAskStartFresh}>
+          <button data-observe-control="start_new_products" className="button secondary" type="button" onClick={onAskStartFresh}>
             <Upload size={18} />
             افزودن محصولات جدید
           </button>
@@ -1816,6 +1823,7 @@ function PreviewPanel({
           <DockPublishProblem job={publishJob} products={publishedProducts} />
         )}
         <button
+          data-observe-control={platform === 'basalam' ? (basalamConnected ? 'publish_basalam' : 'connect_basalam') : 'submit_torob'}
           className="button primary save-list-button"
           type="button"
           onClick={platform === 'basalam' ? onPublishBasalam : onSubmitTorob}
@@ -2206,6 +2214,7 @@ function ProductCard({
         {needsPhotoCheck && activePhoto && (
           <div className="photo-actions">
             <button
+              data-observe-control="split_photo"
               className="split-photo-button"
               type="button"
               onClick={() => onSplitPhoto(item.id, activePhoto.asset_id)}

@@ -12,6 +12,20 @@ declare global {
 const SENSITIVE_TAG = /(token|secret|password|authorization|mobile|phone|name|title|description|transcript|voice|payload)/i;
 const EVENT_NAME = /^[a-z][a-z0-9_]{1,63}$/;
 const REQUEST_ID_KEY = 'bulkadd_request_id';
+export type ObservedControl =
+  | 'photo_drop_zone'
+  | 'add_photo_button'
+  | 'build_product_list'
+  | 'publish_basalam'
+  | 'submit_torob'
+  | 'connect_basalam'
+  | 'record_voice'
+  | 'change_platform'
+  | 'delete_photo'
+  | 'split_photo'
+  | 'start_new_products';
+
+type RageClickEvent = { event: 'ui_rage_click'; control: ObservedControl; click_count: number };
 
 export function initializeTelemetry(): void {
   const dsn = import.meta.env.VITE_SENTRY_DSN;
@@ -64,6 +78,26 @@ export function captureApiFailure(path: string, status: number | null, requestId
     Object.entries(tags).forEach(([key, value]) => scope.setTag(key, value));
     Sentry.captureMessage('frontend_http_request_failed', 'warning');
   });
+}
+
+export function installInteractionObserver(report: (event: RageClickEvent) => void): () => void {
+  const clicks = new Map<ObservedControl, number[]>();
+  const lastReported = new Map<ObservedControl, number>();
+  const handler = (event: MouseEvent) => {
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-observe-control]') : null;
+    const control = target?.dataset.observeControl as ObservedControl | undefined;
+    if (!control) return;
+    const now = Date.now();
+    const recent = [...(clicks.get(control) ?? []), now].filter((timestamp) => now - timestamp <= 1500);
+    clicks.set(control, recent);
+    if (recent.length < 3 || now - (lastReported.get(control) ?? 0) < 5000) return;
+    lastReported.set(control, now);
+    const payload: RageClickEvent = { event: 'ui_rage_click', control, click_count: Math.min(recent.length, 12) };
+    trackEvent(payload.event, { control: payload.control, click_count: payload.click_count });
+    report(payload);
+  };
+  document.addEventListener('click', handler, true);
+  return () => document.removeEventListener('click', handler, true);
 }
 
 function sanitizeTags(tags: Record<string, SafeTagValue>): Record<string, string> {

@@ -26,6 +26,7 @@ class Signal:
             self.evidence.get("issue_id")
             or self.evidence.get("path")
             or self.evidence.get("metric")
+            or self.evidence.get("control")
             or self.evidence.get("stage")
             or ""
         )
@@ -60,6 +61,7 @@ class RunReport:
     status: str = "running"
     signals: list[dict[str, Any]] = field(default_factory=list)
     candidates: list[dict[str, Any]] = field(default_factory=list)
+    diagnoses: list[dict[str, Any]] = field(default_factory=list)
     fixes: list[dict[str, Any]] = field(default_factory=list)
     source_health: dict[str, str] = field(default_factory=dict)
     finished_at: str | None = None

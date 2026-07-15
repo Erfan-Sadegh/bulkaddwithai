@@ -28,6 +28,7 @@ STATUS = {
 }
 
 PHASES = {
+    "diagnosis": "کشف و اثبات خودکار؛ اصلاح فقط با اجازه شما",
     "report_only": "پایش و گزارش‌گیری",
     "monitoring": "پایش سه‌ساعته (بدون تغییر کد)",
     "one_fix": "اصلاح محدود (حداکثر یک مورد)",
@@ -46,6 +47,11 @@ EVENTS = {
     "image_upload_rejected": "رد شدن تصویر هنگام بارگذاری",
     "image_picker_blocked": "کلیک روی آپلود در زمانی که افزودن عکس قفل بود",
     "image_picker_unresponsive": "بازشدن آپلود بدون انتخاب یا لغو قابل‌تشخیص",
+    "ui_rage_click": "کلیک عصبی روی یک کنترل مشخص محصول",
+    "dead_click_count": "کلیک بی‌نتیجه گزارش‌شده در Clarity",
+    "rage_click_count": "کلیک عصبی گزارش‌شده در Clarity",
+    "error_click_count": "کلیک منجر به خطا در Clarity",
+    "script_error_count": "خطای JavaScript در Clarity",
     "processing_job_failed": "ناموفق بودن پردازش هوش مصنوعی",
     "http_request_failed": "خطای داخلی درخواست",
     "http_response_failed": "پاسخ ناموفق سرور",
@@ -145,8 +151,9 @@ def _run_html(report: dict, run_dir: Path) -> str:
     timeline = _timeline(report)
     sources = _sources_html(report.get("source_health", {}))
     candidates = "".join(_candidate_html(candidate, run_dir) for candidate in report.get("candidates", []))
+    diagnoses = "".join(_diagnosis_html(item) for item in report.get("diagnoses", []))
     fixes = "".join(_fix_html(fix) for fix in report.get("fixes", []))
-    findings = candidates + fixes
+    findings = candidates + diagnoses + fixes
     if not findings:
         findings = '<div class="empty good"><h2>✅ مشکل قابل اقدامی پیدا نشد</h2><p>هیچ باگی که نیاز به بررسی یا اصلاح داشته باشد دیده نشد.</p></div>'
 
@@ -201,15 +208,34 @@ def _fix_html(fix: dict) -> str:
     )
 
 
+def _diagnosis_html(diagnosis: dict) -> str:
+    status_key = diagnosis.get("status", "insufficient_evidence")
+    icon, label = STATUS.get(status_key, ("⚠", str(status_key)))
+    files = "، ".join(diagnosis.get("test_files", [])) or "تستی ساخته نشد"
+    return (
+        '<article class="finding diagnosis">'
+        f'<div class="finding-head"><h2>{icon} نتیجه بازسازی: {html.escape(diagnosis.get("title_fa", "یافته"))}</h2>'
+        f'<span class="badge">{html.escape(label)}</span></div>'
+        f'<p>{html.escape(diagnosis.get("summary_fa", ""))}</p>'
+        f'<p><b>فایل تست:</b> {html.escape(files)}</p>'
+        '<div class="notice">هیچ اصلاحی انجام نشده است. اگر می‌خواهی رفع شود، دستور اصلاح همین مورد را بده.</div>'
+        '</article>'
+    )
+
+
 def _short_outcome(report: dict) -> str:
     if report.get("status") != "completed":
         return "اجرا کامل نشد؛ جزئیات خطا داخل گزارش است."
     fixes = report.get("fixes", [])
+    diagnoses = report.get("diagnoses", [])
     candidates = report.get("candidates", [])
     if any(item.get("status") == "ready_for_review" for item in fixes):
         return "یک اصلاح با تست و بازبینی آمادهٔ تصمیم شماست."
     if fixes:
         return f"{_fa_number(len(fixes))} تلاش اصلاح انجام شد؛ نتیجه داخل گزارش آمده است."
+    reproduced = [item for item in diagnoses if item.get("status") == "reproduced"]
+    if reproduced:
+        return f"{_fa_number(len(reproduced))} مشکل با تست بازسازی و اثبات شد؛ منتظر دستور شما برای اصلاح است."
     if candidates:
         return f"{_fa_number(len(candidates))} سیگنال نیازمند بررسی دیده شد؛ هنوز باگی با تست اثبات نشده است."
     return "مشکل قابل اقدامی پیدا نشد."
@@ -219,8 +245,11 @@ def _next_action(report: dict) -> str:
     if report.get("status") != "completed":
         return "جزئیات خطا را بررسی کن؛ هیچ تغییری روی محصول اعمال نشده است."
     fixes = report.get("fixes", [])
+    diagnoses = report.get("diagnoses", [])
     if any(item.get("status") == "ready_for_review" for item in fixes):
         return "PR را ببین و فقط اگر شواهد برایت روشن بود، دربارهٔ merge تصمیم بگیر."
+    if any(item.get("status") == "reproduced" for item in diagnoses):
+        return "مشکل اثبات شده است؛ اگر تأیید می‌کنی دستور بده همین مورد با TDD اصلاح و review شود."
     if report.get("phase") == "report_only":
         return "فعلاً کاری از شما لازم نیست؛ عامل در این مرحله اجازه تغییر کد نداشت."
     if report.get("phase") == "monitoring":
@@ -255,8 +284,13 @@ def _timeline(report: dict) -> str:
         steps.append(f"{event}{context}، {_fa_number(count)} بار ثبت شد.")
     if report.get("candidates"):
         steps.append("عامل شواهد را تحلیل کرد، اما هنوز هیچ باگی با regression test اثبات نشد.")
-    if report.get("phase") == "report_only":
-        steps.append("به‌دلیل دورهٔ هفت‌شبِ فقط‌گزارش، کد تغییر نکرد، تست اصلاح اجرا نشد و PR ساخته نشد.")
+    if report.get("phase") == "diagnosis":
+        if any(item.get("status") == "reproduced" for item in report.get("diagnoses", [])):
+            steps.append("عامل بدون تغییر کد محصول، regression test نوشت و مشکل را روی نسخه فعلی بازسازی کرد؛ اصلاح منتظر اجازه شماست.")
+        else:
+            steps.append("عامل برای بازسازی کنترل‌شده تلاش کرد، اما در این اجرا مشکل با تست اثبات نشد؛ کد محصول دست‌نخورده ماند.")
+    elif report.get("phase") == "report_only":
+        steps.append("این اجرا عمداً با گزینهٔ فقط‌گزارش اجرا شد؛ کد تغییر نکرد و تست بازسازی اجرا نشد.")
     elif report.get("phase") == "monitoring":
         steps.append("این نوبت پایش سه‌ساعته بود؛ برای جلوگیری از اصلاح تکراری، کد فقط در پنجرهٔ روزانه می‌تواند تغییر کند.")
     elif not report.get("fixes"):

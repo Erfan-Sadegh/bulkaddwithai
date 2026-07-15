@@ -102,7 +102,7 @@ def run_self_improvement_simulation(root: Path) -> dict[str, object]:
                 ),
                 encoding="utf-8",
             )
-        elif output.name == "reproducer-message.txt":
+        elif output.name in {"reproducer-message.txt", "diagnosis-message.txt"}:
             (cwd / "backend" / "tests" / "test_calc.py").write_text(
                 "import unittest\n\nfrom calc import add\n\n"
                 "class CalcRegressionTest(unittest.TestCase):\n"
@@ -124,6 +124,8 @@ def run_self_improvement_simulation(root: Path) -> dict[str, object]:
         patch.object(runner, "_run", side_effect=simulated_run),
         patch.dict(os.environ, {"GITHUB_TOKEN": ""}, clear=False),
     ):
+        diagnosis = runner.attempt_diagnosis(repo, state, run_dir, candidate, policy)
+        source_after_diagnosis = (repo / "backend" / "calc.py").read_text(encoding="utf-8")
         fix = runner.attempt_fix(repo, state, run_dir, candidate, policy)
 
     report = {
@@ -133,6 +135,7 @@ def run_self_improvement_simulation(root: Path) -> dict[str, object]:
         "phase": "simulation",
         "signals": [signal.to_dict()],
         "candidates": [candidate.to_dict()],
+        "diagnoses": [diagnosis],
         "fixes": [fix],
         "source_health": {"synthetic_local_log": "ok (1)"},
     }
@@ -142,6 +145,8 @@ def run_self_improvement_simulation(root: Path) -> dict[str, object]:
     worktrees = state / "worktrees"
     return {
         "signal_count": len(signals),
+        "diagnosis_status": diagnosis["status"],
+        "source_unchanged_after_diagnosis": source_after_diagnosis == "def add(left, right):\n    return left + right + 1\n",
         "fix_status": fix["status"],
         "regression_before_exit": _last_exit(run_dir / "regression-before.txt"),
         "final_test_exit": _last_exit(run_dir / "test-results.txt"),

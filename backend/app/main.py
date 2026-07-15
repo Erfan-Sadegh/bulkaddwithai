@@ -242,7 +242,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/observability/ux-events", status_code=204)
     def post_ux_event(payload: UxEventCreate):
         # The schema accepts no user text, URL, identifier, or arbitrary event.
-        if payload.event == "image_picker_blocked":
+        if payload.event == "ui_rage_click":
+            ux_logger.warning("%s control=%s click_count=%s", payload.event, payload.control, payload.click_count)
+        elif payload.event == "image_picker_blocked":
             ux_logger.info("%s control=%s reason=%s", payload.event, payload.control, payload.reason)
         elif payload.event == "image_files_selected":
             ux_logger.info(

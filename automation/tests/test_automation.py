@@ -12,8 +12,10 @@ from pathlib import Path
 
 from unittest.mock import patch
 
+from automation import runner
 from automation.collectors import CollectorError, collect_clarity, collect_local_logs, collect_product_events
 from automation.dashboard import rebuild_dashboard, write_run_report
+from automation.models import Candidate, Signal
 from automation.security import (
     redact_text,
     sanitize,
@@ -153,6 +155,28 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(signals[0].count, 4)
         self.assertEqual(signals[0].evidence["stage"], "vision_extracting")
 
+    def test_product_event_collector_keeps_exact_control_for_product_rage_click(self):
+        payload = [
+            {
+                "event": "ui_rage_click",
+                "control": "build_product_list",
+                "click_count": 5,
+                "count": 1,
+                "last_seen_at": "2026-07-15T00:00:00Z",
+            }
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        self.assertEqual(signals[0].event, "ui_rage_click")
+        self.assertEqual(signals[0].evidence["control"], "build_product_list")
+        self.assertEqual(signals[0].evidence["click_count"], 5)
+
     def test_product_event_collector_detects_repeated_picker_opens_without_terminal_event(self):
         payload = [
             {
@@ -233,7 +257,11 @@ class AutomationTests(unittest.TestCase):
             },
             {
                 "metricName": "RageClickCount",
-                "information": [{"sessionsCount": "44", "subTotal": "0"}],
+                "information": [{"sessionsCount": "44", "subTotal": "7"}],
+            },
+            {
+                "metricName": "ScriptErrorCount",
+                "information": [{"sessionsCount": "44", "subTotal": "3"}],
             },
             {
                 "metricName": "Traffic",
@@ -248,8 +276,9 @@ class AutomationTests(unittest.TestCase):
 
         by_event = {signal.event: signal for signal in signals}
         self.assertEqual(by_event["dead_click_count"].count, 8)
+        self.assertEqual(by_event["rage_click_count"].count, 7)
+        self.assertEqual(by_event["script_error_count"].count, 3)
         self.assertEqual(by_event["clarity_traffic"].count, 44)
-        self.assertNotIn("rage_click_count", by_event)
 
     def test_product_event_collector_only_requests_the_last_24_hours(self):
         now = datetime(2026, 7, 15, 0, 0, tzinfo=timezone.utc)
@@ -271,6 +300,8 @@ class AutomationTests(unittest.TestCase):
             result = run_self_improvement_simulation(Path(temporary))
 
         self.assertEqual(result["signal_count"], 1)
+        self.assertEqual(result["diagnosis_status"], "reproduced")
+        self.assertTrue(result["source_unchanged_after_diagnosis"])
         self.assertEqual(result["fix_status"], "fixed_in_test")
         self.assertEqual(result["regression_before_exit"], 1)
         self.assertEqual(result["final_test_exit"], 0)
@@ -278,11 +309,73 @@ class AutomationTests(unittest.TestCase):
         self.assertTrue(result["dashboard_created"])
         self.assertTrue(result["worktree_cleaned"])
 
-    def test_rollout_phases_are_conservative(self):
-        self.assertEqual(phase_for_completed_runs(0), ("report_only", 0))
-        self.assertEqual(phase_for_completed_runs(6), ("report_only", 0))
-        self.assertEqual(phase_for_completed_runs(7), ("one_fix", 1))
-        self.assertEqual(phase_for_completed_runs(21), ("guarded", 3))
+    def test_every_run_diagnoses_but_never_auto_fixes(self):
+        self.assertEqual(phase_for_completed_runs(0), ("diagnosis", 0))
+        self.assertEqual(phase_for_completed_runs(100), ("diagnosis", 0))
+
+    def test_scheduled_run_reproduces_candidates_without_calling_fixer(self):
+        signal = Signal(source="product_events", event="processing_job_failed", priority="high", summary_fa="failed")
+        candidate = Candidate(
+            fingerprint="candidate-1",
+            title_fa="خطای خواندن عکس",
+            problem_fa="عکس سالم خوانده نشده است.",
+            priority="high",
+            confidence=0.9,
+            evidence=[signal.to_dict()],
+            reproducible_hint="با تصویر ساختگی بازسازی شود.",
+        )
+        policy = {"limits": {"retention_days": 30, "max_diagnoses_per_run": 3}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(runner, "collect_all", return_value=[signal]),
+                patch.object(runner, "triage", return_value=[candidate]),
+                patch.object(runner, "attempt_diagnosis", return_value={"fingerprint": "candidate-1", "status": "reproduced"}) as diagnose,
+                patch.object(runner, "attempt_fix", side_effect=AssertionError("scheduled discovery must not fix")),
+            ):
+                exit_code = runner.run_once(root, root / "state", policy, False, False, True)
+
+            report = json.loads(next((root / "state" / "runs").glob("*/report.json")).read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        diagnose.assert_called_once()
+        self.assertEqual(report["phase"], "diagnosis")
+        self.assertEqual(report["diagnoses"][0]["status"], "reproduced")
+        self.assertEqual(report["fixes"], [])
+
+    def test_triage_falls_back_to_product_failure_when_model_returns_no_candidate(self):
+        product_failure = Signal(
+            source="product_events",
+            event="image_upload_rejected",
+            priority="ux",
+            summary_fa="four uploads were rejected",
+            count=4,
+        )
+        clarity_lead = Signal(
+            source="clarity",
+            event="dead_click_count",
+            priority="ux",
+            summary_fa="twenty eight dead clicks",
+            count=28,
+        )
+        policy = {"limits": {"max_candidate_signals": 20}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "triage.json"
+
+            def empty_triage(*_args, **_kwargs):
+                output.write_text('{"candidates": []}', encoding="utf-8")
+                return subprocess.CompletedProcess([], 0, "", "")
+
+            with (
+                patch.object(runner, "_find_command", return_value="codex"),
+                patch.object(runner, "_run", side_effect=empty_triage),
+            ):
+                candidates = runner.triage(root, root, [product_failure, clarity_lead], policy, False)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].fingerprint, product_failure.fingerprint)
+        self.assertEqual({item["event"] for item in candidates[0].evidence}, {"image_upload_rejected", "dead_click_count"})
 
     def test_three_hour_monitoring_does_not_accelerate_daily_rollout(self):
         runs = [

@@ -62,3 +62,9 @@
 - مسیر ترب هم باید اجازه ضبط صدا قبل از ساخت لیست بدهد، اما نباید endpoint حدس دسته‌بندی باسلام را صدا بزند.
 - UI اصلی در e2e دسکتاپ و موبایل نباید overflow افقی داشته باشد و پنل‌ها/کارت‌ها در موبایل باید داخل gutter امن صفحه بمانند.
 - باکس «زمان آماده‌سازی همه محصولات» در موبایل نباید input و دکمه اعمال را روی هم بیندازد و دکمه بستن آن باید حداقل ۳۴ پیکسل سطح لمس داشته باشد.
+# Autonomous diagnosis rules
+
+- A scheduled agent run may label a production candidate as reproduced only after it creates a regression test and proves that the test fails against the current source.
+- Scheduled diagnosis runs may change test files only. They must not change product source, create a branch, or open a pull request without an explicit human instruction to fix the reproduced issue.
+- Aggregate Clarity metrics such as rage clicks, dead clicks, and script errors are leads, not proof. When safe first-party interaction telemetry exists, a candidate must be correlated with the allowlisted product control, backend/Sentry evidence, or a deterministic browser reproduction.
+- The later fix flow must rerun the same regression test and prove red-before-fix and green-after-fix, followed by the complete test gates and an independent review.
