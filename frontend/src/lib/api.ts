@@ -88,6 +88,7 @@ export const api = {
         | 'image_files_selected'
         | 'image_picker_cancelled'
         | 'ui_rage_click'
+        | 'ui_dead_click'
         | 'ui_action_started'
         | 'ui_action_accepted'
         | 'ui_action_blocked'

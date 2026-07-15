@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class UxEventCreate(BaseModel):
     event: Literal[
         "image_picker_blocked", "image_picker_opened", "image_files_selected", "image_picker_cancelled",
-        "ui_rage_click", "ui_action_started", "ui_action_accepted", "ui_action_blocked", "ui_action_failed",
+        "ui_rage_click", "ui_dead_click", "ui_action_started", "ui_action_accepted", "ui_action_blocked", "ui_action_failed",
     ]
     control: Literal[
         "photo_drop_zone", "add_photo_button", "build_product_list", "publish_basalam",
@@ -50,6 +50,10 @@ class UxEventCreate(BaseModel):
                 raise ValueError("rage click event shape is invalid")
             if self.click_count is None or any(value is not None for value in (self.reason, self.attempt_id, self.file_count, self.outcome)):
                 raise ValueError("rage click event shape is invalid")
+            return self
+        if self.event == "ui_dead_click":
+            if any(value is not None for value in (self.reason, self.attempt_id, self.file_count, self.click_count, self.outcome, self.failure_field)):
+                raise ValueError("dead click event shape is invalid")
             return self
         if self.control not in {"photo_drop_zone", "add_photo_button"} or self.click_count is not None or self.outcome is not None or self.failure_field is not None:
             raise ValueError("image picker control shape is invalid")

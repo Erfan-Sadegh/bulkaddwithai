@@ -412,6 +412,12 @@ function MainApp() {
     }
   }
 
+  function askToStartFreshList() {
+    const action = beginProductAction('start_new_products');
+    setFreshConfirmOpen(true);
+    action.accepted();
+  }
+
   async function upload(files: File[], sourceControl?: ObservedControl) {
     if (!batch || files.length === 0 || uploading || uploadRequestRef.current) return;
     const hasImage = files.some((file) => file.type.startsWith('image/'));
@@ -897,7 +903,7 @@ function MainApp() {
             />
           )}
 
-          {platform && batch && hasPhotos && items.length === 0 && (
+          {platform && batch && hasPhotos && items.length === 0 && job?.status !== 'failed' && (
             <div className="sticky-action">
               <button data-observe-control="build_product_list" className="button primary action-button" type="button" onClick={processBatch} disabled={!canProcess}>
                 {processing ? <Loader2 className="spin" size={19} /> : <Sparkles size={19} />}
@@ -946,7 +952,7 @@ function MainApp() {
               onPublishBasalam={publishToBasalam}
               onSubmitTorob={submitToTorob}
               onSplitPhoto={splitPhoto}
-              onAskStartFresh={() => setFreshConfirmOpen(true)}
+              onAskStartFresh={askToStartFreshList}
               validationIssues={activeValidationIssues}
             />
           )}
@@ -1898,11 +1904,11 @@ function PreviewPanel({
           <DockPublishProblem job={publishJob} products={publishedProducts} />
         )}
         <button
-          data-observe-control={platform === 'basalam' ? (basalamConnected ? 'publish_basalam' : 'connect_basalam') : 'submit_torob'}
+          data-observe-control={platform === 'basalam' ? 'publish_basalam' : 'submit_torob'}
           className="button primary save-list-button"
           type="button"
           onClick={platform === 'basalam' ? onPublishBasalam : onSubmitTorob}
-          disabled={saving || publishing || processing || hasValidationIssues}
+          disabled={saving || publishing || processing}
         >
           {publishing || processing ? (
             <Loader2 className="spin" size={18} />
@@ -2474,6 +2480,12 @@ function BasalamCategoryPicker({
     }
   }
 
+  function toggleCategoryEditor() {
+    const action = beginProductAction('category_picker');
+    setEditing((value) => !value);
+    action.accepted();
+  }
+
   return (
     <div className={`category-picker ${needsCategory ? 'needs-category' : ''} ${hasValidationError ? 'missing' : ''}`}>
       <div className="category-current">
@@ -2484,7 +2496,7 @@ function BasalamCategoryPicker({
           <strong>انتخاب نشده</strong>
         )}
         {!needsCategory && (
-          <button data-observe-control="category_picker" className="category-edit-button" type="button" onClick={() => setEditing((value) => !value)}>
+          <button data-observe-control="category_picker" className="category-edit-button" type="button" onClick={toggleCategoryEditor}>
             {editing ? 'بستن' : 'تغییر'}
           </button>
         )}

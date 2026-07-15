@@ -722,7 +722,7 @@ describe('App', () => {
     let publishCalled = false;
     const uxEvents: Array<Record<string, unknown>> = [];
     const { container } = renderWithApi({
-      platformConnections: [basalamConnection],
+      platformConnections: [],
       uxEvents,
       onPublish: () => {
         publishCalled = true;
@@ -737,7 +737,9 @@ describe('App', () => {
     ]);
     await user.click(container.querySelector('.action-button') as HTMLButtonElement);
     await screen.findByDisplayValue(item.title);
-    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
+    const publishButton = container.querySelector('.save-dock button') as HTMLButtonElement;
+    expect(publishButton).toHaveAttribute('data-observe-control', 'publish_basalam');
+    await user.click(publishButton);
 
     expect(publishCalled).toBe(false);
     expect(await screen.findByText('اطلاعات لازم کامل نیست.')).toBeInTheDocument();

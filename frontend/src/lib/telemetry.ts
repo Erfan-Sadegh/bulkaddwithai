@@ -41,6 +41,8 @@ export type ObservedFailureField =
   | 'contact_mobile';
 
 type RageClickEvent = { event: 'ui_rage_click'; control: ObservedControl; click_count: number };
+type DeadClickEvent = { event: 'ui_dead_click'; control: ObservedControl };
+type InteractionEvent = RageClickEvent | DeadClickEvent;
 export type ObservedActionEvent = {
   event: 'ui_action_started' | 'ui_action_accepted' | 'ui_action_blocked' | 'ui_action_failed';
   control: ObservedControl;
@@ -134,14 +136,54 @@ export function captureApiFailure(path: string, status: number | null, _requestI
   });
 }
 
-export function installInteractionObserver(report: (event: RageClickEvent) => void): () => void {
+type PendingControlAttempt = {
+  timeoutId: number | null;
+  pointerId: number;
+  report: (event: InteractionEvent) => void;
+};
+const pendingControlAttempts = new Map<ObservedControl, PendingControlAttempt[]>();
+
+export function installInteractionObserver(report: (event: InteractionEvent) => void): () => void {
   const clicks = new Map<ObservedControl, number[]>();
   const lastReported = new Map<ObservedControl, number>();
-  const handler = (event: PointerEvent) => {
+  const observedControl = (event: PointerEvent): ObservedControl | undefined => {
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-observe-control]') : null;
-    const control = target?.dataset.observeControl as ObservedControl | undefined;
+    return target?.dataset.observeControl as ObservedControl | undefined;
+  };
+  const pendingForPointer = (event: PointerEvent): [ObservedControl, PendingControlAttempt] | null => {
+    const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : 0;
+    for (const [control, attempts] of pendingControlAttempts.entries()) {
+      const pending = [...attempts].reverse().find(
+        (attempt) => attempt.report === report && attempt.pointerId === pointerId && attempt.timeoutId === null,
+      );
+      if (pending) return [control, pending];
+    }
+    return null;
+  };
+  const discardUnsettledPointer = (pointerId: number) => {
+    pendingControlAttempts.forEach((attempts, control) => {
+      const remaining = attempts.filter(
+        (attempt) => !(attempt.report === report && attempt.pointerId === pointerId && attempt.timeoutId === null),
+      );
+      if (remaining.length > 0) pendingControlAttempts.set(control, remaining);
+      else pendingControlAttempts.delete(control);
+    });
+  };
+  const onPointerDown = (event: PointerEvent) => {
+    if (event.button !== 0 || event.isPrimary === false) return;
+    const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : 0;
+    discardUnsettledPointer(pointerId);
+    const control = observedControl(event);
     if (!control) return;
     const now = Date.now();
+    if (!['photo_drop_zone', 'add_photo_button'].includes(control)) {
+      const pending: PendingControlAttempt = {
+        timeoutId: null,
+        pointerId,
+        report,
+      };
+      pendingControlAttempts.set(control, [...(pendingControlAttempts.get(control) ?? []), pending]);
+    }
     const recent = [...(clicks.get(control) ?? []), now].filter((timestamp) => now - timestamp <= 1500);
     clicks.set(control, recent);
     if (recent.length < 3 || now - (lastReported.get(control) ?? 0) < 5000) return;
@@ -150,8 +192,49 @@ export function installInteractionObserver(report: (event: RageClickEvent) => vo
     trackEvent(payload.event, { control: payload.control, click_count: payload.click_count });
     report(payload);
   };
-  document.addEventListener('pointerdown', handler, true);
-  return () => document.removeEventListener('pointerdown', handler, true);
+  const onPointerUp = (event: PointerEvent) => {
+    if (event.button !== 0 || event.isPrimary === false) return;
+    const match = pendingForPointer(event);
+    if (!match) return;
+    const [control, pending] = match;
+    pending.timeoutId = window.setTimeout(() => {
+      const current = pendingControlAttempts.get(control) ?? [];
+      const remaining = current.filter((item) => item !== pending);
+      if (remaining.length > 0) pendingControlAttempts.set(control, remaining);
+      else pendingControlAttempts.delete(control);
+      const payload: DeadClickEvent = { event: 'ui_dead_click', control };
+      trackEvent(payload.event, { control });
+      report(payload);
+    }, 1500);
+  };
+  const onPointerCancel = (event: PointerEvent) => {
+    const match = pendingForPointer(event);
+    if (!match) return;
+    const [control, pending] = match;
+    const attempts = pendingControlAttempts.get(control) ?? [];
+    const index = attempts.indexOf(pending);
+    if (index < 0) return;
+    attempts.splice(index, 1);
+    if (attempts.length > 0) pendingControlAttempts.set(control, attempts);
+    else pendingControlAttempts.delete(control);
+  };
+  document.addEventListener('pointerdown', onPointerDown, true);
+  document.addEventListener('pointerup', onPointerUp, true);
+  document.addEventListener('pointercancel', onPointerCancel, true);
+  return () => {
+    document.removeEventListener('pointerdown', onPointerDown, true);
+    document.removeEventListener('pointerup', onPointerUp, true);
+    document.removeEventListener('pointercancel', onPointerCancel, true);
+    pendingControlAttempts.forEach((attempts, control) => {
+      const remaining = attempts.filter((attempt) => {
+        if (attempt.report !== report) return true;
+        if (attempt.timeoutId !== null) window.clearTimeout(attempt.timeoutId);
+        return false;
+      });
+      if (remaining.length > 0) pendingControlAttempts.set(control, remaining);
+      else pendingControlAttempts.delete(control);
+    });
+  };
 }
 
 export function beginObservedAction(
@@ -162,6 +245,7 @@ export function beginObservedAction(
   blocked: (outcome: 'validation' | 'state', failureField?: ObservedFailureField) => void;
   failed: (outcome: 'network' | 'server' | 'unknown') => void;
 } {
+  consumePendingControlAttempt(control);
   const attemptId = createUuid();
   let terminal = false;
   const emit = (event: ObservedActionEvent) => {
@@ -190,6 +274,15 @@ export function beginObservedAction(
     }),
     failed: (outcome) => finish({ event: 'ui_action_failed', control, attempt_id: attemptId, outcome }),
   };
+}
+
+function consumePendingControlAttempt(control: ObservedControl): void {
+  const attempts = pendingControlAttempts.get(control) ?? [];
+  const pending = attempts.pop();
+  if (!pending) return;
+  if (pending.timeoutId !== null) window.clearTimeout(pending.timeoutId);
+  if (attempts.length > 0) pendingControlAttempts.set(control, attempts);
+  else pendingControlAttempts.delete(control);
 }
 
 export function installRuntimeFailureObserver(

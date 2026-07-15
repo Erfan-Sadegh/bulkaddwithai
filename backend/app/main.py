@@ -253,6 +253,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 payload.control,
                 payload.click_count,
             )
+        elif payload.event == "ui_dead_click":
+            ux_logger.warning(
+                "%s session_key=%s control=%s",
+                payload.event,
+                session_key,
+                payload.control,
+            )
         elif payload.event.startswith("ui_action_"):
             log = ux_logger.warning if payload.event in {"ui_action_blocked", "ui_action_failed"} else ux_logger.info
             if payload.failure_field:

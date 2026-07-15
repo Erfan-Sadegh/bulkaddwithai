@@ -157,6 +157,121 @@ describe('telemetry', () => {
     vi.useRealTimers();
   });
 
+  it('reports an exact dead click when a disabled control never starts an action', () => {
+    vi.useFakeTimers();
+    const report = vi.fn();
+    const stop = installInteractionObserver(report);
+    const button = document.createElement('button');
+    button.disabled = true;
+    button.dataset.observeControl = 'build_product_list';
+    document.body.append(button);
+
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    button.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    vi.advanceTimersByTime(1600);
+
+    expect(report).toHaveBeenCalledWith({ event: 'ui_dead_click', control: 'build_product_list' });
+    stop();
+    vi.useRealTimers();
+  });
+
+  it('does not call a healthy observed action a dead click', () => {
+    vi.useFakeTimers();
+    const report = vi.fn();
+    const stop = installInteractionObserver(report);
+    const button = document.createElement('button');
+    button.dataset.observeControl = 'publish_basalam';
+    document.body.append(button);
+
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    button.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    const action = beginObservedAction('publish_basalam', report);
+    action.accepted();
+    vi.advanceTimersByTime(1600);
+
+    expect(report).not.toHaveBeenCalledWith({ event: 'ui_dead_click', control: 'publish_basalam' });
+    stop();
+    vi.useRealTimers();
+  });
+
+  it('does not report a dead click while the user is still holding the control', () => {
+    vi.useFakeTimers();
+    const report = vi.fn();
+    const stop = installInteractionObserver(report);
+    const button = document.createElement('button');
+    button.dataset.observeControl = 'publish_basalam';
+    document.body.append(button);
+
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    vi.advanceTimersByTime(2000);
+    expect(report).not.toHaveBeenCalledWith({ event: 'ui_dead_click', control: 'publish_basalam' });
+
+    button.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    const action = beginObservedAction('publish_basalam', report);
+    action.accepted();
+    vi.advanceTimersByTime(1600);
+    expect(report).not.toHaveBeenCalledWith({ event: 'ui_dead_click', control: 'publish_basalam' });
+    stop();
+    vi.useRealTimers();
+  });
+
+  it('settles a dead click against the pressed control when release happens outside it', () => {
+    vi.useFakeTimers();
+    const report = vi.fn();
+    const stop = installInteractionObserver(report);
+    const button = document.createElement('button');
+    button.dataset.observeControl = 'publish_basalam';
+    document.body.append(button);
+
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    document.body.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    vi.advanceTimersByTime(1600);
+
+    expect(report).toHaveBeenCalledWith({ event: 'ui_dead_click', control: 'publish_basalam' });
+    stop();
+    vi.useRealTimers();
+  });
+
+  it('ignores right-clicks instead of reporting dead or rage clicks', () => {
+    vi.useFakeTimers();
+    const report = vi.fn();
+    const stop = installInteractionObserver(report);
+    const button = document.createElement('button');
+    button.dataset.observeControl = 'publish_basalam';
+    document.body.append(button);
+
+    for (let index = 0; index < 3; index += 1) {
+      button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 2 }));
+      button.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 2 }));
+    }
+    vi.advanceTimersByTime(1600);
+
+    expect(report).not.toHaveBeenCalled();
+    stop();
+    vi.useRealTimers();
+  });
+
+  it('discards an unresolved attempt before the same pointer is reused', () => {
+    vi.useFakeTimers();
+    const report = vi.fn();
+    const stop = installInteractionObserver(report);
+    const first = document.createElement('button');
+    first.dataset.observeControl = 'publish_basalam';
+    const second = document.createElement('button');
+    second.dataset.observeControl = 'build_product_list';
+    document.body.append(first, second);
+
+    first.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    second.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    second.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    vi.advanceTimersByTime(1600);
+
+    expect(report).toHaveBeenCalledWith({ event: 'ui_dead_click', control: 'build_product_list' });
+    expect(report).not.toHaveBeenCalledWith({ event: 'ui_dead_click', control: 'publish_basalam' });
+    stop();
+    vi.useRealTimers();
+  });
+
   it('reports the exact allowlisted validation field without its value', () => {
     const report = vi.fn();
     const action = beginObservedAction('publish_basalam', report);

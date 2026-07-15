@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 
 const [appUrl, outputDir] = process.argv.slice(2);
 if (!appUrl || !outputDir) throw new Error('usage: production-probe.mjs <app-url> <output-dir>');
@@ -31,14 +31,52 @@ const fakeItem = {
   },
   created_at: now, updated_at: now,
 };
+const fakeAsset2 = { ...fakeAsset, id: 1003, upload_order: 2 };
 
+async function controlIsOccluded(locator) {
+  try {
+    await locator.scrollIntoViewIfNeeded();
+    return await locator.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return false;
+      const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return Boolean(top && top !== element && !element.contains(top));
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function recordOcclusionEvidence(page, locator, occludedControls, control, screenshot) {
+  if (occludedControls.has(control)) return true;
+  if (!(await controlIsOccluded(locator))) return false;
+  await page.screenshot({ path: path.join(outputDir, screenshot) });
+  occludedControls.set(control, screenshot);
+  return true;
+}
+
+async function auditVisibleControls(page, occludedControls, screenshot) {
+  const controls = page.locator('[data-observe-control]:visible');
+  for (let index = 0; index < await controls.count(); index += 1) {
+    const control = controls.nth(index);
+    const name = await control.getAttribute('data-observe-control');
+    if (!name) continue;
+    const safeName = name.replace(/[^a-z0-9_-]/gi, '_');
+    const evidenceScreenshot = screenshot.replace(/\.png$/i, `-${safeName}.png`);
+    await recordOcclusionEvidence(page, control, occludedControls, name, evidenceScreenshot);
+  }
+}
+
+const { defaultBrowserType: _mobileBrowser, ...mobileContext } = devices['Pixel 7'];
 for (const view of [
-  { name: 'desktop', viewport: { width: 1440, height: 1000 } },
-  { name: 'mobile', viewport: { width: 390, height: 844 } },
+  { name: 'desktop', context: { viewport: { width: 1440, height: 1000 } } },
+  { name: 'mobile', context: mobileContext },
 ]) {
-  const context = await browser.newContext({ viewport: view.viewport, locale: 'fa-IR' });
+  const context = await browser.newContext({ ...view.context, locale: 'fa-IR' });
   const page = await context.newPage();
   const issues = new Set();
+  const occludedControls = new Map();
+  let processAttempts = 0;
 
   page.on('pageerror', () => issues.add('page_error'));
   page.on('console', (message) => {
@@ -86,7 +124,7 @@ for (const view of [
       return;
     }
     if (target.pathname === '/batches/1000/assets' && method === 'POST') {
-      await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify([fakeAsset]) });
+      await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify([fakeAsset, fakeAsset2]) });
       return;
     }
     if (target.pathname === '/probe-image.png' && method === 'GET') {
@@ -94,11 +132,16 @@ for (const view of [
       return;
     }
     if (target.pathname === '/batches/1000/process' && method === 'POST') {
-      await route.fulfill({ status: 202, contentType: 'application/json', body: '{"job_id":2000}' });
+      processAttempts += 1;
+      await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ job_id: 1999 + processAttempts }) });
       return;
     }
     if (target.pathname === '/jobs/2000' && method === 'GET') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 2000, batch_id: 1000, status: 'succeeded', step: 'ready', error: null }) });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 2000, batch_id: 1000, status: 'failed', step: 'failed', error: 'provider_temporary' }) });
+      return;
+    }
+    if (target.pathname === '/jobs/2001' && method === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 2001, batch_id: 1000, status: 'succeeded', step: 'ready', error: null }) });
       return;
     }
     if (target.pathname === '/batches/1000/items' && method === 'GET') {
@@ -129,7 +172,9 @@ for (const view of [
     if ((await page.locator('.platform-card:visible').count()) !== 2) issues.add('primary_actions_missing');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
     if (overflow) issues.add('horizontal_overflow');
-    await page.screenshot({ path: path.join(outputDir, `production-${view.name}.png`), fullPage: true });
+    const initialScreenshot = `production-${view.name}.png`;
+    await auditVisibleControls(page, occludedControls, initialScreenshot);
+    await page.screenshot({ path: path.join(outputDir, initialScreenshot), fullPage: true });
 
     try {
       await page.locator('.platform-card').first().click();
@@ -145,7 +190,10 @@ for (const view of [
         const chooserPromise = page.waitForEvent('filechooser', { timeout: 5000 });
         await imageInput.click({ force: true });
         const chooser = await chooserPromise;
-        await chooser.setFiles({ name: 'synthetic-probe.png', mimeType: 'image/png', buffer: probePng });
+        await chooser.setFiles([
+          { name: 'synthetic-probe-a.png', mimeType: 'image/png', buffer: probePng },
+          { name: 'synthetic-probe-b.png', mimeType: 'image/png', buffer: probePng },
+        ]);
         await page.locator('.photo-tile').first().waitFor({ state: 'visible', timeout: 8000 });
       } catch {
         issues.add('file_picker_failed');
@@ -158,19 +206,37 @@ for (const view of [
     } else {
       try {
         await buildButton.click();
+        const retryButton = page.getByRole('button', { name: 'دوباره تلاش کن' });
+        await retryButton.waitFor({ state: 'visible', timeout: 8000 });
+        const retryScreenshot = `production-${view.name}-retry.png`;
+        await recordOcclusionEvidence(page, retryButton, occludedControls, 'build_product_list', retryScreenshot);
+        try {
+          await retryButton.click({ timeout: 2500 });
+        } catch (error) {
+          await recordOcclusionEvidence(page, retryButton, occludedControls, 'build_product_list', retryScreenshot);
+          throw error;
+        }
         await page.locator('.product-card').first().waitFor({ state: 'visible', timeout: 8000 });
       } catch {
         issues.add('list_build_failed');
       }
     }
     if ((await page.locator('.product-card:visible').count()) < 1) issues.add('product_review_missing');
+    await auditVisibleControls(page, occludedControls, `production-${view.name}-journey.png`);
   } catch {
     issues.add('navigation_failed');
   }
 
   const screenshot = `production-${view.name}-journey.png`;
   await page.screenshot({ path: path.join(outputDir, screenshot), fullPage: true });
-  views.push({ name: view.name, screenshot, issues: [...issues].sort() });
+  views.push({
+    name: view.name,
+    screenshot,
+    issues: [...issues].sort(),
+    occluded_controls: [...occludedControls.entries()]
+      .map(([control, evidenceScreenshot]) => ({ control, screenshot: evidenceScreenshot }))
+      .sort((left, right) => left.control.localeCompare(right.control)),
+  });
   await context.close();
 }
 

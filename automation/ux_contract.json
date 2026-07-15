@@ -2,6 +2,10 @@
   "version": 1,
   "global_markers": [
     {"path": "frontend/src/App.tsx", "text": "installRuntimeFailureObserver("},
+    {"path": "frontend/src/lib/telemetry.ts", "text": "event: 'ui_dead_click'"},
+    {"path": "backend/app/schemas.py", "text": "\"ui_dead_click\""},
+    {"path": "automation/collectors.py", "text": "\"ui_dead_click\": \"ux\""},
+    {"path": "automation/dashboard.py", "text": "\"ui_dead_click\""},
     {"path": "frontend/src/lib/telemetry.ts", "text": "frontend_runtime_failed"},
     {"path": "backend/app/main.py", "text": "/observability/runtime-events"},
     {"path": "backend/app/schemas.py", "text": "class RuntimeEventCreate"},

@@ -192,7 +192,7 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
         signal
         for signal in signals
         if not (
-            signal.event in {"ui_rage_click", "image_picker_unresponsive", "ui_action_unresponsive"}
+            signal.event in {"ui_rage_click", "ui_dead_click", "image_picker_unresponsive", "ui_action_unresponsive"}
             and str(signal.evidence.get("control") or "") in proven_controls
         )
     ][: int(policy["limits"]["max_candidate_signals"])]
@@ -280,7 +280,7 @@ def _fallback_candidates(signals: list[Signal]) -> list[Candidate]:
             or bool(signal.evidence.get("control"))
         )
         and not (
-            signal.event in {"ui_rage_click", "image_picker_unresponsive", "ui_action_unresponsive"}
+            signal.event in {"ui_rage_click", "ui_dead_click", "image_picker_unresponsive", "ui_action_unresponsive"}
             and str(signal.evidence.get("control") or "") in proven_controls
         )
     ]

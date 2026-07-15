@@ -221,6 +221,100 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("وزن با بسته‌بندی", signals[0].summary_fa)
         self.assertIn("ثبت در باسلام", signals[0].summary_fa)
 
+    def test_validation_fields_have_distinct_signal_fingerprints(self):
+        payload = [
+            {
+                "event": "ui_action_blocked",
+                "control": "publish_basalam",
+                "outcome": "validation",
+                "failure_field": field,
+                "last_seen_at": "2026-07-15T00:00:00Z",
+            }
+            for field in ("stock", "package_weight_grams")
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        self.assertEqual(len({signal.fingerprint for signal in signals}), 2)
+
+    def test_validation_without_a_field_uses_a_validation_fallback_summary(self):
+        payload = [
+            {
+                "event": "ui_action_blocked",
+                "control": "publish_basalam",
+                "outcome": "validation",
+                "last_seen_at": "2026-07-15T00:00:00Z",
+            }
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        self.assertIn("اعتبارسنجی", signals[0].summary_fa)
+        self.assertNotIn("وضعیت فعلی صفحه", signals[0].summary_fa)
+
+    def test_product_event_collector_groups_exact_dead_clicks_by_control(self):
+        payload = [
+            {
+                "event": "ui_dead_click",
+                "control": "build_product_list",
+                "session_key": session,
+                "last_seen_at": f"2026-07-15T00:0{index}:00Z",
+            }
+            for index, session in ((3, "session-c"), (2, "session-b"), (1, "session-a"))
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        dead = [signal for signal in signals if signal.event == "ui_dead_click"]
+        self.assertEqual(len(dead), 1)
+        self.assertEqual(dead[0].count, 3)
+        self.assertEqual(dead[0].evidence["control"], "build_product_list")
+        self.assertEqual(dead[0].occurred_at, "2026-07-15T00:03:00Z")
+        self.assertNotIn("session", json.dumps(dead[0].to_dict()))
+
+    def test_product_event_collector_correlates_rage_and_dead_click_in_one_session(self):
+        payload = [
+            {
+                "event": "ui_rage_click",
+                "control": "publish_basalam",
+                "session_key": "same-session",
+                "click_count": 4,
+                "last_seen_at": "2026-07-15T00:01:00Z",
+            },
+            {
+                "event": "ui_dead_click",
+                "control": "publish_basalam",
+                "session_key": "same-session",
+                "last_seen_at": "2026-07-15T00:01:02Z",
+            },
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        friction = next(signal for signal in signals if signal.event == "ui_control_friction")
+        self.assertEqual(friction.evidence["control"], "publish_basalam")
+        self.assertEqual(friction.evidence["symptoms"], ["rage_click", "dead_click"])
+
     def test_product_event_collector_correlates_rage_and_stall_only_inside_one_anonymous_session(self):
         now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
         payload = [
@@ -681,6 +775,12 @@ class AutomationTests(unittest.TestCase):
                                     "name": "mobile",
                                     "screenshot": "production-mobile.png",
                                     "issues": ["horizontal_overflow", "page_error", "file_picker_failed"],
+                                    "occluded_controls": [
+                                        {
+                                            "control": "build_product_list",
+                                            "screenshot": "production-mobile-initial.png",
+                                        }
+                                    ],
                                 }
                             ]
                         }
@@ -698,10 +798,35 @@ class AutomationTests(unittest.TestCase):
 
         self.assertEqual(
             {signal.event for signal in signals},
-            {"browser_horizontal_overflow", "browser_page_error", "browser_file_picker_failed"},
+            {
+                "browser_horizontal_overflow",
+                "browser_page_error",
+                "browser_file_picker_failed",
+                "browser_control_occluded",
+            },
         )
         self.assertTrue(all(signal.evidence["view"] == "mobile" for signal in signals))
-        self.assertTrue(all(signal.evidence["screenshot"] == "production-mobile.png" for signal in signals))
+        occluded = next(signal for signal in signals if signal.event == "browser_control_occluded")
+        self.assertEqual(occluded.evidence["control"], "build_product_list")
+        self.assertEqual(occluded.evidence["screenshot"], "production-mobile-initial.png")
+        self.assertTrue(
+            all(
+                signal.evidence["screenshot"] == "production-mobile.png"
+                for signal in signals
+                if signal.event != "browser_control_occluded"
+            )
+        )
+
+    def test_production_probe_rechecks_occlusion_after_a_retry_click_failure(self):
+        root = Path(__file__).resolve().parents[2]
+        probe = (root / "frontend" / "scripts" / "production-probe.mjs").read_text(encoding="utf-8")
+
+        self.assertIn("async function recordOcclusionEvidence", probe)
+        self.assertGreaterEqual(
+            probe.count("await recordOcclusionEvidence(page, retryButton"),
+            2,
+        )
+        self.assertIn("await recordOcclusionEvidence(page, control", probe)
 
     def test_full_self_improvement_cycle_in_an_isolated_repository(self):
         with tempfile.TemporaryDirectory() as temporary:

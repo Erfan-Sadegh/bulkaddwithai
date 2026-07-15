@@ -31,6 +31,7 @@ EVENT_PRIORITY = {
     "image_picker_blocked": "ux",
     "image_picker_unresponsive": "ux",
     "ui_rage_click": "ux",
+    "ui_dead_click": "ux",
     "ui_action_blocked": "ux",
     "ui_action_failed": "high",
     "ui_action_unresponsive": "ux",
@@ -53,6 +54,7 @@ EVENT_PRIORITY = {
     "browser_build_action_missing": "urgent",
     "browser_list_build_failed": "high",
     "browser_product_review_missing": "high",
+    "browser_control_occluded": "high",
     "http_response_failed": "high",
 }
 CONTROL_LABELS_FA = {
@@ -96,14 +98,18 @@ def _product_event_summary(item: dict[str, Any], event: str, count: int) -> str:
     control_label = CONTROL_LABELS_FA.get(control, control or "کنترل نامشخص")
     failure_field = str(item.get("failure_field") or "")
     field_label = FIELD_LABELS_FA.get(failure_field, failure_field)
-    if event == "ui_action_blocked" and item.get("outcome") == "validation" and field_label:
-        return f"{control_label} {count} بار به‌دلیل نامعتبر یا ناقص بودن «{field_label}» متوقف شده است."
+    if event == "ui_action_blocked" and item.get("outcome") == "validation":
+        if field_label:
+            return f"{control_label} {count} بار به‌دلیل نامعتبر یا ناقص بودن «{field_label}» متوقف شده است."
+        return f"{control_label} {count} بار در مرحله اعتبارسنجی اطلاعات متوقف شده است؛ نام فیلد در این نسخه ثبت نشده است."
     if event == "ui_action_blocked":
         return f"{control_label} {count} بار به‌دلیل وضعیت فعلی صفحه قابل ادامه نبوده است."
     if event == "ui_action_failed":
         return f"{control_label} {count} بار پس از شروع با خطا تمام شده است."
     if event == "ui_rage_click":
         return f"روی {control_label} کلیک عصبی ثبت شده است."
+    if event == "ui_dead_click":
+        return f"فشار روی {control_label} بدون شروع هیچ واکنشی ثبت شده است."
     return f"رویداد {event} در خود محصول production ثبت شده است."
 
 
@@ -160,6 +166,23 @@ def collect_browser_probe(
                     priority=EVENT_PRIORITY[event],
                     summary_fa=f"browser probe در نمای {view_name} مشکل {issue} را پیدا کرد.",
                     evidence={"view": view_name, "screenshot": screenshot},
+                )
+            )
+        for control in view.get("occluded_controls", []):
+            control_name = str(control.get("control") or "") if isinstance(control, dict) else str(control or "")
+            control_screenshot = (
+                str(control.get("screenshot") or screenshot) if isinstance(control, dict) else screenshot
+            )
+            if not control_name:
+                continue
+            control_label = CONTROL_LABELS_FA.get(control_name, control_name)
+            signals.append(
+                Signal(
+                    source="browser_probe",
+                    event="browser_control_occluded",
+                    priority=EVENT_PRIORITY["browser_control_occluded"],
+                    summary_fa=f"در نمای {view_name}، یک لایه روی «{control_label}» افتاده و کلیک کاربر به آن نمی‌رسد.",
+                    evidence={"view": view_name, "screenshot": control_screenshot, "control": control_name},
                 )
             )
     return signals
@@ -528,10 +551,15 @@ def collect_product_events(
         and _session_key(item)
         and item.get("control")
     }
+    dead_clicks_by_control: dict[str, list[dict[str, Any]]] = defaultdict(list)
     stalled_session_symptoms: dict[tuple[str, str], set[str]] = defaultdict(set)
     for item in payload:
         if not isinstance(item, dict) or not _session_key(item) or not item.get("control"):
             continue
+        if item.get("event") == "ui_dead_click":
+            control = str(item["control"])
+            dead_clicks_by_control[control].append(item)
+            stalled_session_symptoms[(_session_key(item), control)].add("dead_click")
         attempt_id = str(item.get("attempt_id") or "")
         attempt_key = _attempt_key(item)
         if item.get("event") == "image_picker_opened" and (
@@ -560,6 +588,25 @@ def collect_product_events(
                     "control": control,
                     "symptoms": symptoms,
                 },
+            )
+        )
+    for control, dead_clicks in dead_clicks_by_control.items():
+        results.append(
+            Signal(
+                source="product_events",
+                event="ui_dead_click",
+                priority=EVENT_PRIORITY["ui_dead_click"],
+                summary_fa=_product_event_summary(
+                    {"event": "ui_dead_click", "control": control},
+                    "ui_dead_click",
+                    len(dead_clicks),
+                ),
+                count=len(dead_clicks),
+                occurred_at=max(
+                    (str(item.get("last_seen_at")) for item in dead_clicks if item.get("last_seen_at")),
+                    default=datetime.now(timezone.utc).isoformat(),
+                ),
+                evidence={"control": control},
             )
         )
     orphaned_by_control: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -608,6 +655,8 @@ def collect_product_events(
         if not isinstance(item, dict):
             continue
         event = str(item.get("event") or "")
+        if event == "ui_dead_click":
+            continue
         if event not in EVENT_PRIORITY:
             continue
         evidence = {
