@@ -9,7 +9,14 @@ vi.mock('@sentry/react', () => ({
 }));
 
 import * as Sentry from '@sentry/react';
-import { beginObservedAction, captureApiFailure, getRequestId, installInteractionObserver, trackEvent } from './telemetry';
+import {
+  beginObservedAction,
+  captureApiFailure,
+  getRequestId,
+  installInteractionObserver,
+  installRuntimeFailureObserver,
+  trackEvent,
+} from './telemetry';
 
 describe('telemetry', () => {
   beforeEach(() => {
@@ -94,5 +101,21 @@ describe('telemetry', () => {
       attempt_id: started.attempt_id,
       outcome: 'server',
     });
+  });
+
+  it('reports browser runtime failures without message, stack, or URL', () => {
+    const report = vi.fn();
+    const stop = installRuntimeFailureObserver(report, 'catalog');
+
+    window.dispatchEvent(new ErrorEvent('error', { message: 'private product title and token', filename: 'https://example.test/?token=secret' }));
+
+    expect(report).toHaveBeenCalledWith({
+      event: 'frontend_runtime_failed',
+      code: 'script_error',
+      surface: 'catalog',
+    });
+    expect(JSON.stringify(report.mock.calls)).not.toContain('private');
+    expect(JSON.stringify(report.mock.calls)).not.toContain('token');
+    stop();
   });
 });

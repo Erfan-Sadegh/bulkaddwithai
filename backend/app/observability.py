@@ -42,6 +42,7 @@ PERSISTED_EVENTS = {
     "ui_action_accepted",
     "ui_action_blocked",
     "ui_action_failed",
+    "frontend_runtime_failed",
     "processing_job_failed",
     "basalam_oauth_failed",
     "basalam_publish_validation_failed",
@@ -56,7 +57,7 @@ PERSISTED_FIELDS = {
     # unsupported file from a product regression without storing the image/name.
     "suffix", "declared_mime", "input_bytes", "error_type", "control", "reason", "attempt_id", "file_count",
     "batch_item_id", "connection_id", "http_status", "category_id", "unit_type", "request_status", "photo_count",
-    "click_count", "image_number", "outcome",
+    "click_count", "image_number", "outcome", "surface",
 }
 
 

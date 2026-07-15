@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "global_markers": [
+    {"path": "frontend/src/App.tsx", "text": "installRuntimeFailureObserver("},
+    {"path": "frontend/src/lib/telemetry.ts", "text": "frontend_runtime_failed"},
+    {"path": "backend/app/main.py", "text": "/observability/runtime-events"},
+    {"path": "backend/app/schemas.py", "text": "class RuntimeEventCreate"},
+    {"path": "automation/collectors.py", "text": "\"frontend_runtime_failed\": \"high\""}
+  ],
+  "controls": [
+    {
+      "control": "photo_drop_zone",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"photo_drop_zone\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction(sourceControl"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'photo_drop_zone'"},
+        {"path": "backend/app/schemas.py", "text": "\"photo_drop_zone\""}
+      ]
+    },
+    {
+      "control": "add_photo_button",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"add_photo_button\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction(sourceControl"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'add_photo_button'"},
+        {"path": "backend/app/schemas.py", "text": "\"add_photo_button\""}
+      ]
+    },
+    {
+      "control": "build_product_list",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"build_product_list\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('build_product_list')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'build_product_list'"},
+        {"path": "backend/app/schemas.py", "text": "\"build_product_list\""}
+      ]
+    },
+    {
+      "control": "publish_basalam",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "'publish_basalam'"},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('publish_basalam')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'publish_basalam'"},
+        {"path": "backend/app/schemas.py", "text": "\"publish_basalam\""}
+      ]
+    },
+    {
+      "control": "submit_torob",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "'submit_torob'"},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('submit_torob')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'submit_torob'"},
+        {"path": "backend/app/schemas.py", "text": "\"submit_torob\""}
+      ]
+    },
+    {
+      "control": "connect_basalam",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "'connect_basalam'"},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('connect_basalam')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'connect_basalam'"},
+        {"path": "backend/app/schemas.py", "text": "\"connect_basalam\""}
+      ]
+    },
+    {
+      "control": "record_voice",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"record_voice\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('record_voice')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'record_voice'"},
+        {"path": "backend/app/schemas.py", "text": "\"record_voice\""}
+      ]
+    },
+    {
+      "control": "change_platform",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"change_platform\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('change_platform')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'change_platform'"},
+        {"path": "backend/app/schemas.py", "text": "\"change_platform\""}
+      ]
+    },
+    {
+      "control": "delete_photo",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"delete_photo\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('delete_photo')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'delete_photo'"},
+        {"path": "backend/app/schemas.py", "text": "\"delete_photo\""}
+      ]
+    },
+    {
+      "control": "split_photo",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"split_photo\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('split_photo')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'split_photo'"},
+        {"path": "backend/app/schemas.py", "text": "\"split_photo\""}
+      ]
+    },
+    {
+      "control": "start_new_products",
+      "markers": [
+        {"path": "frontend/src/App.tsx", "text": "data-observe-control=\"start_new_products\""},
+        {"path": "frontend/src/App.tsx", "text": "beginProductAction('start_new_products')"},
+        {"path": "frontend/src/lib/telemetry.ts", "text": "| 'start_new_products'"},
+        {"path": "backend/app/schemas.py", "text": "\"start_new_products\""}
+      ]
+    }
+  ]
+}

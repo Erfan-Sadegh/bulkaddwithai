@@ -41,6 +41,7 @@ SOURCES = {
     "sentry": "خطاهای فنی Sentry",
     "clarity": "رفتار کاربران در Clarity",
     "production_health": "سلامت برنامهٔ واقعی",
+    "ux_contract": "ممیزی پوشش خودکار کنترل‌های محصول",
 }
 
 EVENTS = {
@@ -51,6 +52,8 @@ EVENTS = {
     "ui_action_blocked": "عملیات کاربر به‌دلیل وضعیت یا اعتبارسنجی متوقف شد",
     "ui_action_failed": "عملیات مشخص کاربر با خطا پایان یافت",
     "ui_action_unresponsive": "عملیات مشخص کاربر شروع شد اما هیچ نتیجه‌ای ثبت نشد",
+    "ux_observability_gap": "کنترل محصول بدون پوشش کامل تشخیص و outcome",
+    "frontend_runtime_failed": "خطای JavaScript یا promise در رابط کاربری",
     "dead_click_count": "کلیک بی‌نتیجه گزارش‌شده در Clarity",
     "rage_click_count": "کلیک عصبی گزارش‌شده در Clarity",
     "error_click_count": "کلیک منجر به خطا در Clarity",

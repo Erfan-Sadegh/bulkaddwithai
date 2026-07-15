@@ -109,6 +109,11 @@ export const api = {
       click_count?: number;
       outcome?: 'validation' | 'state' | 'network' | 'server' | 'unknown';
   }) => request<void>('/observability/ux-events', { method: 'POST', body: JSON.stringify(payload) }),
+  reportRuntimeEvent: (payload: {
+    event: 'frontend_runtime_failed';
+    code: 'script_error' | 'unhandled_rejection';
+    surface: 'catalog' | 'admin';
+  }) => request<void>('/observability/runtime-events', { method: 'POST', body: JSON.stringify(payload) }),
   listSellers: () => request<Seller[]>('/sellers'),
   getSeller: (sellerId: number) => request<Seller>(`/sellers/${sellerId}`),
   createSeller: (payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) =>

@@ -32,6 +32,11 @@ export type ObservedActionEvent = {
   attempt_id: string;
   outcome?: 'validation' | 'state' | 'network' | 'server' | 'unknown';
 };
+export type RuntimeFailureEvent = {
+  event: 'frontend_runtime_failed';
+  code: 'script_error' | 'unhandled_rejection';
+  surface: 'catalog' | 'admin';
+};
 
 export function initializeTelemetry(): void {
   const dsn = import.meta.env.VITE_SENTRY_DSN;
@@ -130,6 +135,29 @@ export function beginObservedAction(
     accepted: () => finish({ event: 'ui_action_accepted', control, attempt_id: attemptId }),
     blocked: (outcome) => finish({ event: 'ui_action_blocked', control, attempt_id: attemptId, outcome }),
     failed: (outcome) => finish({ event: 'ui_action_failed', control, attempt_id: attemptId, outcome }),
+  };
+}
+
+export function installRuntimeFailureObserver(
+  report: (event: RuntimeFailureEvent) => void,
+  surface: RuntimeFailureEvent['surface'],
+): () => void {
+  const lastReported = new Map<RuntimeFailureEvent['code'], number>();
+  const emit = (code: RuntimeFailureEvent['code']) => {
+    const now = Date.now();
+    if (now - (lastReported.get(code) ?? 0) < 10_000) return;
+    lastReported.set(code, now);
+    const payload: RuntimeFailureEvent = { event: 'frontend_runtime_failed', code, surface };
+    trackEvent(payload.event, { code, surface });
+    report(payload);
+  };
+  const onError = () => emit('script_error');
+  const onUnhandledRejection = () => emit('unhandled_rejection');
+  window.addEventListener('error', onError);
+  window.addEventListener('unhandledrejection', onUnhandledRejection);
+  return () => {
+    window.removeEventListener('error', onError);
+    window.removeEventListener('unhandledrejection', onUnhandledRejection);
   };
 }
 

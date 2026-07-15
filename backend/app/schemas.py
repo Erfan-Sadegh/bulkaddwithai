@@ -20,6 +20,8 @@ class UxEventCreate(BaseModel):
     click_count: int | None = Field(default=None, ge=3, le=12)
     outcome: Literal["validation", "state", "network", "server", "unknown"] | None = None
 
+    model_config = ConfigDict(extra="forbid")
+
     @model_validator(mode="after")
     def validate_event_shape(self):
         if self.event.startswith("ui_action_"):
@@ -49,6 +51,14 @@ class UxEventCreate(BaseModel):
         if (self.event == "image_files_selected") != (self.file_count is not None):
             raise ValueError("selected picker event requires file_count")
         return self
+
+
+class RuntimeEventCreate(BaseModel):
+    event: Literal["frontend_runtime_failed"]
+    code: Literal["script_error", "unhandled_rejection"]
+    surface: Literal["catalog", "admin"]
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class SellerCreate(BaseModel):

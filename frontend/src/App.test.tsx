@@ -416,6 +416,18 @@ describe('App', () => {
     expect(JSON.stringify(uxEvents)).not.toContain('private-name.jpg');
   });
 
+  it('forwards a safe runtime failure envelope from the mounted catalog', async () => {
+    const runtimeEvents: Array<Record<string, unknown>> = [];
+    renderWithApi({ runtimeEvents });
+    await screen.findByRole('heading', { level: 1 });
+
+    window.dispatchEvent(new ErrorEvent('error', { message: 'private title', filename: 'https://example.test/?token=secret' }));
+
+    await waitFor(() => expect(runtimeEvents).toHaveLength(1));
+    expect(runtimeEvents[0]).toEqual({ event: 'frontend_runtime_failed', code: 'script_error', surface: 'catalog' });
+    expect(JSON.stringify(runtimeEvents)).not.toContain('private');
+  });
+
   it('shows results, formats Persian price, and confirms starting over', async () => {
     const user = userEvent.setup();
     const updateBodies: Array<Record<string, unknown>> = [];
@@ -1791,6 +1803,7 @@ function renderWithApi({
   restoredBatch = batch,
   createdBatch = batch,
   uxEvents,
+  runtimeEvents,
 }: {
   failProcessing?: boolean;
   uploadAssetCount?: number;
@@ -1829,6 +1842,7 @@ function renderWithApi({
   restoredBatch?: typeof batch;
   createdBatch?: typeof batch;
   uxEvents?: Array<Record<string, unknown>>;
+  runtimeEvents?: Array<Record<string, unknown>>;
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
   let jobResponseIndex = 0;
@@ -1844,6 +1858,10 @@ function renderWithApi({
 
       if (path === '/observability/ux-events' && method === 'POST') {
         uxEvents?.push(JSON.parse(String(init?.body ?? '{}')));
+        return new Response(null, { status: 204 });
+      }
+      if (path === '/observability/runtime-events' && method === 'POST') {
+        runtimeEvents?.push(JSON.parse(String(init?.body ?? '{}')));
         return new Response(null, { status: 204 });
       }
 

@@ -18,7 +18,7 @@ import type { ChangeEvent, MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { API_BASE, api } from './lib/api';
-import { beginObservedAction, installInteractionObserver, trackEvent } from './lib/telemetry';
+import { beginObservedAction, installInteractionObserver, installRuntimeFailureObserver, trackEvent } from './lib/telemetry';
 import type { ObservedControl } from './lib/telemetry';
 import type {
   Asset,
@@ -111,7 +111,15 @@ const publishLabels: Record<PublishJob['step'], string> = {
 };
 
 export function App() {
-  if (window.location.pathname.startsWith('/admin')) return <AdminApp />;
+  const isAdmin = window.location.pathname.startsWith('/admin');
+  useEffect(
+    () => installRuntimeFailureObserver(
+      (event) => void api.reportRuntimeEvent(event).catch(() => undefined),
+      isAdmin ? 'admin' : 'catalog',
+    ),
+    [isAdmin],
+  );
+  if (isAdmin) return <AdminApp />;
   return <MainApp />;
 }
 
@@ -383,6 +391,7 @@ function MainApp() {
 
   async function startFreshList() {
     if (!seller) return;
+    const action = beginProductAction('start_new_products');
     setFreshConfirmOpen(false);
     setProcessing(false);
     setUploading(false);
@@ -402,9 +411,11 @@ function MainApp() {
       setShowPublishValidation(false);
       setVoiceNudgeVisible(false);
       setTorobSuccessMessage(null);
+      action.accepted();
       showToast('صفحه برای محصولات جدید آماده شد.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'شروع دوباره ناموفق بود.');
     }
   }
@@ -443,6 +454,7 @@ function MainApp() {
 
   async function deleteUploadedAsset(assetId: number) {
     if (items.length > 0 || uploading || processing) return;
+    const action = beginProductAction('delete_photo');
     setError(null);
     try {
       await api.deleteAsset(assetId);
@@ -451,7 +463,9 @@ function MainApp() {
       } else {
         setAssets((current) => current.filter((asset) => asset.id !== assetId));
       }
+      action.accepted();
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'عکس حذف نشد. دوباره تلاش کن.');
     }
   }
@@ -666,14 +680,17 @@ function MainApp() {
 
   async function splitPhoto(itemId: number, assetId: number) {
     if (!batch) return;
+    const action = beginProductAction('split_photo');
     const key = `${itemId}-${assetId}`;
     setSplittingPhotoKey(key);
     setError(null);
     try {
       await api.splitItem(itemId, [assetId]);
       setItems(await api.listItems(batch.id));
+      action.accepted();
       showToast('عکس به‌عنوان محصول جدا نمایش داده شد.');
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'عکس جدا نشد. دوباره تلاش کن.');
     } finally {
       setSplittingPhotoKey(null);
@@ -747,11 +764,15 @@ function MainApp() {
   }
 
   async function selectPlatform(nextPlatform: Platform | null) {
+    const action = nextPlatform === null ? beginProductAction('change_platform') : null;
     const requestId = ++platformRequestRef.current;
     setPlatform(nextPlatform);
     setError(null);
     resetCurrentBatchState();
-    if (!nextPlatform) return;
+    if (!nextPlatform) {
+      action?.accepted();
+      return;
+    }
     if (!seller) {
       setError('صفحه هنوز آماده نیست. چند لحظه صبر کن.');
       return;
@@ -1572,15 +1593,18 @@ function VoicePanel({
   const chunksRef = useRef<Blob[]>([]);
   const stoppingRef = useRef(false);
   const stopHandledRef = useRef(false);
+  const stopActionRef = useRef<ReturnType<typeof beginProductAction> | null>(null);
 
   async function toggleRecording() {
     if (recording) {
       if (stoppingRef.current) return;
+      stopActionRef.current = beginProductAction('record_voice');
       stoppingRef.current = true;
       recorderRef.current?.stop();
       setRecording(false);
       return;
     }
+    const action = beginProductAction('record_voice');
     setAskingMic(true);
     setVoiceError(null);
     let stream: MediaStream | null = null;
@@ -1600,17 +1624,23 @@ function VoicePanel({
         stream?.getTracks().forEach((track) => track.stop());
         const file = createRecordedAudioFile(chunksRef.current, recorder);
         if (!file) {
+          stopActionRef.current?.failed('unknown');
+          stopActionRef.current = null;
           setVoiceError('صدایی ضبط نشد. دوباره ضبط کن.');
           recorderRef.current = null;
           return;
         }
+        stopActionRef.current?.accepted();
+        stopActionRef.current = null;
         onUpload([file]);
         recorderRef.current = null;
       };
       recorder.start(1000);
       recorderRef.current = recorder;
       setRecording(true);
+      action.accepted();
     } catch {
+      action.failed('unknown');
       stream?.getTracks().forEach((track) => track.stop());
       setVoiceError('اجازه میکروفون داده نشد. دسترسی میکروفون را فعال کن و دوباره تلاش کن.');
     } finally {
@@ -2036,15 +2066,18 @@ function VoiceRefineControl({
   const stoppingRef = useRef(false);
   const stopHandledRef = useRef(false);
   const canReprocess = hasAudio || localAudioReady;
+  const stopActionRef = useRef<ReturnType<typeof beginProductAction> | null>(null);
 
   async function toggleRecording() {
     if (recording) {
       if (stoppingRef.current) return;
+      stopActionRef.current = beginProductAction('record_voice');
       stoppingRef.current = true;
       recorderRef.current?.stop();
       setRecording(false);
       return;
     }
+    const action = beginProductAction('record_voice');
     setVoiceError(null);
     setAskingMic(true);
     let stream: MediaStream | null = null;
@@ -2064,18 +2097,24 @@ function VoiceRefineControl({
         stream?.getTracks().forEach((track) => track.stop());
         const file = createRecordedAudioFile(chunksRef.current, recorder);
         if (!file) {
+          stopActionRef.current?.failed('unknown');
+          stopActionRef.current = null;
           setVoiceError('صدایی ضبط نشد. دوباره ضبط کن.');
           recorderRef.current = null;
           return;
         }
         await onUpload([file]);
+        stopActionRef.current?.accepted();
+        stopActionRef.current = null;
         setLocalAudioReady(true);
         recorderRef.current = null;
       };
       recorder.start(1000);
       recorderRef.current = recorder;
       setRecording(true);
+      action.accepted();
     } catch {
+      action.failed('unknown');
       stream?.getTracks().forEach((track) => track.stop());
       setVoiceError('اجازه میکروفون داده نشد.');
     } finally {
@@ -2085,11 +2124,11 @@ function VoiceRefineControl({
 
   return (
     <div className="voice-refine">
-      <button className="link-button" type="button" onClick={toggleRecording} disabled={askingMic || processing}>
+      <button data-observe-control="record_voice" className="link-button" type="button" onClick={toggleRecording} disabled={askingMic || processing}>
         {askingMic ? <Loader2 className="spin" size={15} /> : recording ? <Pause size={15} /> : <Mic size={15} />}
         {recording ? 'توقف ضبط' : 'ضبط صدا'}
       </button>
-      <button className="link-button primary-link" type="button" onClick={onReprocess} disabled={!canReprocess || processing || recording}>
+      <button data-observe-control="build_product_list" className="link-button primary-link" type="button" onClick={onReprocess} disabled={!canReprocess || processing || recording}>
         {processing ? <Loader2 className="spin" size={15} /> : <Sparkles size={15} />}
         بازبینی
       </button>

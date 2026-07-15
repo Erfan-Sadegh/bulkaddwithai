@@ -23,6 +23,7 @@ from automation.collectors import (
     collect_local_logs,
     collect_product_events,
     collect_sentry,
+    collect_ux_contract,
 )
 from automation.dashboard import rebuild_dashboard, write_run_report
 from automation.models import Candidate, PRIORITY_ORDER, RunReport, Signal
@@ -147,6 +148,7 @@ def collect_all(repo: Path, policy: dict[str, Any], health: dict[str, str]) -> l
         "sentry": collect_sentry,
         "clarity": collect_clarity,
         "production_health": collect_health,
+        "ux_contract": lambda: collect_ux_contract(repo),
     }
     for name, collector in collectors.items():
         try:
@@ -232,7 +234,7 @@ def _fallback_candidates(signals: list[Signal]) -> list[Candidate]:
         for signal in signals
         if signal.priority != "info"
         and (
-            signal.source in {"product_events", "sentry", "local_logs"}
+            signal.source in {"product_events", "sentry", "local_logs", "ux_contract"}
             or bool(signal.evidence.get("control"))
         )
     ]

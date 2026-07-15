@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from automation import runner
-from automation.collectors import CollectorError, collect_clarity, collect_local_logs, collect_product_events
+from automation.collectors import CollectorError, collect_clarity, collect_local_logs, collect_product_events, collect_ux_contract
 from automation.dashboard import rebuild_dashboard, write_run_report
 from automation.models import Candidate, Signal
 from automation.security import (
@@ -355,6 +355,31 @@ class AutomationTests(unittest.TestCase):
             )
 
         self.assertNotIn("ui_action_unresponsive", {signal.event for signal in signals})
+
+    def test_ux_contract_reports_missing_lifecycle_instrumentation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            (repo / "automation").mkdir()
+            shutil.copy(Path(__file__).parents[1] / "ux_contract.json", repo / "automation" / "ux_contract.json")
+            (repo / "frontend" / "src" / "lib").mkdir(parents=True)
+            (repo / "backend" / "app").mkdir(parents=True)
+            (repo / "frontend" / "src" / "App.tsx").write_text(
+                'data-observe-control="delete_photo"', encoding="utf-8"
+            )
+            (repo / "frontend" / "src" / "lib" / "telemetry.ts").write_text("", encoding="utf-8")
+            (repo / "backend" / "app" / "schemas.py").write_text("", encoding="utf-8")
+
+            signals = collect_ux_contract(repo)
+
+        delete_gap = next(signal for signal in signals if signal.evidence.get("control") == "delete_photo")
+        self.assertEqual(delete_gap.event, "ux_observability_gap")
+        self.assertIn(
+            "frontend/src/App.tsx:beginProductAction('delete_photo')",
+            delete_gap.evidence["missing_markers"],
+        )
+
+    def test_current_ux_contract_has_no_uninstrumented_control(self):
+        self.assertEqual(collect_ux_contract(Path(__file__).parents[2]), [])
 
     def test_full_self_improvement_cycle_in_an_isolated_repository(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -292,6 +292,42 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
     assert events["ui_action_failed"]["outcome"] == "server"
 
 
+def test_public_runtime_event_accepts_only_safe_enums(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+    with TestClient(app) as test_client:
+        accepted = test_client.post(
+            "/observability/runtime-events",
+            json={"event": "frontend_runtime_failed", "code": "script_error", "surface": "catalog"},
+        )
+        rejected = test_client.post(
+            "/observability/runtime-events",
+            json={
+                "event": "frontend_runtime_failed",
+                "code": "private message and token",
+                "surface": "catalog",
+                "message": "private stack",
+            },
+        )
+        feed = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    assert accepted.status_code == 204
+    assert rejected.status_code == 422
+    event = next(item for item in feed.json() if item["event"] == "frontend_runtime_failed")
+    assert event["code"] == "script_error"
+    assert event["surface"] == "catalog"
+    assert "message" not in event
+
+
 def test_failed_published_product_is_exported_safely_even_without_transient_log_event(tmp_path):
     app = create_app(
         Settings(

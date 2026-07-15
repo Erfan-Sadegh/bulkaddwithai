@@ -31,6 +31,8 @@ EVENT_PRIORITY = {
     "ui_action_blocked": "ux",
     "ui_action_failed": "high",
     "ui_action_unresponsive": "ux",
+    "ux_observability_gap": "high",
+    "frontend_runtime_failed": "high",
     "http_response_failed": "high",
 }
 EVENT_PATTERN = re.compile(r"\b(" + "|".join(map(re.escape, EVENT_PRIORITY)) + r")\b")
@@ -39,6 +41,64 @@ FIELD_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)")
 
 class CollectorError(RuntimeError):
     pass
+
+
+def collect_ux_contract(repo: Path) -> list[Signal]:
+    """Turn missing UX instrumentation into an actionable signal before users find it."""
+    contract_path = repo / "automation" / "ux_contract.json"
+    try:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectorError(f"ux contract is unreadable: {type(exc).__name__}") from exc
+    source_cache: dict[str, str] = {}
+    signals: list[Signal] = []
+    missing_global: list[str] = []
+    for marker in contract.get("global_markers", []):
+        if not isinstance(marker, dict):
+            continue
+        relative = str(marker.get("path") or "")
+        text = str(marker.get("text") or "")
+        if relative not in source_cache:
+            path = repo / relative
+            source_cache[relative] = path.read_text(encoding="utf-8") if path.is_file() else ""
+        if not text or text not in source_cache[relative]:
+            missing_global.append(f"{relative}:{text}")
+    if missing_global:
+        signals.append(
+            Signal(
+                source="ux_contract",
+                event="ux_observability_gap",
+                priority=EVENT_PRIORITY["ux_observability_gap"],
+                summary_fa="پوشش تشخیص خطاهای runtime رابط کاربری ناقص است.",
+                evidence={"control": "frontend_runtime", "missing_markers": missing_global},
+            )
+        )
+    for item in contract.get("controls", []):
+        if not isinstance(item, dict):
+            continue
+        control = str(item.get("control") or "unknown")
+        markers = [marker for marker in item.get("markers", []) if isinstance(marker, dict)]
+        missing: list[str] = []
+        for marker in markers:
+            relative = str(marker.get("path") or "")
+            text = str(marker.get("text") or "")
+            if relative not in source_cache:
+                path = repo / relative
+                source_cache[relative] = path.read_text(encoding="utf-8") if path.is_file() else ""
+            if not text or text not in source_cache[relative]:
+                missing.append(f"{relative}:{text}")
+        if not missing:
+            continue
+        signals.append(
+            Signal(
+                source="ux_contract",
+                event="ux_observability_gap",
+                priority=EVENT_PRIORITY["ux_observability_gap"],
+                summary_fa=f"کنترل {control} بدون پوشش کامل lifecycle و outcome است.",
+                evidence={"control": control, "missing_markers": missing},
+            )
+        )
+    return signals
 
 
 def collect_local_logs(repo: Path, policy: dict[str, Any]) -> list[Signal]:

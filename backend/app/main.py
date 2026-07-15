@@ -59,6 +59,7 @@ from .schemas import (
     TorobSubmissionRead,
     TorobSubmissionStartResponse,
     UxEventCreate,
+    RuntimeEventCreate,
 )
 from .services import (
     create_batch,
@@ -265,6 +266,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         else:
             ux_logger.info("%s control=%s attempt_id=%s", payload.event, payload.control, payload.attempt_id)
+        return Response(status_code=204)
+
+    @app.post("/observability/runtime-events", status_code=204)
+    def post_runtime_event(payload: RuntimeEventCreate):
+        ux_logger.warning(
+            "%s code=%s surface=%s",
+            payload.event,
+            payload.code,
+            payload.surface,
+        )
         return Response(status_code=204)
 
     @app.post("/admin/login", response_model=AdminLoginResponse)
