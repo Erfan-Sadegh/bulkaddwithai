@@ -153,6 +153,71 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(signals[0].count, 4)
         self.assertEqual(signals[0].evidence["stage"], "vision_extracting")
 
+    def test_product_event_collector_detects_repeated_picker_opens_without_terminal_event(self):
+        payload = [
+            {
+                "event": "image_picker_opened",
+                "control": "photo_drop_zone",
+                "attempt_id": "11111111-1111-4111-8111-111111111111",
+                "last_seen_at": "2026-07-15T00:01:00Z",
+            },
+            {
+                "event": "image_picker_opened",
+                "control": "photo_drop_zone",
+                "attempt_id": "22222222-2222-4222-8222-222222222222",
+                "last_seen_at": "2026-07-15T00:02:00Z",
+            },
+            {
+                "event": "image_picker_opened",
+                "control": "add_photo_button",
+                "attempt_id": "33333333-3333-4333-8333-333333333333",
+                "last_seen_at": "2026-07-15T00:03:00Z",
+            },
+            {
+                "event": "image_files_selected",
+                "control": "add_photo_button",
+                "attempt_id": "33333333-3333-4333-8333-333333333333",
+                "file_count": 1,
+                "last_seen_at": "2026-07-15T00:03:01Z",
+            },
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].event, "image_picker_unresponsive")
+        self.assertEqual(signals[0].count, 2)
+        self.assertEqual(signals[0].evidence["control"], "photo_drop_zone")
+
+    def test_product_event_collector_gives_picker_attempts_time_to_finish(self):
+        payload = [
+            {
+                "event": "image_picker_opened",
+                "control": "photo_drop_zone",
+                "attempt_id": attempt,
+                "last_seen_at": f"2026-07-15T00:0{minute}:00Z",
+            }
+            for attempt, minute in [
+                ("11111111-1111-4111-8111-111111111111", 8),
+                ("22222222-2222-4222-8222-222222222222", 9),
+            ]
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                },
+                now=datetime(2026, 7, 15, 0, 10, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(signals, [])
+
     def test_product_event_collector_never_guesses_without_credentials(self):
         with self.assertRaises(CollectorError):
             collect_product_events({})

@@ -81,9 +81,11 @@ function extractDetail(text: string): string {
 
 export const api = {
   reportUxEvent: (payload: {
-    event: 'image_picker_blocked';
+    event: 'image_picker_blocked' | 'image_picker_opened' | 'image_files_selected' | 'image_picker_cancelled';
     control: 'photo_drop_zone' | 'add_photo_button';
-    reason: 'list_exists' | 'processing';
+    reason?: 'list_exists' | 'processing';
+    attempt_id?: string;
+    file_count?: number;
   }) => request<void>('/observability/ux-events', { method: 'POST', body: JSON.stringify(payload) }),
   listSellers: () => request<Seller[]>('/sellers'),
   getSeller: (sellerId: number) => request<Seller>(`/sellers/${sellerId}`),

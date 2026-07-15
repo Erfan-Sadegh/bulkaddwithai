@@ -3,8 +3,8 @@ from sqlalchemy import select
 
 from app.config import Settings
 from app.integrations.basalam import BasalamClientError, BasalamProductPayload, BasalamUploadedFile
-from app.models import PlatformConnection, PublishJob
-from app.platform_services import create_basalam_publish_job
+from app.models import BatchItem, PlatformConnection, PublishJob
+from app.platform_services import _publish_validation_error, create_basalam_publish_job
 from helpers import image_file
 
 
@@ -102,6 +102,25 @@ class FakeBasalamClient:
     ) -> dict:
         self.created_products.append(payload)
         return {"id": 9000 + len(self.created_products), "url": f"https://basalam.com/p/{9000 + len(self.created_products)}"}
+
+
+def test_publish_validation_rejects_package_weight_over_three_times_product_weight():
+    item = BatchItem(
+        batch_id=1,
+        title="test",
+        price_toman=1000,
+        stock=1,
+        preparation_days=1,
+        weight_grams=101,
+        package_weight_grams=304,
+        unit_quantity=1,
+    )
+
+    error = _publish_validation_error(Settings(), item)
+
+    assert error is not None
+    assert "سه برابر" in error
+    assert "وزن" in error
 
 
 def test_basalam_oauth_url_and_callback_create_platform_connection(client: TestClient, seller: dict):

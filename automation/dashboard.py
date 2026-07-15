@@ -45,6 +45,7 @@ SOURCES = {
 EVENTS = {
     "image_upload_rejected": "رد شدن تصویر هنگام بارگذاری",
     "image_picker_blocked": "کلیک روی آپلود در زمانی که افزودن عکس قفل بود",
+    "image_picker_unresponsive": "بازشدن آپلود بدون انتخاب یا لغو قابل‌تشخیص",
     "processing_job_failed": "ناموفق بودن پردازش هوش مصنوعی",
     "http_request_failed": "خطای داخلی درخواست",
     "http_response_failed": "پاسخ ناموفق سرور",

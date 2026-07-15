@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.models import OperationalEvent
+from app.models import Batch, BatchItem, PlatformConnection, PublishJob, PublishedProduct, Seller, OperationalEvent
 from app.observability import JsonLogFormatter, _before_send, redact_text
 
 
@@ -210,6 +210,27 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
             "/observability/ux-events",
             json={"event": "arbitrary_event", "control": "secret", "reason": "anything"},
         )
+        opened = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "image_picker_opened",
+                "control": "photo_drop_zone",
+                "attempt_id": "11111111-1111-4111-8111-111111111111",
+            },
+        )
+        selected = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "image_files_selected",
+                "control": "photo_drop_zone",
+                "attempt_id": "11111111-1111-4111-8111-111111111111",
+                "file_count": 2,
+            },
+        )
+        invalid_selected = test_client.post(
+            "/observability/ux-events",
+            json={"event": "image_files_selected", "control": "photo_drop_zone", "file_count": 2},
+        )
         feed = test_client.get(
             "/observability/events",
             headers={"Authorization": "Bearer collector-only-token"},
@@ -217,9 +238,79 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
 
     assert accepted.status_code == 204
     assert rejected.status_code == 422
-    assert feed.json()[0]["event"] == "image_picker_blocked"
-    assert feed.json()[0]["control"] == "add_photo_button"
-    assert feed.json()[0]["reason"] == "list_exists"
+    assert opened.status_code == 204
+    assert selected.status_code == 204
+    assert invalid_selected.status_code == 422
+    events = {item["event"]: item for item in feed.json()}
+    assert events["image_picker_blocked"]["control"] == "add_photo_button"
+    assert events["image_picker_blocked"]["reason"] == "list_exists"
+    assert events["image_picker_opened"]["attempt_id"] == "11111111-1111-4111-8111-111111111111"
+    assert events["image_files_selected"]["file_count"] == 2
+
+
+def test_failed_published_product_is_exported_safely_even_without_transient_log_event(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+    with app.state.session_factory() as session:
+        seller = Seller(name="test", mobile="", shop_name="test")
+        session.add(seller)
+        session.flush()
+        batch = Batch(seller_id=seller.id)
+        session.add(batch)
+        session.flush()
+        item = BatchItem(batch_id=batch.id, title="private product title")
+        connection = PlatformConnection(
+            seller_id=seller.id,
+            platform="basalam",
+            external_shop_id="test-shop",
+            external_shop_name="private shop",
+            access_token="secret-token",
+        )
+        session.add_all([item, connection])
+        session.flush()
+        job = PublishJob(batch_id=batch.id, connection_id=connection.id, platform="basalam")
+        session.add(job)
+        session.flush()
+        session.add(
+            PublishedProduct(
+                batch_item_id=item.id,
+                publish_job_id=job.id,
+                connection_id=connection.id,
+                platform="basalam",
+                status="failed",
+                error="private provider error and product title",
+                response_metadata={
+                    "http_status": 422,
+                    "response_text": '{"messages":[{"fields":["package_weight"],"message":"private value"}]}',
+                    "request_payload_category_id": 485,
+                    "request_payload_photo_count": 1,
+                },
+            )
+        )
+        session.commit()
+
+    with TestClient(app) as test_client:
+        response = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    assert response.status_code == 200
+    event = response.json()[0]
+    assert event["event"] == "basalam_product_failed"
+    assert event["failure_field"] == "package_weight"
+    assert event["http_status"] == 422
+    assert event["category_id"] == 485
+    assert event["photo_count"] == 1
+    serialized = json.dumps(event)
+    assert "private" not in serialized
+    assert "secret-token" not in serialized
 
 
 def test_operational_event_store_removes_expired_records(tmp_path):

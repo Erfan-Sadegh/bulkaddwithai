@@ -1375,12 +1375,24 @@ function UploadPanel({
   onUpload: (files: File[]) => void;
   onDeleteAsset: (assetId: number) => void;
 }) {
+  const pickerAttemptRef = useRef<string | null>(null);
+
   function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
-    const control = event.target.dataset.control ?? 'unknown';
+    const control = (event.target.dataset.control ?? 'photo_drop_zone') as 'photo_drop_zone' | 'add_photo_button';
     trackEvent('image_files_selected', { control, file_count: files.length });
+    const attemptId = pickerAttemptRef.current;
+    if (attemptId && files.length > 0) {
+      void api.reportUxEvent({
+        event: 'image_files_selected',
+        control,
+        attempt_id: attemptId,
+        file_count: files.length,
+      }).catch(() => undefined);
+    }
+    pickerAttemptRef.current = null;
     event.target.value = '';
-    onUpload(files);
+    if (files.length > 0) onUpload(files);
   }
 
   function reportBlocked(control: 'photo_drop_zone' | 'add_photo_button') {
@@ -1394,7 +1406,24 @@ function UploadPanel({
   }
 
   function reportPickerOpened(control: 'photo_drop_zone' | 'add_photo_button') {
+    const attemptId = createPickerAttemptId();
+    pickerAttemptRef.current = attemptId;
     trackEvent('image_picker_opened', { control, state: 'ready' });
+    void api.reportUxEvent({ event: 'image_picker_opened', control, attempt_id: attemptId }).catch(() => undefined);
+  }
+
+  function reportPickerCancelled(control: 'photo_drop_zone' | 'add_photo_button') {
+    const attemptId = pickerAttemptRef.current;
+    if (!attemptId) return;
+    trackEvent('image_picker_cancelled', { control });
+    void api.reportUxEvent({ event: 'image_picker_cancelled', control, attempt_id: attemptId }).catch(() => undefined);
+    pickerAttemptRef.current = null;
+  }
+
+  function bindPickerCancel(input: HTMLInputElement | null, control: 'photo_drop_zone' | 'add_photo_button') {
+    if (!input || input.dataset.cancelListener === 'true') return;
+    input.dataset.cancelListener = 'true';
+    input.addEventListener('cancel', () => reportPickerCancelled(control));
   }
 
   return (
@@ -1417,6 +1446,7 @@ function UploadPanel({
               accept="image/*"
               multiple
               data-control="add_photo_button"
+              ref={(input) => bindPickerCancel(input, 'add_photo_button')}
               disabled={uploading || uploadDisabled}
               onClick={() => reportPickerOpened('add_photo_button')}
               onChange={handleFileInput}
@@ -1436,6 +1466,7 @@ function UploadPanel({
             accept="image/*"
             multiple
             data-control="photo_drop_zone"
+            ref={(input) => bindPickerCancel(input, 'photo_drop_zone')}
             disabled={uploading || uploadDisabled}
             onClick={() => reportPickerOpened('photo_drop_zone')}
             onChange={handleFileInput}
@@ -2687,8 +2718,19 @@ function validateItemsForBasalam(items: ProductItem[], drafts: DraftMap): Publis
       if (parseStockValue(draft.stock) === null) fields.push('stock');
       const preparationDays = parsePositiveInt(draft.preparation_days);
       if (preparationDays === null) fields.push('preparation_days');
-      if (parsePositiveInt(draft.weight_grams) === null) fields.push('weight_grams');
-      if (parsePositiveInt(draft.package_weight_grams) === null) fields.push('package_weight_grams');
+      const weightGrams = parsePositiveInt(draft.weight_grams);
+      const packageWeightGrams = parsePositiveInt(draft.package_weight_grams);
+      if (weightGrams === null) fields.push('weight_grams');
+      if (packageWeightGrams === null) fields.push('package_weight_grams');
+      if (
+        weightGrams !== null &&
+        packageWeightGrams !== null &&
+        weightGrams > 100 &&
+        packageWeightGrams > weightGrams * 3 &&
+        !fields.includes('package_weight_grams')
+      ) {
+        fields.push('package_weight_grams');
+      }
       if (parsePositiveInt(draft.unit_quantity) === null) fields.push('unit_quantity');
       const category = item.basalam_category;
       const categoryIsReady = Boolean(category?.category_id);
@@ -2735,6 +2777,15 @@ function parsePositiveInt(value: string): number | null {
 function parseStockValue(value: string): number | null {
   const parsed = parseNullableInt(value);
   return parsed !== null && parsed >= 0 ? parsed : null;
+}
+
+function createPickerAttemptId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = character === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
 }
 
 async function prepareFilesForUpload(files: File[]): Promise<File[]> {
@@ -2821,6 +2872,9 @@ function imageUploadName(name: string): string {
 function humanizePublishError(error: string | null): string {
   if (!error) return 'این محصول ثبت نشد. فیلدهای قیمت، عکس و دسته‌بندی را چک کن.';
   const normalized = error.toLowerCase();
+  if (normalized.includes('package_weight') || normalized.includes('وزن با بسته‌بندی')) {
+    return 'برای محصول بالای ۱۰۰ گرم، وزن با بسته‌بندی حداکثر سه برابر وزن محصول است.';
+  }
   if (/product\(s\) failed|product failed/i.test(error)) {
     return 'ثبت این محصول ناموفق بود. فیلدهای لازم را چک کن و دوباره تلاش کن.';
   }

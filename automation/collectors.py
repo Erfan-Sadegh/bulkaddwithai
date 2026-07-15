@@ -26,6 +26,7 @@ EVENT_PRIORITY = {
     "basalam_publish_validation_failed": "ux",
     "image_upload_rejected": "ux",
     "image_picker_blocked": "ux",
+    "image_picker_unresponsive": "ux",
     "http_response_failed": "high",
 }
 EVENT_PATTERN = re.compile(r"\b(" + "|".join(map(re.escape, EVENT_PRIORITY)) + r")\b")
@@ -178,12 +179,41 @@ def collect_product_events(
     if not url or not token:
         raise CollectorError("فید رویدادهای production تنظیم نشده است.")
     separator = "&" if "?" in url else "?"
-    since = (now or datetime.now(timezone.utc)) - timedelta(hours=24)
+    current_time = now or datetime.now(timezone.utc)
+    since = current_time - timedelta(hours=24)
     query = urllib.parse.urlencode({"limit": "500", "since": since.isoformat()})
     payload = _get_json(f"{url}{separator}{query}", token)
     if not isinstance(payload, list):
         raise CollectorError("پاسخ فید رویدادهای production معتبر نیست.")
     results: list[Signal] = []
+    terminal_attempts = {
+        str(item.get("attempt_id"))
+        for item in payload
+        if isinstance(item, dict)
+        and item.get("event") in {"image_files_selected", "image_picker_cancelled"}
+        and item.get("attempt_id")
+    }
+    orphaned_by_control: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in payload:
+        if not isinstance(item, dict) or item.get("event") != "image_picker_opened":
+            continue
+        attempt_id = str(item.get("attempt_id") or "")
+        if attempt_id and attempt_id not in terminal_attempts and _event_is_older_than(item, current_time, minutes=5):
+            orphaned_by_control[str(item.get("control") or "unknown")].append(item)
+    for control, orphaned in orphaned_by_control.items():
+        if len(orphaned) < 2:
+            continue
+        results.append(
+            Signal(
+                source="product_events",
+                event="image_picker_unresponsive",
+                priority=EVENT_PRIORITY["image_picker_unresponsive"],
+                summary_fa=f"فایل‌پیکر {control} در {len(orphaned)} تلاش باز شد اما انتخاب یا لغو ثبت نشد.",
+                count=len(orphaned),
+                occurred_at=str(orphaned[-1].get("last_seen_at") or datetime.now(timezone.utc).isoformat()),
+                evidence={"control": control, "orphaned_attempts": len(orphaned)},
+            )
+        )
     for item in payload:
         if not isinstance(item, dict):
             continue
@@ -246,6 +276,19 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _event_is_older_than(item: dict[str, Any], now: datetime, *, minutes: int) -> bool:
+    raw = item.get("last_seen_at")
+    if not isinstance(raw, str):
+        return False
+    try:
+        occurred_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if occurred_at.tzinfo is None:
+        occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+    return occurred_at <= now - timedelta(minutes=minutes)
 
 
 def _sum_count_fields(row: dict[str, Any]) -> int:

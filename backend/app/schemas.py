@@ -1,13 +1,27 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class UxEventCreate(BaseModel):
-    event: Literal["image_picker_blocked"]
+    event: Literal["image_picker_blocked", "image_picker_opened", "image_files_selected", "image_picker_cancelled"]
     control: Literal["photo_drop_zone", "add_photo_button"]
-    reason: Literal["list_exists", "processing"]
+    reason: Literal["list_exists", "processing"] | None = None
+    attempt_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+    file_count: int | None = Field(default=None, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def validate_event_shape(self):
+        if self.event == "image_picker_blocked":
+            if self.reason is None or self.attempt_id is not None or self.file_count is not None:
+                raise ValueError("blocked picker event shape is invalid")
+            return self
+        if self.attempt_id is None or self.reason is not None:
+            raise ValueError("picker lifecycle event shape is invalid")
+        if (self.event == "image_files_selected") != (self.file_count is not None):
+            raise ValueError("selected picker event requires file_count")
+        return self
 
 
 class SellerCreate(BaseModel):

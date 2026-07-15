@@ -390,6 +390,24 @@ describe('App', () => {
     expect(await screen.findByText('۱ عکس اضافه شده')).toBeInTheDocument();
   });
 
+  it('reports the safe lifecycle of an enabled image picker without filenames', async () => {
+    const user = userEvent.setup();
+    const uxEvents: Array<Record<string, unknown>> = [];
+    const { container } = renderWithApi({ uxEvents, uploadAssetCount: 1 });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(
+      container.querySelector('input[accept="image/*"]') as HTMLInputElement,
+      new File(['aaa'], 'private-name.jpg', { type: 'image/jpeg' }),
+    );
+
+    await waitFor(() => expect(uxEvents.map((event) => event.event)).toEqual(['image_picker_opened', 'image_files_selected']));
+    expect(uxEvents[0].attempt_id).toBe(uxEvents[1].attempt_id);
+    expect(uxEvents[1].file_count).toBe(1);
+    expect(JSON.stringify(uxEvents)).not.toContain('private-name.jpg');
+  });
+
   it('shows results, formats Persian price, and confirms starting over', async () => {
     const user = userEvent.setup();
     const updateBodies: Array<Record<string, unknown>> = [];
@@ -1186,6 +1204,37 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'عکس محصولات' })).toBeInTheDocument();
   });
 
+  it('blocks Basalam publish when package weight exceeds three times product weight', async () => {
+    const user = userEvent.setup();
+    let publishCalled = false;
+    const { container } = renderWithApi({
+      platformConnections: [basalamConnection],
+      onPublish: () => {
+        publishCalled = true;
+      },
+    });
+
+    await screen.findByRole('heading', { level: 1 });
+    await user.click(screen.getByRole('button', { name: /افزودن محصولات به باسلام/ }));
+    await user.upload(container.querySelector('input[accept="image/*"]') as HTMLInputElement, [
+      new File(['aaa'], 'a.jpg', { type: 'image/jpeg' }),
+    ]);
+    await user.click(container.querySelector('.action-button') as HTMLButtonElement);
+    await screen.findByDisplayValue(item.title);
+    const extraInputs = container.querySelectorAll('.product-extra-fields input');
+    fireEvent.change(extraInputs[0], { target: { value: '5' } });
+    fireEvent.change(extraInputs[1], { target: { value: '2' } });
+    fireEvent.change(extraInputs[2], { target: { value: '101' } });
+    fireEvent.change(extraInputs[3], { target: { value: '304' } });
+    fireEvent.change(extraInputs[4], { target: { value: '1' } });
+
+    await user.click(container.querySelector('.save-dock button') as HTMLButtonElement);
+
+    const validationTitle = await screen.findByText('اطلاعات لازم کامل نیست.');
+    expect(validationTitle.closest('.dock-message')).toHaveTextContent('وزن با بسته‌بندی');
+    expect(publishCalled).toBe(false);
+  });
+
   it('shows a running Basalam publish state while polling the publish job', async () => {
     const user = userEvent.setup();
     const { container } = renderWithApi({
@@ -1726,6 +1775,7 @@ function renderWithApi({
   torobSubmissionDelayMs = 0,
   restoredBatch = batch,
   createdBatch = batch,
+  uxEvents,
 }: {
   failProcessing?: boolean;
   uploadAssetCount?: number;
@@ -1763,6 +1813,7 @@ function renderWithApi({
   torobSubmissionDelayMs?: number;
   restoredBatch?: typeof batch;
   createdBatch?: typeof batch;
+  uxEvents?: Array<Record<string, unknown>>;
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
   let jobResponseIndex = 0;
@@ -1775,6 +1826,11 @@ function renderWithApi({
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = getPath(input);
       const method = init?.method ?? 'GET';
+
+      if (path === '/observability/ux-events' && method === 'POST') {
+        uxEvents?.push(JSON.parse(String(init?.body ?? '{}')));
+        return new Response(null, { status: 204 });
+      }
 
       if (path === '/sellers' && method === 'POST') {
         onCreateSeller?.();

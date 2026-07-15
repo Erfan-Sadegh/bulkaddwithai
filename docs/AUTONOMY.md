@@ -9,7 +9,7 @@
 - Sentry اختیاری برای FastAPI و React و Clarity custom eventهای غیرشخصی
 - correlation با `X-Request-ID` مشترک بین مرورگر و backend
 - collector فقط‌خواندنی برای فید امن خود محصول، Sentry، Clarity Data Export، health و فایل‌های log محلی
-- telemetry مشخص برای کنترل آپلود: بازشدن picker و انتخاب فایل در Clarity، و ثبت امن کلیک روی کنترل قفل‌شده در فید محصول
+- telemetry مشخص برای کنترل آپلود: چرخهٔ بازشدن، انتخاب یا لغو picker با شناسهٔ تلاش غیرشخصی، و ثبت امن کلیک روی کنترل قفل‌شده در فید محصول
 - داشبورد فارسی و شواهد خارج از Git در `%LOCALAPPDATA%\BulkAddWithAi-agent`
 - زمان هر اجرا به وقت تهران، مدت اجرا، روایت مرحله‌به‌مرحله، میزان قطعیت و «اقدام بعدی» به زبان ساده در داشبورد
 - پایش هر سه ساعت، rollout هفت روز report-only، چهارده روز حداکثر یک fix و سپس سقف سه fix در پنجرهٔ روزانه
@@ -143,4 +143,6 @@ stdout/stderr و پنل Logs همروش مرجع انسانی باقی می‌م
 
 ## محدودیت Clarity و رفع بلک‌باکس UX
 
-عدد traffic در Clarity تعداد session است، نه تعداد ویدئویی که عامل تماشا کرده باشد. Data Export API آمار تجمیعی dead click، rage click، script error و URL/device را می‌دهد، اما selector دقیق کنترل را برنمی‌گرداند. برای مسیر آپلود، frontend رویدادهای غیرشخصی `image_picker_opened` و `image_files_selected` را برای فیلتر انسانی recording ثبت می‌کند. اگر کاربر روی کنترل قفل‌شده کلیک کند، `image_picker_blocked` با علت محدود `list_exists` یا `processing` به فید امن محصول فرستاده می‌شود؛ عامل از این پس محل و علت این dead click را مستقیم می‌بیند. نام فایل، محتوای عکس و شناسه کاربر ارسال نمی‌شود.
+عدد traffic در Clarity تعداد session است، نه تعداد ویدئویی که عامل تماشا کرده باشد. Data Export API آمار تجمیعی dead click، rage click، script error و URL/device را می‌دهد، اما selector دقیق کنترل را برنمی‌گرداند. برای مسیر آپلود، frontend رویدادهای غیرشخصی `image_picker_opened`، `image_files_selected` و `image_picker_cancelled` را هم به Clarity و هم به فید امن محصول می‌فرستد. این سه رویداد یک `attempt_id` تصادفی مشترک دارند؛ اگر دست‌کم دو تلاش روی یک کنترل باز شوند ولی انتخاب یا لغو متناظر نداشته باشند، collector سیگنال قابل‌اقدام `image_picker_unresponsive` با نام همان کنترل می‌سازد. اگر کاربر روی کنترل قفل‌شده کلیک کند، `image_picker_blocked` با علت محدود `list_exists` یا `processing` ثبت می‌شود. نام فایل، محتوای عکس، مقدار input و شناسه کاربر ارسال نمی‌شود.
+
+ماسک‌بودن مقدار inputها در recordingهای Clarity عمدی است: خود Clarity محتوای input را در همهٔ حالت‌های masking پنهان می‌کند و این رفتار برای input قابل سفارشی‌سازی نیست. عامل به‌جای مقدار کاربر، نام فنی فیلد نامعتبر و کد خطا را دریافت می‌کند؛ مثلاً شکست باسلام روی `package_weight` بدون ثبت عدد واردشده یا نام محصول گزارش می‌شود.
