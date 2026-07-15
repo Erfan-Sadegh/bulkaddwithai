@@ -1,6 +1,8 @@
 import logging
 import json
+import re
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.main import create_app
 from app.models import Batch, BatchItem, PlatformConnection, PublishJob, PublishedProduct, Seller, OperationalEvent
-from app.observability import JsonLogFormatter, _before_send, redact_text
+from app.observability import JsonLogFormatter, _before_send, configure_observability, redact_text
 
 
 def test_every_http_response_has_a_safe_request_id(client):
@@ -83,10 +85,16 @@ def test_sentry_payload_and_text_are_redacted():
         "request": {
             "url": "https://example.test/callback?code=one-time-code",
             "query_string": "code=one-time-code",
-            "headers": {"Authorization": "Bearer secret", "Accept": "application/json"},
+            "headers": {
+                "Authorization": "Bearer secret",
+                "X-Request-ID": "raw-session-id",
+                "Accept": "application/json",
+            },
             "data": {"mobile": "09120000000"},
         },
-        "extra": {"access_token": "secret-token", "safe": "ok"},
+        "tags": {"request_id": "raw-session-id"},
+        "logentry": {"message": "ui_rage_click request_id=raw-session-id control=photo_drop_zone"},
+        "extra": {"access_token": "secret-token", "safe": "ok", "request_id": "raw-session-id"},
     }
 
     scrubbed = _before_send(event, {})
@@ -96,9 +104,26 @@ def test_sentry_payload_and_text_are_redacted():
     assert "query_string" not in scrubbed["request"]
     assert scrubbed["request"]["url"] == "https://example.test/callback"
     assert "Authorization" not in scrubbed["request"]["headers"]
+    assert "X-Request-ID" not in scrubbed["request"]["headers"]
     assert scrubbed["extra"]["access_token"] == "[REDACTED]"
+    assert "raw-session-id" not in json.dumps(scrubbed)
     assert redact_text("Authorization: Bearer abcdefghijklmnop") == "Authorization: Bearer [REDACTED]"
     assert redact_text("access_token=abcdefghijk") == "access_token=[REDACTED]"
+
+
+def test_sentry_transactions_use_the_same_privacy_scrubber(tmp_path):
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'events.db'}",
+        upload_dir=tmp_path / "uploads",
+        AI_PROVIDER="fake",
+        SENTRY_DSN="https://public@example.ingest.sentry.io/1",
+        SENTRY_TRACES_SAMPLE_RATE=0.1,
+    )
+    with patch("sentry_sdk.init") as init:
+        configure_observability(settings)
+
+    assert init.call_args.kwargs["before_send"] is _before_send
+    assert init.call_args.kwargs["before_send_transaction"] is _before_send
 
 
 def test_production_event_feed_requires_its_own_read_only_token(tmp_path):
@@ -326,6 +351,45 @@ def test_public_runtime_event_accepts_only_safe_enums(tmp_path):
     assert event["code"] == "script_error"
     assert event["surface"] == "catalog"
     assert "message" not in event
+
+
+def test_ux_events_hash_the_anonymous_session_id_before_persisting_it(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+    session_id = "anonymous-session-123"
+    with TestClient(app) as test_client:
+        for payload in (
+            {"event": "ui_rage_click", "control": "photo_drop_zone", "click_count": 4},
+            {
+                "event": "image_picker_opened",
+                "control": "photo_drop_zone",
+                "attempt_id": "11111111-1111-4111-8111-111111111111",
+            },
+        ):
+            response = test_client.post(
+                "/observability/ux-events",
+                headers={"X-Request-ID": session_id},
+                json=payload,
+            )
+            assert response.status_code == 204
+        feed = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    related = [item for item in feed.json() if item["event"] in {"ui_rage_click", "image_picker_opened"}]
+    assert len(related) == 2
+    assert all(item["request_id"] is None for item in related)
+    session_keys = {item["session_key"] for item in related}
+    assert len(session_keys) == 1
+    assert session_id not in session_keys
+    assert all(re.fullmatch(r"[0-9a-f]{16}", key) for key in session_keys)
 
 
 def test_failed_published_product_is_exported_safely_even_without_transient_log_event(tmp_path):

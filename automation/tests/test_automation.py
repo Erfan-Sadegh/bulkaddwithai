@@ -84,8 +84,16 @@ class AutomationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "app.log").write_text(
-                json.dumps({"event": "processing_job_failed", "stage": "vision", "job_id": 7})
-                + "\nprocessing_job_failed stage=vision job_id=8 access_token=do-not-copy\n",
+                json.dumps(
+                    {
+                        "event": "processing_job_failed",
+                        "stage": "vision",
+                        "job_id": 7,
+                        "request_id": "raw-session-id",
+                    }
+                )
+                + "\nprocessing_job_failed stage=vision job_id=8 request_id=raw-session-id "
+                "session_key=hashed-session access_token=do-not-copy\n",
                 encoding="utf-8",
             )
 
@@ -95,6 +103,8 @@ class AutomationTests(unittest.TestCase):
             self.assertEqual(signals[0].count, 2)
             self.assertEqual(signals[0].priority, "high")
             self.assertNotIn("access_token", signals[0].evidence)
+            self.assertNotIn("request_id", signals[0].evidence)
+            self.assertNotIn("session_key", signals[0].evidence)
 
     def test_redaction_removes_query_and_sensitive_mappings(self):
         self.assertEqual(redact_text("https://host/callback?code=secret"), "https://host/callback")
@@ -186,6 +196,73 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(signals[0].evidence["control"], "build_product_list")
         self.assertEqual(signals[0].evidence["click_count"], 5)
 
+    def test_product_event_collector_correlates_rage_and_stall_only_inside_one_anonymous_session(self):
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+        payload = [
+            {
+                "event": "ui_rage_click",
+                "control": "photo_drop_zone",
+                "session_key": "same-session",
+                "click_count": 4,
+                "last_seen_at": "2026-07-15T11:50:00+00:00",
+            },
+            {
+                "event": "image_picker_opened",
+                "control": "photo_drop_zone",
+                "session_key": "same-session",
+                "attempt_id": "11111111-1111-4111-8111-111111111111",
+                "last_seen_at": "2026-07-15T11:51:00+00:00",
+            },
+            {
+                "event": "ui_rage_click",
+                "control": "add_photo_button",
+                "session_key": "different-session-a",
+                "click_count": 4,
+                "last_seen_at": "2026-07-15T11:52:00+00:00",
+            },
+            {
+                "event": "image_picker_opened",
+                "control": "add_photo_button",
+                "session_key": "different-session-b",
+                "attempt_id": "22222222-2222-4222-8222-222222222222",
+                "last_seen_at": "2026-07-15T11:53:00+00:00",
+            },
+            {
+                "event": "ui_rage_click",
+                "control": "build_product_list",
+                "session_key": "same-session-different-controls",
+                "click_count": 4,
+                "last_seen_at": "2026-07-15T11:54:00+00:00",
+            },
+            {
+                "event": "ui_action_started",
+                "control": "publish_basalam",
+                "session_key": "same-session-different-controls",
+                "attempt_id": "33333333-3333-4333-8333-333333333333",
+                "last_seen_at": "2026-07-15T11:55:00+00:00",
+            },
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                },
+                now=now,
+            )
+
+        friction = [signal for signal in signals if signal.event == "ui_control_friction"]
+        self.assertEqual(len(friction), 1)
+        self.assertEqual(friction[0].evidence["control"], "photo_drop_zone")
+        self.assertEqual(friction[0].evidence["symptoms"], ["rage_click", "picker_unresponsive"])
+        self.assertNotIn("request_id", friction[0].evidence)
+        serialized = json.dumps([signal.to_dict() for signal in signals])
+        self.assertNotIn("request_id", serialized)
+        self.assertNotIn("session_key", serialized)
+        self.assertNotIn("anonymous_session_fingerprint", serialized)
+        self.assertNotIn("same-session", serialized)
+        self.assertNotIn("different-session", serialized)
+
     def test_product_event_collector_detects_repeated_picker_opens_without_terminal_event(self):
         payload = [
             {
@@ -226,6 +303,44 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(signals[0].event, "image_picker_unresponsive")
         self.assertEqual(signals[0].count, 2)
         self.assertEqual(signals[0].evidence["control"], "photo_drop_zone")
+
+    def test_terminal_event_from_another_session_and_control_does_not_hide_a_stall(self):
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+        attempt_id = "11111111-1111-4111-8111-111111111111"
+        payload = [
+            {
+                "event": "ui_rage_click",
+                "control": "photo_drop_zone",
+                "session_key": "session-a",
+                "click_count": 4,
+                "last_seen_at": "2026-07-15T11:50:00+00:00",
+            },
+            {
+                "event": "image_picker_opened",
+                "control": "photo_drop_zone",
+                "session_key": "session-a",
+                "attempt_id": attempt_id,
+                "last_seen_at": "2026-07-15T11:50:01+00:00",
+            },
+            {
+                "event": "image_files_selected",
+                "control": "add_photo_button",
+                "session_key": "session-b",
+                "attempt_id": attempt_id,
+                "file_count": 1,
+                "last_seen_at": "2026-07-15T11:50:02+00:00",
+            },
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                },
+                now=now,
+            )
+
+        self.assertIn("ui_control_friction", {signal.event for signal in signals})
 
     def test_product_event_collector_gives_picker_attempts_time_to_finish(self):
         payload = [
@@ -645,12 +760,132 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(candidates[0].fingerprint, product_failure.fingerprint)
         self.assertEqual({item["event"] for item in candidates[0].evidence}, {"image_upload_rejected", "dead_click_count"})
 
+    def test_model_triage_cannot_attach_unrelated_signals_to_proven_session_friction(self):
+        friction = Signal(
+            source="product_events",
+            event="ui_control_friction",
+            priority="high",
+            summary_fa="در یک نشست ناشناس، باکس عکس کلیک عصبی و بی‌پاسخ ماندن ثبت کرده است.",
+            evidence={"control": "photo_drop_zone", "symptoms": ["rage_click", "picker_unresponsive"]},
+        )
+        rage = Signal(
+            source="product_events",
+            event="ui_rage_click",
+            priority="ux",
+            summary_fa="کلیک عصبی تجمیعی",
+            evidence={"control": "photo_drop_zone", "click_count": 4},
+        )
+        clarity = Signal(
+            source="clarity",
+            event="dead_click_count",
+            priority="ux",
+            summary_fa="Clarity عدد تجمیعی گزارش کرده است.",
+            count=20,
+            evidence={"metric": "DeadClickCount"},
+        )
+        policy = {"limits": {"max_candidate_signals": 20}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "triage.json"
+
+            def unsafe_model_link(*_args, **_kwargs):
+                output.write_text(
+                    json.dumps(
+                        {
+                            "candidates": [
+                                {
+                                    "fingerprint": friction.fingerprint,
+                                    "title_fa": "پیوند حدسی",
+                                    "problem_fa": "Clarity حتماً مربوط به همین نشست بوده است.",
+                                    "priority": "high",
+                                    "confidence": 0.9,
+                                    "signal_fingerprints": [
+                                        friction.fingerprint,
+                                        rage.fingerprint,
+                                        clarity.fingerprint,
+                                    ],
+                                    "reproducible_hint": "با تست بازسازی شود.",
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess([], 0, "", "")
+
+            with (
+                patch.object(runner, "_find_command", return_value="codex"),
+                patch.object(runner, "_run", side_effect=unsafe_model_link),
+            ):
+                candidates = runner.triage(root, root, [friction, rage, clarity], policy, False)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual({item["event"] for item in candidates[0].evidence}, {"ui_control_friction"})
+        self.assertEqual(candidates[0].problem_fa, friction.summary_fa)
+        self.assertEqual(candidates[0].priority, friction.priority)
+        self.assertEqual(candidates[0].confidence, 0.8)
+        self.assertNotEqual(candidates[0].reproducible_hint, "با تست بازسازی شود.")
+
+    def test_fallback_prefers_proven_session_correlation_over_lower_level_signals(self):
+        friction = Signal(
+            source="product_events",
+            event="ui_control_friction",
+            priority="high",
+            summary_fa="در یک نشست ناشناس، باکس عکس هم کلیک عصبی و هم بی‌پاسخ ثبت کرده است.",
+            evidence={"control": "photo_drop_zone", "symptoms": ["rage_click", "picker_unresponsive"]},
+        )
+        rage = Signal(
+            source="product_events",
+            event="ui_rage_click",
+            priority="ux",
+            summary_fa="کاربر روی باکس عکس چند بار پشت سر هم کلیک کرده است.",
+            count=4,
+            evidence={"control": "photo_drop_zone", "click_count": 4},
+        )
+        stalled_picker = Signal(
+            source="product_events",
+            event="image_picker_unresponsive",
+            priority="ux",
+            summary_fa="فایل‌پیکر باکس عکس در دو تلاش نتیجه‌ای ثبت نکرده است.",
+            count=2,
+            evidence={"control": "photo_drop_zone", "orphaned_attempts": 2},
+        )
+        clarity = Signal(
+            source="clarity",
+            event="dead_click_count",
+            priority="ux",
+            summary_fa="Clarity کلیک بی‌نتیجه گزارش کرده است.",
+            count=20,
+            evidence={"metric": "DeadClickCount"},
+        )
+        candidates = runner._fallback_candidates([friction, rage, stalled_picker, clarity])
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].fingerprint, friction.fingerprint)
+        self.assertEqual(
+            {item["event"] for item in candidates[0].evidence},
+            {"ui_control_friction"},
+        )
+
     def test_backend_gate_uses_a_creatable_single_level_pytest_temp_directory(self):
         policy = json.loads((Path(__file__).parents[1] / "policy.json").read_text(encoding="utf-8"))
         backend_gate = next(gate for gate in policy["gates"] if gate["name"] == "backend tests")
 
         self.assertIn("--basetemp .pytest-tmp-autonomy", backend_gate["command"])
         self.assertNotIn("--basetemp .pytest-tmp\\autonomy", backend_gate["command"])
+
+    def test_agent_pytest_artifacts_are_ignored_before_reproducer_diff_validation(self):
+        repo = Path(__file__).parents[2]
+        ignored = subprocess.run(
+            ["git", "check-ignore", "backend/.pytest-tmp-autonomy/example.db"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(ignored.returncode, 0, ignored.stderr)
 
     def test_three_hour_monitoring_does_not_accelerate_daily_rollout(self):
         runs = [
@@ -834,6 +1069,44 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("production-mobile.png", page)
         self.assertIn("production-mobile-journey.png", page)
         self.assertIn("<img", page)
+
+    def test_dashboard_does_not_call_correlated_evidence_a_single_signal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            report = {
+                "run_id": "correlated",
+                "started_at": "2026-07-15T12:00:00+00:00",
+                "finished_at": "2026-07-15T12:00:01+00:00",
+                "status": "completed",
+                "phase": "diagnosis",
+                "source_health": {"product_events": "ok (2)"},
+                "signals": [],
+                "candidates": [
+                    {
+                        "fingerprint": "friction",
+                        "title_fa": "مشکل باکس عکس",
+                        "problem_fa": "کلیک عصبی و بی‌پاسخ ماندن در یک نشست دیده شد.",
+                        "confidence": 0.8,
+                        "status": "detected",
+                        "evidence": [
+                            {
+                                "event": "ui_control_friction",
+                                "evidence": {
+                                    "control": "photo_drop_zone",
+                                    "symptoms": ["rage_click", "picker_unresponsive"],
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "diagnoses": [],
+                "fixes": [],
+            }
+
+            page = write_run_report(run_dir, report).read_text(encoding="utf-8")
+
+        self.assertIn("۲ شاهد مرتبط", page)
+        self.assertNotIn("فقط یک نشانه", page)
 
 
 if __name__ == "__main__":

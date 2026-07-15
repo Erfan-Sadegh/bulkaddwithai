@@ -15,6 +15,7 @@ import {
   getRequestId,
   installInteractionObserver,
   installRuntimeFailureObserver,
+  initializeTelemetry,
   trackEvent,
 } from './telemetry';
 
@@ -31,6 +32,39 @@ describe('telemetry', () => {
 
     expect(first).toBe(second);
     expect(first).toMatch(/^[A-Za-z0-9._:-]{1,64}$/);
+  });
+
+  it('never sends the browser session request id to Sentry', () => {
+    vi.stubEnv('VITE_SENTRY_DSN', 'https://public@example.ingest.sentry.io/1');
+
+    initializeTelemetry();
+
+    expect(Sentry.init).toHaveBeenCalled();
+    expect(Sentry.setTag).not.toHaveBeenCalledWith('request_id', expect.anything());
+    const options = vi.mocked(Sentry.init).mock.calls[0][0];
+    const event = options.beforeSend?.(
+      {
+        type: undefined,
+        request: { headers: { 'X-Request-ID': 'raw-session-id' } },
+        tags: { request_id: 'raw-session-id' },
+        contexts: { correlation: { session_key: 'hashed-session-key' } },
+      },
+      {},
+    );
+    expect(JSON.stringify(event)).not.toContain('raw-session-id');
+    expect(JSON.stringify(event)).not.toContain('hashed-session-key');
+    const transaction = options.beforeSendTransaction?.(
+      {
+        type: 'transaction',
+        transaction: 'catalog',
+        request: { headers: { 'X-Request-ID': 'raw-transaction-session' } },
+        tags: { session_key: 'hashed-transaction-session' },
+      },
+      {},
+    );
+    expect(JSON.stringify(transaction)).not.toContain('raw-transaction-session');
+    expect(JSON.stringify(transaction)).not.toContain('hashed-transaction-session');
+    vi.unstubAllEnvs();
   });
 
   it('does not forward sensitive custom tags to Clarity', () => {

@@ -28,6 +28,7 @@ SENSITIVE_VALUE_PATTERNS = (
 SENSITIVE_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)\b(token|secret|password|authorization|mobile|phone|transcript|voice|oauth_code|state|payload|access_token|refresh_token|client_secret)=([^\s&]+)"
 )
+SENTRY_SESSION_ASSIGNMENT_PATTERN = re.compile(r"(?i)\b(request_id|session_key)=([^\s&]+)")
 PERSISTED_EVENTS = {
     "http_request_failed",
     "http_response_failed",
@@ -56,6 +57,7 @@ PERSISTED_FIELDS = {
     # Safe image diagnostics let the read-only agent distinguish a corrupt or
     # unsupported file from a product regression without storing the image/name.
     "suffix", "declared_mime", "input_bytes", "error_type", "control", "reason", "attempt_id", "file_count",
+    "session_key",
     "batch_item_id", "connection_id", "http_status", "category_id", "unit_type", "request_status", "photo_count",
     "click_count", "image_number", "outcome", "surface",
 }
@@ -116,6 +118,7 @@ def configure_observability(settings: "Settings") -> None:
             traces_sample_rate=settings.sentry_traces_sample_rate,
             send_default_pii=False,
             before_send=_before_send,
+            before_send_transaction=_before_send,
             integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.WARNING)],
         )
 
@@ -204,10 +207,23 @@ def _before_send(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any]
         request["headers"] = {
             key: value
             for key, value in (request.get("headers") or {}).items()
-            if key.lower() not in {"authorization", "cookie", "x-admin-password"}
+            if key.lower() not in {"authorization", "cookie", "x-admin-password", "x-request-id"}
         }
     event.pop("user", None)
-    return _redact_mapping(event)
+    return _redact_sentry_session_ids(_redact_mapping(event))
+
+
+def _redact_sentry_session_ids(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if str(key).lower() in {"request_id", "session_key"} else _redact_sentry_session_ids(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sentry_session_ids(item) for item in value]
+    if isinstance(value, str):
+        return SENTRY_SESSION_ASSIGNMENT_PATTERN.sub(lambda match: f"{match.group(1)}=[REDACTED]", value)
+    return value
 
 
 def _redact_mapping(value: Any) -> Any:
@@ -246,12 +262,6 @@ def safe_request_id(value: str | None) -> str:
 async def observe_http_request(request: Request, call_next) -> Response:
     request_id = safe_request_id(request.headers.get("X-Request-ID"))
     request.state.request_id = request_id
-    try:
-        import sentry_sdk
-
-        sentry_sdk.set_tag("request_id", request_id)
-    except ImportError:
-        pass
     started = time.perf_counter()
     try:
         response = await call_next(request)

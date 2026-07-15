@@ -47,22 +47,49 @@ export function initializeTelemetry(): void {
     release: import.meta.env.VITE_APP_RELEASE || undefined,
     sendDefaultPii: false,
     tracesSampleRate: 0,
-    beforeSend(event) {
-      delete event.user;
-      if (event.request) {
-        delete event.request.cookies;
-        delete event.request.data;
-        if (event.request.url) event.request.url = stripQuery(event.request.url);
-        event.request.headers = Object.fromEntries(
-          Object.entries(event.request.headers ?? {}).filter(
-            ([key]) => !['authorization', 'cookie', 'x-admin-password'].includes(key.toLowerCase()),
-          ),
-        );
-      }
-      return event;
-    },
+    beforeSend: scrubSentryEvent,
+    beforeSendTransaction: scrubSentryEvent,
   });
-  Sentry.setTag('request_id', getRequestId());
+}
+
+function scrubSentryEvent<T>(event: T): T {
+  const envelope = event as {
+    user?: unknown;
+    request?: { cookies?: unknown; data?: unknown; url?: string; headers?: Record<string, string> };
+  };
+  delete envelope.user;
+  if (envelope.request) {
+    delete envelope.request.cookies;
+    delete envelope.request.data;
+    if (envelope.request.url) envelope.request.url = stripQuery(envelope.request.url);
+    envelope.request.headers = Object.fromEntries(
+      Object.entries(envelope.request.headers ?? {}).filter(
+        ([key]) => !['authorization', 'cookie', 'x-admin-password', 'x-request-id'].includes(key.toLowerCase()),
+      ),
+    );
+  }
+  scrubSessionFields(event);
+  return event;
+}
+
+function scrubSessionFields(value: unknown): void {
+  if (Array.isArray(value)) {
+    value.forEach(scrubSessionFields);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  const record = value as Record<string, unknown>;
+  Object.entries(record).forEach(([key, item]) => {
+    if (['request_id', 'session_key'].includes(key.toLowerCase())) {
+      delete record[key];
+      return;
+    }
+    if (typeof item === 'string') {
+      record[key] = item.replace(/\b(request_id|session_key)=([^\s&]+)/gi, '$1=[REDACTED]');
+      return;
+    }
+    scrubSessionFields(item);
+  });
 }
 
 export function getRequestId(): string {
@@ -81,9 +108,9 @@ export function trackEvent(name: string, tags: Record<string, SafeTagValue> = {}
   Sentry.addBreadcrumb({ category: 'product', message: name, level: 'info', data: safeTags });
 }
 
-export function captureApiFailure(path: string, status: number | null, requestId?: string | null): void {
+export function captureApiFailure(path: string, status: number | null, _requestId?: string | null): void {
   const safePath = stripQuery(path);
-  const tags = { path: safePath, status: status ?? 'network', request_id: requestId ?? getRequestId() };
+  const tags = { path: safePath, status: status ?? 'network' };
   trackEvent('http_request_failed', tags);
   Sentry.withScope((scope) => {
     Object.entries(tags).forEach(([key, value]) => scope.setTag(key, value));

@@ -183,7 +183,19 @@ def collect_all(repo: Path, policy: dict[str, Any], health: dict[str, str], run_
 
 
 def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, Any], no_agent: bool) -> list[Candidate]:
-    selected = signals[: int(policy["limits"]["max_candidate_signals"])]
+    proven_controls = {
+        str(signal.evidence.get("control"))
+        for signal in signals
+        if signal.event == "ui_control_friction" and signal.evidence.get("control")
+    }
+    selected = [
+        signal
+        for signal in signals
+        if not (
+            signal.event in {"ui_rage_click", "image_picker_unresponsive", "ui_action_unresponsive"}
+            and str(signal.evidence.get("control") or "") in proven_controls
+        )
+    ][: int(policy["limits"]["max_candidate_signals"])]
     if not selected:
         return []
     codex = _find_command("codex")
@@ -225,11 +237,23 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
         linked = [by_fingerprint[key] for key in item["signal_fingerprints"] if key in by_fingerprint]
         if not linked or float(item["confidence"]) < 0.65:
             continue
+        proven_friction = next((signal for signal in linked if signal.event == "ui_control_friction"), None)
+        if proven_friction is not None:
+            linked = [proven_friction]
+        priority = proven_friction.priority if proven_friction else item["priority"]
+        confidence = 0.8 if proven_friction else float(item["confidence"])
+        reproducible_hint = (
+            "سناریوی همین کنترل را با داده ساختگی بازسازی کن و نتیجه‌ندادن آن را با regression test بررسی کن."
+            if proven_friction
+            else item["reproducible_hint"]
+        )
         candidates.append(
             Candidate(
-                fingerprint=linked[0].fingerprint, title_fa=item["title_fa"], problem_fa=item["problem_fa"],
-                priority=item["priority"], confidence=float(item["confidence"]), evidence=[signal.to_dict() for signal in linked],
-                reproducible_hint=item["reproducible_hint"], source_urls=[signal.source_url for signal in linked if signal.source_url],
+                fingerprint=linked[0].fingerprint,
+                title_fa=(f"بررسی {proven_friction.event}" if proven_friction else item["title_fa"]),
+                problem_fa=(proven_friction.summary_fa if proven_friction else item["problem_fa"]),
+                priority=priority, confidence=confidence, evidence=[signal.to_dict() for signal in linked],
+                reproducible_hint=reproducible_hint, source_urls=[signal.source_url for signal in linked if signal.source_url],
             )
         )
     return candidates[:3] or _fallback_candidates(selected)
@@ -242,6 +266,11 @@ def _fallback_candidates(signals: list[Signal]) -> list[Candidate]:
         for signal in signals
         if signal.source == "clarity" and signal.event != "clarity_traffic"
     ]
+    proven_controls = {
+        str(signal.evidence.get("control"))
+        for signal in signals
+        if signal.event == "ui_control_friction" and signal.evidence.get("control")
+    }
     anchors = [
         signal
         for signal in signals
@@ -250,10 +279,18 @@ def _fallback_candidates(signals: list[Signal]) -> list[Candidate]:
             signal.source in {"product_events", "sentry", "local_logs", "ux_contract", "browser_probe"}
             or bool(signal.evidence.get("control"))
         )
+        and not (
+            signal.event in {"ui_rage_click", "image_picker_unresponsive", "ui_action_unresponsive"}
+            and str(signal.evidence.get("control") or "") in proven_controls
+        )
     ]
     candidates: list[Candidate] = []
     for anchor in anchors[:3]:
-        related = {signal.fingerprint: signal for signal in [anchor, *clarity_leads]}
+        supporting_clarity = [] if anchor.event == "ui_control_friction" else clarity_leads
+        related = {
+            signal.fingerprint: signal
+            for signal in [anchor, *supporting_clarity]
+        }
         evidence = list(related.values())
         candidates.append(
             Candidate(
@@ -261,7 +298,7 @@ def _fallback_candidates(signals: list[Signal]) -> list[Candidate]:
                 title_fa=f"بررسی و بازسازی {anchor.event}",
                 problem_fa=anchor.summary_fa,
                 priority=anchor.priority,
-                confidence=0.7,
+                confidence=0.8 if anchor.event == "ui_control_friction" else 0.7,
                 evidence=[signal.to_dict() for signal in evidence],
                 reproducible_hint=(
                     "سناریوی مرتبط را با داده ساختگی بازسازی کن و مشخص کن رفتار محصول درست است "

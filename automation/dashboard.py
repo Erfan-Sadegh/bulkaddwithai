@@ -200,8 +200,23 @@ def _candidate_html(candidate: dict, run_dir: Path) -> str:
     evidence = html.escape(json.dumps(candidate.get("evidence", []), ensure_ascii=False, indent=2))
     status_note = ""
     if status_key == "detected":
+        evidence_items = candidate.get("evidence", [])
+        symptom_count = max(
+            (
+                len((item.get("evidence") or {}).get("symptoms", []))
+                for item in evidence_items
+                if isinstance(item, dict) and item.get("event") == "ui_control_friction"
+            ),
+            default=0,
+        )
+        evidence_count = max(1, len(evidence_items), symptom_count)
+        evidence_note = (
+            "فقط یک نشانه دیده شده"
+            if evidence_count == 1
+            else f"{_fa_number(evidence_count)} شاهد مرتبط کنار هم دیده شده"
+        )
         status_note = (
-            '<div class="notice">این مورد هنوز باگ اثبات‌شده نیست. فقط یک نشانه دیده شده و '
+            f'<div class="notice">این مورد هنوز باگ اثبات‌شده نیست. {evidence_note} و '
             'برای تغییر کد باید ابتدا با تست روی نسخهٔ قبلی بازسازی شود.</div>'
         )
     return (

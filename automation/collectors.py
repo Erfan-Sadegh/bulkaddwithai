@@ -34,6 +34,7 @@ EVENT_PRIORITY = {
     "ui_action_blocked": "ux",
     "ui_action_failed": "high",
     "ui_action_unresponsive": "ux",
+    "ui_control_friction": "high",
     "ux_observability_gap": "high",
     "frontend_runtime_failed": "high",
     "browser_console_error": "high",
@@ -203,7 +204,7 @@ def collect_local_logs(repo: Path, policy: dict[str, Any]) -> list[Signal]:
         latest = {
             key: value
             for key, value in sanitize(items[-1]).items()
-            if value != "[REDACTED]"
+            if key not in {"request_id", "session_key"} and value != "[REDACTED]"
         }
         signals.append(
             Signal(
@@ -433,6 +434,16 @@ def collect_health(env: dict[str, str] | None = None) -> list[Signal]:
     return [Signal(source="health", event="production_health_failed", priority="urgent", summary_fa=f"health production پاسخ {status} داد.", evidence={"status": status})]
 
 
+def _session_key(item: dict[str, Any]) -> str:
+    # request_id is accepted only for a short transition from the previous
+    # deployment; neither value is ever copied into a Signal or report.
+    return str(item.get("session_key") or item.get("request_id") or "")
+
+
+def _attempt_key(item: dict[str, Any]) -> tuple[str, str, str]:
+    return _session_key(item), str(item.get("control") or ""), str(item.get("attempt_id") or "")
+
+
 def collect_product_events(
     env: dict[str, str] | None = None,
     *,
@@ -452,25 +463,67 @@ def collect_product_events(
         raise CollectorError("پاسخ فید رویدادهای production معتبر نیست.")
     results: list[Signal] = []
     terminal_attempts = {
-        str(item.get("attempt_id"))
+        _attempt_key(item)
         for item in payload
         if isinstance(item, dict)
         and item.get("event") in {"image_files_selected", "image_picker_cancelled"}
         and item.get("attempt_id")
     }
     terminal_actions = {
-        str(item.get("attempt_id"))
+        _attempt_key(item)
         for item in payload
         if isinstance(item, dict)
         and item.get("event") in {"ui_action_accepted", "ui_action_blocked", "ui_action_failed"}
         and item.get("attempt_id")
     }
+    rage_sessions = {
+        (_session_key(item), str(item.get("control")))
+        for item in payload
+        if isinstance(item, dict)
+        and item.get("event") == "ui_rage_click"
+        and _session_key(item)
+        and item.get("control")
+    }
+    stalled_session_symptoms: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for item in payload:
+        if not isinstance(item, dict) or not _session_key(item) or not item.get("control"):
+            continue
+        attempt_id = str(item.get("attempt_id") or "")
+        attempt_key = _attempt_key(item)
+        if item.get("event") == "image_picker_opened" and (
+            attempt_id
+            and attempt_key not in terminal_attempts
+            and _event_is_older_than(item, current_time, minutes=5)
+        ):
+            stalled_session_symptoms[(_session_key(item), str(item["control"]))].add("picker_unresponsive")
+        if item.get("event") == "ui_action_started" and (
+            attempt_id
+            and attempt_key not in terminal_actions
+            and _event_is_older_than(item, current_time, minutes=5)
+        ):
+            stalled_session_symptoms[(_session_key(item), str(item["control"]))].add("action_unresponsive")
+    for request_id, control in sorted(rage_sessions & set(stalled_session_symptoms)):
+        symptoms = ["rage_click", *sorted(stalled_session_symptoms[(request_id, control)])]
+        results.append(
+            Signal(
+                source="product_events",
+                event="ui_control_friction",
+                priority=EVENT_PRIORITY["ui_control_friction"],
+                summary_fa=(
+                    f"در یک نشست ناشناس، کنترل {control} هم کلیک عصبی و هم بی‌پاسخ ماندن را ثبت کرده است."
+                ),
+                evidence={
+                    "control": control,
+                    "symptoms": symptoms,
+                },
+            )
+        )
     orphaned_by_control: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in payload:
         if not isinstance(item, dict) or item.get("event") != "image_picker_opened":
             continue
         attempt_id = str(item.get("attempt_id") or "")
-        if attempt_id and attempt_id not in terminal_attempts and _event_is_older_than(item, current_time, minutes=5):
+        if attempt_id and _attempt_key(item) not in terminal_attempts and _event_is_older_than(item, current_time, minutes=5):
             orphaned_by_control[str(item.get("control") or "unknown")].append(item)
     for control, orphaned in orphaned_by_control.items():
         if len(orphaned) < 2:
@@ -491,7 +544,7 @@ def collect_product_events(
         if not isinstance(item, dict) or item.get("event") != "ui_action_started":
             continue
         attempt_id = str(item.get("attempt_id") or "")
-        if attempt_id and attempt_id not in terminal_actions and _event_is_older_than(item, current_time, minutes=5):
+        if attempt_id and _attempt_key(item) not in terminal_actions and _event_is_older_than(item, current_time, minutes=5):
             stalled_actions_by_control[str(item.get("control") or "unknown")].append(item)
     for control, stalled in stalled_actions_by_control.items():
         if len(stalled) < 2:
@@ -516,7 +569,7 @@ def collect_product_events(
         evidence = {
             key: value
             for key, value in sanitize(item).items()
-            if key not in {"event", "count"} and value not in {None, "[REDACTED]"}
+            if key not in {"event", "count", "request_id", "session_key"} and value not in {None, "[REDACTED]"}
         }
         count = _safe_int(item.get("count"), 1)
         results.append(

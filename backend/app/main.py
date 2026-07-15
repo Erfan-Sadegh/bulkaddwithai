@@ -1,11 +1,12 @@
 from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
+import hashlib
 import json
 import logging
 import secrets
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -241,31 +242,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return combined[:safe_limit]
 
     @app.post("/observability/ux-events", status_code=204)
-    def post_ux_event(payload: UxEventCreate):
+    def post_ux_event(payload: UxEventCreate, request: Request):
         # The schema accepts no user text, URL, identifier, or arbitrary event.
+        session_key = hashlib.sha256(request.state.request_id.encode("utf-8")).hexdigest()[:16]
         if payload.event == "ui_rage_click":
-            ux_logger.warning("%s control=%s click_count=%s", payload.event, payload.control, payload.click_count)
+            ux_logger.warning(
+                "%s session_key=%s control=%s click_count=%s",
+                payload.event,
+                session_key,
+                payload.control,
+                payload.click_count,
+            )
         elif payload.event.startswith("ui_action_"):
             log = ux_logger.warning if payload.event in {"ui_action_blocked", "ui_action_failed"} else ux_logger.info
             log(
-                "%s control=%s attempt_id=%s outcome=%s",
+                "%s session_key=%s control=%s attempt_id=%s outcome=%s",
                 payload.event,
+                session_key,
                 payload.control,
                 payload.attempt_id,
                 payload.outcome or "none",
             )
         elif payload.event == "image_picker_blocked":
-            ux_logger.info("%s control=%s reason=%s", payload.event, payload.control, payload.reason)
+            ux_logger.info(
+                "%s session_key=%s control=%s reason=%s",
+                payload.event,
+                session_key,
+                payload.control,
+                payload.reason,
+            )
         elif payload.event == "image_files_selected":
             ux_logger.info(
-                "%s control=%s attempt_id=%s file_count=%s",
+                "%s session_key=%s control=%s attempt_id=%s file_count=%s",
                 payload.event,
+                session_key,
                 payload.control,
                 payload.attempt_id,
                 payload.file_count,
             )
         else:
-            ux_logger.info("%s control=%s attempt_id=%s", payload.event, payload.control, payload.attempt_id)
+            ux_logger.info(
+                "%s session_key=%s control=%s attempt_id=%s",
+                payload.event,
+                session_key,
+                payload.control,
+                payload.attempt_id,
+            )
         return Response(status_code=204)
 
     @app.post("/observability/runtime-events", status_code=204)
