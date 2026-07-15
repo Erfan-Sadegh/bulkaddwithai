@@ -44,7 +44,7 @@
     {"name": "frontend dependencies", "cwd": "frontend", "command": "npm ci --ignore-scripts"}
   ],
   "gates": [
-    {"name": "backend tests", "cwd": "backend", "command": "\"{repo}\\backend\\.venv\\Scripts\\python.exe\" -m pytest --basetemp .pytest-tmp\\autonomy -q"},
+    {"name": "backend tests", "cwd": "backend", "command": "\"{repo}\\backend\\.venv\\Scripts\\python.exe\" -m pytest --basetemp .pytest-tmp-autonomy -q"},
     {"name": "frontend tests", "cwd": "frontend", "command": "npm test"},
     {"name": "frontend build", "cwd": "frontend", "command": "npm run build"},
     {"name": "frontend e2e", "cwd": "frontend", "command": "npm run e2e"},

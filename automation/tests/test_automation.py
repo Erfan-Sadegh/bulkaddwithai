@@ -377,6 +377,13 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(candidates[0].fingerprint, product_failure.fingerprint)
         self.assertEqual({item["event"] for item in candidates[0].evidence}, {"image_upload_rejected", "dead_click_count"})
 
+    def test_backend_gate_uses_a_creatable_single_level_pytest_temp_directory(self):
+        policy = json.loads((Path(__file__).parents[1] / "policy.json").read_text(encoding="utf-8"))
+        backend_gate = next(gate for gate in policy["gates"] if gate["name"] == "backend tests")
+
+        self.assertIn("--basetemp .pytest-tmp-autonomy", backend_gate["command"])
+        self.assertNotIn("--basetemp .pytest-tmp\\autonomy", backend_gate["command"])
+
     def test_three_hour_monitoring_does_not_accelerate_daily_rollout(self):
         runs = [
             {
