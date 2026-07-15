@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -247,13 +248,37 @@ def collect_sentry(env: dict[str, str] | None = None) -> list[Signal]:
     return results
 
 
-def collect_clarity(env: dict[str, str] | None = None) -> list[Signal]:
+def collect_clarity(
+    env: dict[str, str] | None = None,
+    *,
+    now: datetime | None = None,
+    cache_path: Path | None = None,
+    reports_dir: Path | None = None,
+) -> list[Signal]:
     env = env or os.environ
+    current_time = now or datetime.now(timezone.utc)
     token = env.get("CLARITY_API_TOKEN")
     if not token:
         raise CollectorError("Clarity Data Export تنظیم نشده است.")
+    cached = _load_clarity_cache(cache_path, current_time, max_age=timedelta(minutes=150))
+    if cached:
+        return cached
     query = urllib.parse.urlencode({"numOfDays": "3", "dimension1": "URL", "dimension2": "Device"})
-    payload = _get_json(f"https://www.clarity.ms/export-data/api/v1/project-live-insights?{query}", token)
+    try:
+        payload = _get_json(f"https://www.clarity.ms/export-data/api/v1/project-live-insights?{query}", token)
+    except CollectorError as exc:
+        temporary = str(exc) in {"HTTP 429", "URLError", "TimeoutError"} or str(exc).startswith("HTTP 5")
+        fallback = _load_clarity_cache(cache_path, current_time, max_age=timedelta(hours=24))
+        if not fallback and reports_dir is not None:
+            fallback = _load_clarity_report_fallback(reports_dir, current_time)
+        if temporary and fallback:
+            fallback_age = max(
+                (_safe_int(signal.evidence.get("cache_age_minutes"), 0) for signal in fallback),
+                default=0,
+            )
+            _save_clarity_cache(cache_path, fallback, current_time - timedelta(minutes=fallback_age))
+            return fallback
+        raise
     if not isinstance(payload, list):
         raise CollectorError("پاسخ Clarity معتبر نیست.")
     results: list[Signal] = []
@@ -290,7 +315,107 @@ def collect_clarity(env: dict[str, str] | None = None) -> list[Signal]:
                 evidence={"metric": metric_name, "top_rows": sanitize(rows[:5])},
             )
         )
+    _save_clarity_cache(cache_path, results, current_time)
     return results
+
+
+def _signal_from_dict(item: dict[str, Any], *, cached: bool, age_minutes: int) -> Signal | None:
+    if item.get("source") != "clarity" or not item.get("event"):
+        return None
+    evidence = dict(item.get("evidence") or {})
+    if cached:
+        evidence.update({"cached": True, "cache_age_minutes": max(0, age_minutes)})
+    return Signal(
+        source="clarity",
+        event=str(item["event"]),
+        priority=str(item.get("priority") or "ux"),
+        summary_fa=str(item.get("summary_fa") or "Clarity cached signal"),
+        count=max(1, _safe_int(item.get("count"), 1)),
+        occurred_at=str(item.get("occurred_at") or datetime.now(timezone.utc).isoformat()),
+        evidence=evidence,
+        source_url=item.get("source_url"),
+    )
+
+
+def _load_clarity_cache(cache_path: Path | None, now: datetime, *, max_age: timedelta) -> list[Signal]:
+    if cache_path is None or not cache_path.is_file():
+        return []
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        fetched_at = datetime.fromisoformat(str(payload["fetched_at"]).replace("Z", "+00:00"))
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+        age = now - fetched_at
+        if age < timedelta(0) or age > max_age:
+            return []
+        age_minutes = int(age.total_seconds() // 60)
+        return [
+            signal
+            for item in payload.get("signals", [])
+            if isinstance(item, dict)
+            for signal in [_signal_from_dict(item, cached=True, age_minutes=age_minutes)]
+            if signal is not None
+        ]
+    except (OSError, KeyError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def _load_clarity_report_fallback(reports_dir: Path, now: datetime) -> list[Signal]:
+    if not reports_dir.is_dir():
+        return []
+    newest_cached: list[Signal] = []
+    for report_path in sorted(reports_dir.glob("*/report.json"), reverse=True):
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            started_at = datetime.fromisoformat(str(report["started_at"]).replace("Z", "+00:00"))
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            age = now - started_at
+            if age < timedelta(0) or age > timedelta(hours=24):
+                continue
+            report_age_minutes = int(age.total_seconds() // 60)
+            clarity_items = [
+                item
+                for item in report.get("signals", [])
+                if isinstance(item, dict) and item.get("source") == "clarity"
+            ]
+            if not clarity_items:
+                continue
+            is_cached_copy = any(bool((item.get("evidence") or {}).get("cached")) for item in clarity_items)
+            embedded_age = max(
+                (_safe_int((item.get("evidence") or {}).get("cache_age_minutes"), 0) for item in clarity_items),
+                default=0,
+            )
+            age_minutes = report_age_minutes + embedded_age if is_cached_copy else report_age_minutes
+            signals = [
+                signal
+                for item in clarity_items
+                for signal in [_signal_from_dict(item, cached=True, age_minutes=age_minutes)]
+                if signal is not None
+            ]
+            if signals and not is_cached_copy:
+                return signals
+            if signals and not newest_cached:
+                newest_cached = signals
+        except (OSError, KeyError, ValueError, json.JSONDecodeError):
+            continue
+    return newest_cached
+
+
+def _save_clarity_cache(cache_path: Path | None, signals: list[Signal], fetched_at: datetime) -> None:
+    if cache_path is None:
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(
+            {"fetched_at": fetched_at.isoformat(), "signals": [signal.to_dict() for signal in signals]},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    temporary.replace(cache_path)
 
 
 def collect_health(env: dict[str, str] | None = None) -> list[Signal]:
@@ -432,11 +557,24 @@ def _tail_text(path: Path, max_bytes: int) -> str:
 
 def _get_json(url: str, token: str) -> Any:
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, json.JSONDecodeError) as exc:
-        raise CollectorError(type(exc).__name__) from exc
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            retryable = exc.code == 429 or 500 <= exc.code < 600
+            if retryable and attempt < 2:
+                time.sleep(attempt + 1)
+                continue
+            raise CollectorError(f"HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if attempt < 2:
+                time.sleep(attempt + 1)
+                continue
+            raise CollectorError(type(exc).__name__) from exc
+        except json.JSONDecodeError as exc:
+            raise CollectorError("JSONDecodeError") from exc
+    raise CollectorError("collector retry exhausted")
 
 
 def _safe_int(value: Any, default: int = 0) -> int:

@@ -147,7 +147,10 @@ def collect_all(repo: Path, policy: dict[str, Any], health: dict[str, str], run_
         "local_logs": lambda: collect_local_logs(repo, policy),
         "product_events": collect_product_events,
         "sentry": collect_sentry,
-        "clarity": collect_clarity,
+        "clarity": lambda: collect_clarity(
+            cache_path=run_dir.parents[1] / "cache" / "clarity.json",
+            reports_dir=run_dir.parent,
+        ),
         "production_health": collect_health,
         "ux_contract": lambda: collect_ux_contract(repo),
         "browser_probe": lambda: collect_browser_probe(repo, run_dir),
@@ -156,7 +159,15 @@ def collect_all(repo: Path, policy: dict[str, Any], health: dict[str, str], run_
         try:
             collected = collector()
             signals.extend(collected)
-            health[name] = f"ok ({len(collected)})"
+            cached_ages = [
+                int(signal.evidence.get("cache_age_minutes", 0))
+                for signal in collected
+                if signal.source == "clarity" and signal.evidence.get("cached")
+            ]
+            if name == "clarity" and cached_ages:
+                health[name] = f"cached ({len(collected)}, age {max(cached_ages)}m)"
+            else:
+                health[name] = f"ok ({len(collected)})"
         except CollectorError as exc:
             health[name] = str(exc)
         except Exception as exc:

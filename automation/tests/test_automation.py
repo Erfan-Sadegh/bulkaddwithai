@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from automation import runner
+from automation import collectors
 from automation.collectors import (
     CollectorError,
     collect_browser_probe,
@@ -286,6 +288,139 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(by_event["rage_click_count"].count, 7)
         self.assertEqual(by_event["script_error_count"].count, 3)
         self.assertEqual(by_event["clarity_traffic"].count, 44)
+
+    def test_json_collector_retries_temporary_http_failure_and_keeps_status_private(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        temporary_error = urllib.error.HTTPError(
+            "https://www.clarity.ms/export-data/api/v1/project-live-insights",
+            503,
+            "temporary private provider text",
+            {},
+            None,
+        )
+        with (
+            patch("automation.collectors.urllib.request.urlopen", side_effect=[temporary_error, FakeResponse()]) as request,
+            patch("automation.collectors.time.sleep") as sleep,
+        ):
+            payload = collectors._get_json("https://www.clarity.ms/export-data/api/v1/project-live-insights", "secret")
+
+        self.assertEqual(payload, {"ok": True})
+        self.assertEqual(request.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_clarity_uses_recent_proven_report_when_rate_limited(self):
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "runs" / "recent"
+            run_dir.mkdir(parents=True)
+            (run_dir / "report.json").write_text(
+                json.dumps(
+                    {
+                        "started_at": "2026-07-15T11:00:00+00:00",
+                        "signals": [
+                            {
+                                "source": "clarity",
+                                "event": "rage_click_count",
+                                "priority": "ux",
+                                "summary_fa": "Clarity reported 7 rage clicks",
+                                "count": 7,
+                                "occurred_at": "2026-07-15T11:00:00+00:00",
+                                "evidence": {"metric": "RageClickCount"},
+                                "source_url": None,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("automation.collectors._get_json", side_effect=CollectorError("HTTP 429")):
+                signals = collect_clarity(
+                    {"CLARITY_API_TOKEN": "read-only-token"},
+                    now=now,
+                    cache_path=root / "cache" / "clarity.json",
+                    reports_dir=root / "runs",
+                )
+            cached_payload = json.loads((root / "cache" / "clarity.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].event, "rage_click_count")
+        self.assertEqual(signals[0].count, 7)
+        self.assertTrue(signals[0].evidence["cached"])
+        self.assertEqual(cached_payload["fetched_at"], "2026-07-15T11:00:00+00:00")
+
+    def test_run_source_health_discloses_cached_clarity_age(self):
+        cached_signal = Signal(
+            source="clarity",
+            event="rage_click_count",
+            priority="ux",
+            summary_fa="cached",
+            count=7,
+            evidence={"cached": True, "cache_age_minutes": 133},
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "state" / "runs" / "run"
+            run_dir.mkdir(parents=True)
+            health: dict[str, str] = {}
+            with (
+                patch.object(runner, "collect_local_logs", return_value=[]),
+                patch.object(runner, "collect_product_events", return_value=[]),
+                patch.object(runner, "collect_sentry", return_value=[]),
+                patch.object(runner, "collect_clarity", return_value=[cached_signal]),
+                patch.object(runner, "collect_health", return_value=[]),
+                patch.object(runner, "collect_ux_contract", return_value=[]),
+                patch.object(runner, "collect_browser_probe", return_value=[]),
+            ):
+                runner.collect_all(root, {"sources": {"local_log_globs": [], "max_local_log_bytes": 1}}, health, run_dir)
+
+        self.assertEqual(health["clarity"], "cached (1, age 133m)")
+
+    def test_clarity_report_fallback_prefers_original_live_data_over_newer_cached_copy(self):
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temporary:
+            reports = Path(temporary)
+            for run_id, started_at, cached, count in (
+                ("20260715T113000Z", "2026-07-15T11:30:00+00:00", True, 99),
+                ("20260715T110000Z", "2026-07-15T11:00:00+00:00", False, 7),
+            ):
+                run_dir = reports / run_id
+                run_dir.mkdir()
+                evidence = {"metric": "RageClickCount"}
+                if cached:
+                    evidence.update({"cached": True, "cache_age_minutes": 30})
+                (run_dir / "report.json").write_text(
+                    json.dumps(
+                        {
+                            "started_at": started_at,
+                            "signals": [
+                                {
+                                    "source": "clarity",
+                                    "event": "rage_click_count",
+                                    "priority": "ux",
+                                    "summary_fa": "signal",
+                                    "count": count,
+                                    "evidence": evidence,
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            signals = collectors._load_clarity_report_fallback(reports, now)
+
+        self.assertEqual(signals[0].count, 7)
+        self.assertEqual(signals[0].evidence["cache_age_minutes"], 60)
 
     def test_product_event_collector_only_requests_the_last_24_hours(self):
         now = datetime(2026, 7, 15, 0, 0, tzinfo=timezone.utc)
