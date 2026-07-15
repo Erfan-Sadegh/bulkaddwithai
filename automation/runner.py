@@ -19,6 +19,7 @@ if __package__ in {None, ""}:
 from automation.collectors import (
     CollectorError,
     collect_clarity,
+    collect_browser_probe,
     collect_health,
     collect_local_logs,
     collect_product_events,
@@ -90,7 +91,7 @@ def run_once(repo: Path, state_root: Path, policy: dict[str, Any], force_report_
     run_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        signals = collect_all(repo, policy, report.source_health)
+        signals = collect_all(repo, policy, report.source_health, run_dir)
         report.signals = [signal.to_dict() for signal in signals]
         refresh_prior_reports(state_root, signals, report.source_health)
         candidates = triage(repo, run_dir, signals, policy, no_agent)
@@ -140,7 +141,7 @@ def run_once(repo: Path, state_root: Path, policy: dict[str, Any], force_report_
     return 0 if report.status == "completed" else 1
 
 
-def collect_all(repo: Path, policy: dict[str, Any], health: dict[str, str]) -> list[Signal]:
+def collect_all(repo: Path, policy: dict[str, Any], health: dict[str, str], run_dir: Path) -> list[Signal]:
     signals: list[Signal] = []
     collectors = {
         "local_logs": lambda: collect_local_logs(repo, policy),
@@ -149,6 +150,7 @@ def collect_all(repo: Path, policy: dict[str, Any], health: dict[str, str]) -> l
         "clarity": collect_clarity,
         "production_health": collect_health,
         "ux_contract": lambda: collect_ux_contract(repo),
+        "browser_probe": lambda: collect_browser_probe(repo, run_dir),
     }
     for name, collector in collectors.items():
         try:
@@ -234,7 +236,7 @@ def _fallback_candidates(signals: list[Signal]) -> list[Candidate]:
         for signal in signals
         if signal.priority != "info"
         and (
-            signal.source in {"product_events", "sentry", "local_logs", "ux_contract"}
+            signal.source in {"product_events", "sentry", "local_logs", "ux_contract", "browser_probe"}
             or bool(signal.evidence.get("control"))
         )
     ]

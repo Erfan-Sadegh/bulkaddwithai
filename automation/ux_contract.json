@@ -5,7 +5,11 @@
     {"path": "frontend/src/lib/telemetry.ts", "text": "frontend_runtime_failed"},
     {"path": "backend/app/main.py", "text": "/observability/runtime-events"},
     {"path": "backend/app/schemas.py", "text": "class RuntimeEventCreate"},
-    {"path": "automation/collectors.py", "text": "\"frontend_runtime_failed\": \"high\""}
+    {"path": "automation/collectors.py", "text": "\"frontend_runtime_failed\": \"high\""},
+    {"path": "frontend/scripts/production-probe.mjs", "text": "mutation_attempt"},
+    {"path": "automation/collectors.py", "text": "def collect_browser_probe("},
+    {"path": "automation/runner.py", "text": "\"browser_probe\": lambda: collect_browser_probe(repo, run_dir)"},
+    {"path": "automation/dashboard.py", "text": "production-mobile.png"}
   ],
   "controls": [
     {

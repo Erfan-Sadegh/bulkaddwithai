@@ -151,4 +151,6 @@ stdout/stderr و پنل Logs همروش مرجع انسانی باقی می‌م
 
 خطاهای runtime رابط کاربری فقط با enum امن `frontend_runtime_failed` و کد `script_error` یا `unhandled_rejection` ثبت می‌شوند. تنها سطح `catalog` یا `admin` همراه آن است؛ message، stack، URL، query string و مقدار input به endpoint فرستاده یا پذیرفته نمی‌شود. این feed مستقل از Sentry است تا نبود build secret برای `VITE_SENTRY_DSN` تشخیص پایه را از کار نیندازد.
 
+هر اجرای سه‌ساعته یک browser probe فقط‌خواندنی نیز روی frontend واقعی production اجرا می‌کند. probe در viewport موبایل و دسکتاپ، بازشدن سند، خطای page/console، شکست فایل‌های اصلی، وجود shell و دو CTA آغازین و overflow افقی را بررسی و `production-mobile.png` و `production-desktop.png` را داخل پوشه همان run ذخیره می‌کند. درخواست‌های bootstrap seller و observability داخل مرورگر mock می‌شوند، analytics بیرونی با پاسخ خالی جایگزین می‌شود و هر POST/PATCH/PUT/DELETE ناشناخته abort و به‌عنوان `browser_mutation_attempt` گزارش می‌شود؛ بنابراین probe اجازه تغییر داده production یا عملیات باسلام/ترب ندارد.
+
 ماسک‌بودن مقدار inputها در recordingهای Clarity عمدی است: خود Clarity محتوای input را در همهٔ حالت‌های masking پنهان می‌کند و این رفتار برای input قابل سفارشی‌سازی نیست. عامل به‌جای مقدار کاربر، نام فنی فیلد نامعتبر و کد خطا را دریافت می‌کند؛ مثلاً شکست باسلام روی `package_weight` بدون ثبت عدد واردشده یا نام محصول گزارش می‌شود.

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,6 +35,15 @@ EVENT_PRIORITY = {
     "ui_action_unresponsive": "ux",
     "ux_observability_gap": "high",
     "frontend_runtime_failed": "high",
+    "browser_console_error": "high",
+    "browser_page_error": "high",
+    "browser_resource_failed": "high",
+    "browser_document_failed": "urgent",
+    "browser_navigation_failed": "urgent",
+    "browser_app_shell_missing": "urgent",
+    "browser_primary_actions_missing": "urgent",
+    "browser_horizontal_overflow": "ux",
+    "browser_mutation_attempt": "urgent",
     "http_response_failed": "high",
 }
 EVENT_PATTERN = re.compile(r"\b(" + "|".join(map(re.escape, EVENT_PRIORITY)) + r")\b")
@@ -41,6 +52,64 @@ FIELD_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)")
 
 class CollectorError(RuntimeError):
     pass
+
+
+def collect_browser_probe(
+    repo: Path,
+    run_dir: Path,
+    env: dict[str, str] | None = None,
+) -> list[Signal]:
+    env = env or os.environ
+    health_url = env.get("PRODUCTION_HEALTH_URL")
+    if not health_url:
+        raise CollectorError("آدرس production برای browser probe تنظیم نشده است.")
+    parsed = urllib.parse.urlsplit(health_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise CollectorError("آدرس production برای browser probe معتبر نیست.")
+    app_url = f"{parsed.scheme}://{parsed.netloc}"
+    node = shutil.which("node")
+    script = repo / "frontend" / "scripts" / "production-probe.mjs"
+    if not node or not script.is_file():
+        raise CollectorError("Playwright browser probe در دسترس نیست.")
+    output = run_dir / "browser-probe.json"
+    completed = subprocess.run(
+        [node, str(script), app_url, str(run_dir)],
+        cwd=repo / "frontend",
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    (run_dir / "browser-probe.txt").write_text(
+        f"exit={completed.returncode}\n{completed.stdout[-4000:]}\n{completed.stderr[-4000:]}",
+        encoding="utf-8",
+    )
+    if completed.returncode != 0 or not output.is_file():
+        raise CollectorError(f"browser probe failed ({completed.returncode})")
+    try:
+        payload = json.loads(output.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CollectorError("browser probe output is invalid") from exc
+    signals: list[Signal] = []
+    for view in payload.get("views", []):
+        if not isinstance(view, dict):
+            continue
+        view_name = str(view.get("name") or "unknown")
+        screenshot = str(view.get("screenshot") or "")
+        for issue in view.get("issues", []):
+            event = f"browser_{issue}"
+            if event not in EVENT_PRIORITY:
+                continue
+            signals.append(
+                Signal(
+                    source="browser_probe",
+                    event=event,
+                    priority=EVENT_PRIORITY[event],
+                    summary_fa=f"browser probe در نمای {view_name} مشکل {issue} را پیدا کرد.",
+                    evidence={"view": view_name, "screenshot": screenshot},
+                )
+            )
+    return signals
 
 
 def collect_ux_contract(repo: Path) -> list[Signal]:

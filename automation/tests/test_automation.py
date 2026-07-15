@@ -13,7 +13,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from automation import runner
-from automation.collectors import CollectorError, collect_clarity, collect_local_logs, collect_product_events, collect_ux_contract
+from automation.collectors import (
+    CollectorError,
+    collect_browser_probe,
+    collect_clarity,
+    collect_local_logs,
+    collect_product_events,
+    collect_ux_contract,
+)
 from automation.dashboard import rebuild_dashboard, write_run_report
 from automation.models import Candidate, Signal
 from automation.security import (
@@ -381,6 +388,43 @@ class AutomationTests(unittest.TestCase):
     def test_current_ux_contract_has_no_uninstrumented_control(self):
         self.assertEqual(collect_ux_contract(Path(__file__).parents[2]), [])
 
+    def test_browser_probe_turns_safe_production_ui_failures_into_signals(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            script = root / "frontend" / "scripts" / "production-probe.mjs"
+            script.parent.mkdir(parents=True)
+            script.write_text("// fake probe", encoding="utf-8")
+
+            def fake_probe(*_args, **_kwargs):
+                (run_dir / "browser-probe.json").write_text(
+                    json.dumps(
+                        {
+                            "views": [
+                                {
+                                    "name": "mobile",
+                                    "screenshot": "production-mobile.png",
+                                    "issues": ["horizontal_overflow", "page_error"],
+                                }
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess([], 0, "", "")
+
+            with patch("automation.collectors.subprocess.run", side_effect=fake_probe):
+                signals = collect_browser_probe(
+                    root,
+                    run_dir,
+                    {"PRODUCTION_HEALTH_URL": "https://app.example/health"},
+                )
+
+        self.assertEqual({signal.event for signal in signals}, {"browser_horizontal_overflow", "browser_page_error"})
+        self.assertTrue(all(signal.evidence["view"] == "mobile" for signal in signals))
+        self.assertTrue(all(signal.evidence["screenshot"] == "production-mobile.png" for signal in signals))
+
     def test_full_self_improvement_cycle_in_an_isolated_repository(self):
         with tempfile.TemporaryDirectory() as temporary:
             result = run_self_improvement_simulation(Path(temporary))
@@ -612,6 +656,44 @@ class AutomationTests(unittest.TestCase):
             self.assertIn("شبانهٔ خودکار", index)
             self.assertIn("مشکل قابل اقدامی پیدا نشد", index)
             self.assertNotIn("OLD DESIGN", rebuilt_report)
+
+    def test_dashboard_embeds_the_safe_browser_probe_screenshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            run_dir.mkdir()
+            (run_dir / "production-mobile.png").write_bytes(b"safe synthetic screenshot")
+            report = {
+                "run_id": "probe",
+                "started_at": "2026-07-15T12:00:00+00:00",
+                "finished_at": "2026-07-15T12:00:01+00:00",
+                "status": "completed",
+                "phase": "diagnosis",
+                "source_health": {"browser_probe": "ok (1)"},
+                "signals": [],
+                "candidates": [
+                    {
+                        "fingerprint": "probe-mobile",
+                        "title_fa": "بیرون‌زدگی موبایل",
+                        "problem_fa": "صفحه از عرض موبایل بیرون زده است.",
+                        "confidence": 0.9,
+                        "status": "detected",
+                        "evidence": [
+                            {
+                                "source": "browser_probe",
+                                "event": "browser_horizontal_overflow",
+                                "evidence": {"view": "mobile", "screenshot": "production-mobile.png"},
+                            }
+                        ],
+                    }
+                ],
+                "diagnoses": [],
+                "fixes": [],
+            }
+
+            page = write_run_report(run_dir, report).read_text(encoding="utf-8")
+
+        self.assertIn("production-mobile.png", page)
+        self.assertIn("<img", page)
 
 
 if __name__ == "__main__":

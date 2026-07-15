@@ -42,6 +42,7 @@ SOURCES = {
     "clarity": "رفتار کاربران در Clarity",
     "production_health": "سلامت برنامهٔ واقعی",
     "ux_contract": "ممیزی پوشش خودکار کنترل‌های محصول",
+    "browser_probe": "مرورگر مصنوعی فقط‌خواندنی روی production",
 }
 
 EVENTS = {
@@ -54,6 +55,15 @@ EVENTS = {
     "ui_action_unresponsive": "عملیات مشخص کاربر شروع شد اما هیچ نتیجه‌ای ثبت نشد",
     "ux_observability_gap": "کنترل محصول بدون پوشش کامل تشخیص و outcome",
     "frontend_runtime_failed": "خطای JavaScript یا promise در رابط کاربری",
+    "browser_console_error": "خطای console در مرورگر مصنوعی production",
+    "browser_page_error": "خطای JavaScript صفحه در مرورگر مصنوعی production",
+    "browser_resource_failed": "بارگذاری‌نشدن فایل اصلی صفحه production",
+    "browser_document_failed": "پاسخ ناموفق سند اصلی production",
+    "browser_navigation_failed": "بازنشدن صفحه production",
+    "browser_app_shell_missing": "نمای اصلی برنامه در production ساخته نشد",
+    "browser_primary_actions_missing": "دکمه‌های اصلی شروع در production دیده نشدند",
+    "browser_horizontal_overflow": "بیرون‌زدگی افقی صفحه production",
+    "browser_mutation_attempt": "تلاش غیرمنتظره صفحه اولیه برای تغییر داده production",
     "dead_click_count": "کلیک بی‌نتیجه گزارش‌شده در Clarity",
     "rage_click_count": "کلیک عصبی گزارش‌شده در Clarity",
     "error_click_count": "کلیک منجر به خطا در Clarity",
@@ -164,11 +174,13 @@ def _run_html(report: dict, run_dir: Path) -> str:
         findings = '<div class="empty good"><h2>✅ مشکل قابل اقدامی پیدا نشد</h2><p>هیچ باگی که نیاز به بررسی یا اصلاح داشته باشد دیده نشد.</p></div>'
 
     raw = html.escape(json.dumps(report, ensure_ascii=False, indent=2))
+    probe_snapshots = _run_probe_media(run_dir)
     body = (
         overview
         + '<section><h2 class="section-title">دیشب دقیقاً چه اتفاقی افتاد؟</h2>' + timeline + '</section>'
         + '<section><h2 class="section-title">وضعیت منابع پایش</h2>' + sources + '</section>'
         + '<section><h2 class="section-title">یافته‌ها و میزان قطعیت</h2>' + findings + '</section>'
+        + probe_snapshots
         + f'<details class="technical"><summary>گزارش فنی کامل (برای توسعه‌دهنده)</summary><pre>{raw}</pre></details>'
     )
     return _shell(f"گزارش {started}", body, show_title=False)
@@ -194,6 +206,7 @@ def _candidate_html(candidate: dict, run_dir: Path) -> str:
         f'{status_note}'
         f'<details><summary>چرا عامل این مورد را مطرح کرد؟</summary><p>{html.escape(candidate.get("reproducible_hint", "نیازمند بازسازی کنترل‌شده است."))}</p></details>'
         f'<details><summary>شواهد فنی پاک‌سازی‌شده</summary><pre>{evidence}</pre></details>'
+        f'{_probe_media(candidate, run_dir)}'
         f'{_media(run_dir, candidate.get("fingerprint", ""))}'
         '</article>'
     )
@@ -367,6 +380,43 @@ def _media(run_dir: Path, fingerprint: str) -> str:
     if video.exists():
         pieces.append(f'<video controls src="{video.as_uri()}"></video>')
     return '<div class="media">' + "".join(pieces) + "</div>" if pieces else ""
+
+
+def _probe_media(candidate: dict, run_dir: Path) -> str:
+    pieces: list[str] = []
+    names = {
+        str(item.get("evidence", {}).get("screenshot") or "")
+        for item in candidate.get("evidence", [])
+        if isinstance(item, dict) and isinstance(item.get("evidence"), dict)
+    }
+    for name in sorted(names):
+        if not name or Path(name).name != name:
+            continue
+        path = run_dir / name
+        if path.is_file():
+            pieces.append(
+                f'<figure><img src="{path.as_uri()}" alt="تصویر browser probe"><figcaption>{html.escape(name)}</figcaption></figure>'
+            )
+    return '<div class="media">' + "".join(pieces) + "</div>" if pieces else ""
+
+
+def _run_probe_media(run_dir: Path) -> str:
+    pieces: list[str] = []
+    for name, caption in (
+        ("production-mobile.png", "نمای موبایل production"),
+        ("production-desktop.png", "نمای دسکتاپ production"),
+    ):
+        path = run_dir / name
+        if path.is_file():
+            pieces.append(
+                f'<figure><img src="{path.as_uri()}" alt="{caption}"><figcaption>{caption}</figcaption></figure>'
+            )
+    if not pieces:
+        return ""
+    return (
+        '<section><h2 class="section-title">تصویرهای بررسی خودکار production</h2>'
+        '<div class="media">' + "".join(pieces) + "</div></section>"
+    )
 
 
 def _shell(title: str, body: str, *, show_title: bool = True) -> str:
