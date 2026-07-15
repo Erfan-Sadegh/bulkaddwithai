@@ -4,6 +4,16 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+JOURNEY_STAGES = {
+    "asset_manage": {"picker_opened", "files_selected", "upload_complete", "asset_deleted", "asset_reordered"},
+    "catalog_build": {"build_started", "job_created", "processing_complete", "list_rendered"},
+    "product_edit": {"edit_started", "save_started", "save_complete", "reload_verified"},
+    "basalam_connect_restore": {"oauth_redirect", "batch_restored", "assets_restored", "items_restored", "restore_complete"},
+    "basalam_publish": {"validation", "publish_started", "photos_uploaded", "products_created", "publish_complete"},
+    "torob_submit": {"validation", "submit_started", "submission_created", "submit_complete"},
+}
+
+
 class UxEventCreate(BaseModel):
     event: Literal[
         "image_picker_blocked", "image_picker_opened", "image_files_selected", "image_picker_cancelled",
@@ -102,6 +112,40 @@ class WorkflowIntegrityEventCreate(BaseModel):
                 raise ValueError("restore success event shape is invalid")
         elif self.stage == "redirect" or self.reason is None:
             raise ValueError("restore failure event shape is invalid")
+        return self
+
+
+class JourneyEventCreate(BaseModel):
+    """A privacy-safe Black Box state transition; arbitrary user data is forbidden."""
+
+    event: Literal["journey_step"]
+    journey: Literal[
+        "asset_manage", "catalog_build", "product_edit", "basalam_connect_restore",
+        "basalam_publish", "torob_submit",
+    ]
+    journey_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+    stage: str = Field(min_length=2, max_length=48, pattern=r"^[a-z][a-z0-9_]+$")
+    outcome: Literal["started", "progress", "succeeded", "failed", "blocked"]
+    reason: Literal[
+        "request_failed", "count_mismatch", "seller_mismatch", "validation",
+        "network", "server", "timeout", "unknown",
+    ] | None = None
+    expected_asset_count: int | None = Field(default=None, ge=0, le=10_000)
+    actual_asset_count: int | None = Field(default=None, ge=0, le=10_000)
+    expected_item_count: int | None = Field(default=None, ge=0, le=10_000)
+    actual_item_count: int | None = Field(default=None, ge=0, le=10_000)
+    duration_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_contract(self):
+        if self.stage not in JOURNEY_STAGES[self.journey]:
+            raise ValueError("stage is not part of the journey contract")
+        if self.outcome in {"failed", "blocked"} and self.reason is None:
+            raise ValueError("failed journey step requires a safe reason")
+        if self.outcome not in {"failed", "blocked"} and self.reason is not None:
+            raise ValueError("successful journey step cannot include a reason")
         return self
 
 

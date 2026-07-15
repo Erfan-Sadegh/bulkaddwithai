@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "schema_path": "backend/app/schemas.py",
+  "global_markers": [
+    {"path": "backend/app/main.py", "text": "/observability/journey-events"},
+    {"path": "backend/app/observability.py", "text": "\"journey_step\""},
+    {"path": "frontend/src/lib/api.ts", "text": "reportJourneyEvent:"},
+    {"path": "automation/collectors.py", "text": "def _analyze_journey_steps("},
+    {"path": "automation/dashboard.py", "text": "journey_observability_gap"}
+  ],
+  "journeys": [
+    {
+      "journey": "basalam_connect_restore",
+      "title_fa": "اتصال غرفه باسلام و بازیابی لیست",
+      "priority": "urgent",
+      "timeout_minutes": 10,
+      "invariants": ["asset_count_preserved", "item_count_preserved"],
+      "stages": [
+        {"stage": "oauth_redirect", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'oauth_redirect'"}]},
+        {"stage": "batch_restored", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'batch_restored'"}]},
+        {"stage": "assets_restored", "markers": [{"path": "frontend/src/App.tsx", "text": "reportJourney('assets_restored'"}]},
+        {"stage": "items_restored", "markers": [{"path": "frontend/src/App.tsx", "text": "reportJourney('items_restored'"}]},
+        {"stage": "restore_complete", "markers": [{"path": "frontend/src/App.tsx", "text": "reportJourney('restore_complete'"}]}
+      ]
+    },
+    {
+      "journey": "asset_manage",
+      "title_fa": "افزودن، حذف و مرتب‌سازی عکس",
+      "priority": "high",
+      "stages": [
+        {"stage": "picker_opened", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'picker_opened'"}]},
+        {"stage": "files_selected", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'files_selected'"}]},
+        {"stage": "upload_complete", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'upload_complete'"}]},
+        {"stage": "asset_deleted", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'asset_deleted'"}]},
+        {"stage": "asset_reordered", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'asset_reordered'"}]}
+      ]
+    },
+    {
+      "journey": "catalog_build",
+      "title_fa": "ساخت فهرست محصول",
+      "priority": "high",
+      "stages": [
+        {"stage": "build_started", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'build_started'"}]},
+        {"stage": "job_created", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'job_created'"}]},
+        {"stage": "processing_complete", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'processing_complete'"}]},
+        {"stage": "list_rendered", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'list_rendered'"}]}
+      ]
+    },
+    {
+      "journey": "product_edit",
+      "title_fa": "تکمیل و ویرایش اطلاعات محصول",
+      "priority": "high",
+      "stages": [
+        {"stage": "edit_started", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'edit_started'"}]},
+        {"stage": "save_started", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'save_started'"}]},
+        {"stage": "save_complete", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'save_complete'"}]},
+        {"stage": "reload_verified", "markers": [{"path": "frontend/src/App.tsx", "text": "stage: 'reload_verified'"}]}
+      ]
+    },
+    {
+      "journey": "basalam_publish",
+      "title_fa": "ثبت محصولات در باسلام",
+      "priority": "urgent",
+      "stages": [
+        {"stage": "validation", "markers": [{"path": "frontend/src/App.tsx", "text": "journey: 'basalam_publish'"}]},
+        {"stage": "publish_started", "markers": []},
+        {"stage": "photos_uploaded", "markers": []},
+        {"stage": "products_created", "markers": []},
+        {"stage": "publish_complete", "markers": []}
+      ]
+    },
+    {
+      "journey": "torob_submit",
+      "title_fa": "ارسال محصولات به ترب",
+      "priority": "high",
+      "stages": [
+        {"stage": "validation", "markers": [{"path": "frontend/src/App.tsx", "text": "journey: 'torob_submit'"}]},
+        {"stage": "submit_started", "markers": []},
+        {"stage": "submission_created", "markers": []},
+        {"stage": "submit_complete", "markers": []}
+      ]
+    }
+  ]
+}

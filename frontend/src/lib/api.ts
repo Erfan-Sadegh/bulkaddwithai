@@ -115,6 +115,19 @@ export const api = {
     restored_asset_count?: number;
     restored_item_count?: number;
   }) => request<void>('/observability/workflow-events', { method: 'POST', body: JSON.stringify(payload) }),
+  reportJourneyEvent: (payload: {
+    event: 'journey_step';
+    journey: 'asset_manage' | 'catalog_build' | 'product_edit' | 'basalam_connect_restore' | 'basalam_publish' | 'torob_submit';
+    journey_id: string;
+    stage: string;
+    outcome: 'started' | 'progress' | 'succeeded' | 'failed' | 'blocked';
+    reason?: 'request_failed' | 'count_mismatch' | 'seller_mismatch' | 'validation' | 'network' | 'server' | 'timeout' | 'unknown';
+    expected_asset_count?: number;
+    actual_asset_count?: number;
+    expected_item_count?: number;
+    actual_item_count?: number;
+    duration_ms?: number;
+  }) => request<void>('/observability/journey-events', { method: 'POST', body: JSON.stringify(payload) }),
   listSellers: () => request<Seller[]>('/sellers'),
   getSeller: (sellerId: number) => request<Seller>(`/sellers/${sellerId}`),
   createSeller: (payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) =>

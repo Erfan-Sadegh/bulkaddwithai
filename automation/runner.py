@@ -21,6 +21,7 @@ from automation.collectors import (
     collect_clarity,
     collect_browser_probe,
     collect_health,
+    collect_journey_contract,
     collect_local_logs,
     collect_product_events,
     collect_sentry,
@@ -153,6 +154,7 @@ def collect_all(repo: Path, policy: dict[str, Any], health: dict[str, str], run_
         ),
         "production_health": collect_health,
         "ux_contract": lambda: collect_ux_contract(repo),
+        "journey_contract": lambda: collect_journey_contract(repo),
         "browser_probe": lambda: collect_browser_probe(repo, run_dir),
     }
     for name, collector in collectors.items():
