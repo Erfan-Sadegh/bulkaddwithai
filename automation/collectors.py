@@ -248,6 +248,10 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 
 def _sum_count_fields(row: dict[str, Any]) -> int:
+    # Clarity's behavioral metric rows expose the actual metric count as
+    # `subTotal`; `sessionsCount` is only the denominator for the dimension.
+    if "subTotal" in row:
+        return _safe_int(row.get("subTotal"))
     counts = [_safe_int(value) for key, value in row.items() if key.lower().endswith("count") and "session" not in key.lower()]
     return sum(counts) if counts else 0
 

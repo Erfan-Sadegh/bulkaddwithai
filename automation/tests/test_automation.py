@@ -12,7 +12,7 @@ from pathlib import Path
 
 from unittest.mock import patch
 
-from automation.collectors import CollectorError, collect_local_logs, collect_product_events
+from automation.collectors import CollectorError, collect_clarity, collect_local_logs, collect_product_events
 from automation.dashboard import rebuild_dashboard, write_run_report
 from automation.security import (
     redact_text,
@@ -22,7 +22,12 @@ from automation.security import (
     validate_reproducer_diff,
 )
 from automation.simulation import run_self_improvement_simulation
-from automation.state import apply_retention, phase_for_completed_runs
+from automation.state import (
+    apply_retention,
+    completed_rollout_days,
+    phase_for_completed_runs,
+    remediation_allowed,
+)
 
 
 POLICY = {
@@ -152,6 +157,35 @@ class AutomationTests(unittest.TestCase):
         with self.assertRaises(CollectorError):
             collect_product_events({})
 
+    def test_clarity_collector_uses_metric_subtotal_not_all_sessions(self):
+        payload = [
+            {
+                "metricName": "DeadClickCount",
+                "information": [
+                    {"sessionsCount": "11", "subTotal": "6"},
+                    {"sessionsCount": "33", "subTotal": "2"},
+                ],
+            },
+            {
+                "metricName": "RageClickCount",
+                "information": [{"sessionsCount": "44", "subTotal": "0"}],
+            },
+            {
+                "metricName": "Traffic",
+                "information": [
+                    {"totalSessionCount": "11"},
+                    {"totalSessionCount": "33"},
+                ],
+            },
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_clarity({"CLARITY_API_TOKEN": "read-only-token"})
+
+        by_event = {signal.event: signal for signal in signals}
+        self.assertEqual(by_event["dead_click_count"].count, 8)
+        self.assertEqual(by_event["clarity_traffic"].count, 44)
+        self.assertNotIn("rage_click_count", by_event)
+
     def test_product_event_collector_only_requests_the_last_24_hours(self):
         now = datetime(2026, 7, 15, 0, 0, tzinfo=timezone.utc)
         with patch("automation.collectors._get_json", return_value=[]) as request:
@@ -184,6 +218,39 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(phase_for_completed_runs(6), ("report_only", 0))
         self.assertEqual(phase_for_completed_runs(7), ("one_fix", 1))
         self.assertEqual(phase_for_completed_runs(21), ("guarded", 3))
+
+    def test_three_hour_monitoring_does_not_accelerate_daily_rollout(self):
+        runs = [
+            {
+                "kind": "scheduled",
+                "status": "completed",
+                "started_at": f"2026-07-15T{hour:02d}:00:00+00:00",
+            }
+            for hour in range(0, 24, 3)
+        ]
+        runs.append(
+            {
+                "kind": "scheduled",
+                "status": "completed",
+                "started_at": "2026-07-16T00:00:00+00:00",
+            }
+        )
+
+        self.assertEqual(completed_rollout_days(runs), 2)
+
+    def test_remediation_is_limited_to_once_per_day_while_monitoring_continues(self):
+        now = datetime(2026, 7, 16, 0, 0, tzinfo=timezone.utc)
+        recent = [
+            {
+                "kind": "scheduled",
+                "status": "completed",
+                "remediation_window": True,
+                "started_at": "2026-07-15T21:00:00+00:00",
+            }
+        ]
+
+        self.assertFalse(remediation_allowed(recent, now))
+        self.assertTrue(remediation_allowed(recent, now + timedelta(hours=24)))
 
     def test_dashboard_is_local_and_retention_keeps_open_prs(self):
         with tempfile.TemporaryDirectory() as temporary:

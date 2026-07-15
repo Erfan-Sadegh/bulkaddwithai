@@ -29,6 +29,7 @@ STATUS = {
 
 PHASES = {
     "report_only": "پایش و گزارش‌گیری",
+    "monitoring": "پایش سه‌ساعته (بدون تغییر کد)",
     "one_fix": "اصلاح محدود (حداکثر یک مورد)",
     "guarded": "اصلاح محافظت‌شده",
 }
@@ -220,6 +221,8 @@ def _next_action(report: dict) -> str:
         return "PR را ببین و فقط اگر شواهد برایت روشن بود، دربارهٔ merge تصمیم بگیر."
     if report.get("phase") == "report_only":
         return "فعلاً کاری از شما لازم نیست؛ عامل در این مرحله اجازه تغییر کد نداشت."
+    if report.get("phase") == "monitoring":
+        return "فعلاً کاری لازم نیست؛ این نوبت فقط پایش بود و پنجرهٔ اصلاح روزانه جداست."
     if report.get("candidates") and not fixes:
         return "فعلاً اقدامی نکن؛ شواهد برای یک اصلاح امن کافی نبوده است."
     return "کاری لازم نیست؛ اجرای بعدی به‌صورت خودکار انجام می‌شود."
@@ -252,6 +255,8 @@ def _timeline(report: dict) -> str:
         steps.append("عامل شواهد را تحلیل کرد، اما هنوز هیچ باگی با regression test اثبات نشد.")
     if report.get("phase") == "report_only":
         steps.append("به‌دلیل دورهٔ هفت‌شبِ فقط‌گزارش، کد تغییر نکرد، تست اصلاح اجرا نشد و PR ساخته نشد.")
+    elif report.get("phase") == "monitoring":
+        steps.append("این نوبت پایش سه‌ساعته بود؛ برای جلوگیری از اصلاح تکراری، کد فقط در پنجرهٔ روزانه می‌تواند تغییر کند.")
     elif not report.get("fixes"):
         steps.append("شواهد برای شروع اصلاح خودکار کافی نبود؛ کد و محصول دست‌نخورده ماندند.")
     return '<ol class="timeline">' + "".join(f"<li>{html.escape(step)}</li>" for step in steps) + "</ol>"

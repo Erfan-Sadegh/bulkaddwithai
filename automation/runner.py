@@ -32,7 +32,16 @@ from automation.security import (
     validate_diff,
     validate_reproducer_diff,
 )
-from automation.state import apply_retention, default_state_dir, exclusive_lock, load_state, phase_for_completed_runs, save_state
+from automation.state import (
+    apply_retention,
+    completed_rollout_days,
+    default_state_dir,
+    exclusive_lock,
+    load_state,
+    phase_for_completed_runs,
+    remediation_allowed,
+    save_state,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,15 +72,19 @@ def main() -> int:
 
 def run_once(repo: Path, state_root: Path, policy: dict[str, Any], force_report_only: bool, no_agent: bool, scheduled: bool) -> int:
     state = load_state(state_root)
-    completed = sum(1 for run in state.get("runs", []) if run.get("status") == "completed" and run.get("kind") == "scheduled")
+    now = datetime.now(timezone.utc)
+    completed = completed_rollout_days(state.get("runs", []))
     phase, max_fixes = phase_for_completed_runs(completed)
+    remediation_window = bool(max_fixes)
+    if scheduled and max_fixes and not remediation_allowed(state.get("runs", []), now):
+        phase, max_fixes, remediation_window = "monitoring", 0, False
     if force_report_only:
-        phase, max_fixes = "report_only", 0
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        phase, max_fixes, remediation_window = "report_only", 0, False
+    run_id = now.strftime("%Y%m%dT%H%M%SZ")
     run_dir = state_root / "runs" / run_id
     report = RunReport(
         run_id=run_id,
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=now.isoformat(),
         phase=phase,
         run_kind="scheduled" if scheduled else "manual",
     )
@@ -98,7 +111,14 @@ def run_once(repo: Path, state_root: Path, policy: dict[str, Any], force_report_
         report.finished_at = datetime.now(timezone.utc).isoformat()
     finally:
         write_run_report(run_dir, sanitize(report.to_dict()))
-        state.setdefault("runs", []).append({"run_id": run_id, "status": report.status, "phase": phase, "kind": "scheduled" if scheduled else "manual", "started_at": report.started_at})
+        state.setdefault("runs", []).append({
+            "run_id": run_id,
+            "status": report.status,
+            "phase": phase,
+            "kind": "scheduled" if scheduled else "manual",
+            "started_at": report.started_at,
+            "remediation_window": remediation_window,
+        })
         state["runs"] = state["runs"][-400:]
         save_state(state_root, state)
         apply_retention(state_root, int(policy["limits"]["retention_days"]))

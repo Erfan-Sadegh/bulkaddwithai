@@ -40,6 +40,45 @@ def phase_for_completed_runs(completed_runs: int) -> tuple[str, int]:
     return "guarded", 3
 
 
+TEHRAN = timezone(timedelta(hours=3, minutes=30))
+
+
+def completed_rollout_days(runs: list[dict]) -> int:
+    """Count observed local calendar days, not high-frequency monitor runs."""
+    days = set()
+    for run in runs:
+        if run.get("kind") != "scheduled" or run.get("status") != "completed":
+            continue
+        try:
+            started = datetime.fromisoformat(str(run["started_at"]).replace("Z", "+00:00"))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+        except (KeyError, ValueError):
+            continue
+        days.add(started.astimezone(TEHRAN).date())
+    return len(days)
+
+
+def remediation_allowed(
+    runs: list[dict],
+    now: datetime,
+    cooldown: timedelta = timedelta(hours=23),
+) -> bool:
+    """Monitoring can be frequent, while code-changing windows stay daily."""
+    previous: list[datetime] = []
+    for run in runs:
+        if not run.get("remediation_window"):
+            continue
+        try:
+            started = datetime.fromisoformat(str(run["started_at"]).replace("Z", "+00:00"))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            previous.append(started)
+        except (KeyError, ValueError):
+            continue
+    return not previous or now - max(previous) >= cooldown
+
+
 def apply_retention(root: Path, days: int = 30) -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     runs_dir = root / "runs"

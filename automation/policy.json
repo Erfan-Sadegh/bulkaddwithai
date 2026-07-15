@@ -2,6 +2,7 @@
   "version": 1,
   "schedule": {
     "nightly_time": "03:17",
+    "monitor_interval_hours": 3,
     "weekly_time": "04:17",
     "timezone": "Asia/Tehran",
     "timeout_minutes": 180,
