@@ -76,6 +76,35 @@ class RuntimeEventCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class WorkflowIntegrityEventCreate(BaseModel):
+    event: Literal[
+        "basalam_oauth_restore_started",
+        "basalam_oauth_restore_succeeded",
+        "basalam_oauth_restore_failed",
+    ]
+    stage: Literal["redirect", "batch", "assets", "items", "complete"]
+    reason: Literal["request_failed", "seller_mismatch", "count_mismatch"] | None = None
+    expected_asset_count: int = Field(ge=0, le=10_000)
+    expected_item_count: int = Field(ge=0, le=10_000)
+    restored_asset_count: int | None = Field(default=None, ge=0, le=10_000)
+    restored_item_count: int | None = Field(default=None, ge=0, le=10_000)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_workflow_shape(self):
+        restored = (self.restored_asset_count, self.restored_item_count)
+        if self.event == "basalam_oauth_restore_started":
+            if self.stage != "redirect" or self.reason is not None or any(value is not None for value in restored):
+                raise ValueError("restore start event shape is invalid")
+        elif self.event == "basalam_oauth_restore_succeeded":
+            if self.stage != "complete" or self.reason is not None or any(value is None for value in restored):
+                raise ValueError("restore success event shape is invalid")
+        elif self.stage == "redirect" or self.reason is None:
+            raise ValueError("restore failure event shape is invalid")
+        return self
+
+
 class SellerCreate(BaseModel):
     name: str | None = Field(default=None, max_length=160)
     mobile: str | None = Field(default=None, max_length=32)

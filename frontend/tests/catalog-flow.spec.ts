@@ -432,20 +432,26 @@ test('Basalam booth can be connected after reviewing the generated list', async 
   const readyItem = { ...item, basalam_category: basalamCategory };
   let oauthSellerId: string | null = null;
   let lastUpdateBody: Record<string, unknown> | undefined;
+  let oauthStarted = false;
 
   await page.route('**/sellers', async (route) => {
     if (route.request().method() === 'POST') return route.fulfill({ json: seller, status: 201 });
     return route.fulfill({ json: [] });
   });
-  await page.route('**/sellers/1/platform-connections?**', async (route) => route.fulfill({ json: [] }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) =>
+    route.fulfill({ json: oauthStarted ? [basalamConnection] : [] }),
+  );
   await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
   await page.route('**/batches', async (route) => route.fulfill({ json: batch, status: 201 }));
+  await page.route('**/batches/7', async (route) => route.fulfill({ json: batch }));
   await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: assets.slice(0, 2), status: 201 }));
   await page.route('**/batches/7/process', async (route) => route.fulfill({ json: { job_id: 30 }, status: 202 }));
   await page.route('**/jobs/30', async (route) =>
     route.fulfill({ json: { id: 30, batch_id: 7, status: 'succeeded', step: 'ready', error: null } }),
   );
-  await page.route('**/batches/7/items', async (route) => route.fulfill({ json: [readyItem] }));
+  await page.route('**/batches/7/items', async (route) =>
+    route.fulfill({ json: [{ ...readyItem, ...(lastUpdateBody ?? {}) }] }),
+  );
   await page.route('**/batches/7/categories/basalam/suggest', async (route) => route.fulfill({ json: [readyItem] }));
   await page.route('**/batch-items/101', async (route) => {
     const body = JSON.parse(route.request().postData() ?? '{}');
@@ -455,10 +461,11 @@ test('Basalam booth can be connected after reviewing the generated list', async 
   await page.route('**/integrations/basalam/oauth-url?**', async (route) => {
     const url = new URL(route.request().url());
     oauthSellerId = url.searchParams.get('seller_id');
+    oauthStarted = true;
     return route.fulfill({
       json: {
         configured: true,
-        url: 'http://127.0.0.1:5173/mock-basalam-oauth?state=test-state',
+        url: 'http://127.0.0.1:5173/?basalam_status=success&seller_id=1',
         state: 'test-state',
         error: null,
       },
@@ -483,7 +490,11 @@ test('Basalam booth can be connected after reviewing the generated list', async 
 
   await page.getByRole('button', { name: 'اتصال غرفه باسلام' }).click();
 
-  await page.waitForURL('**/mock-basalam-oauth?state=test-state');
+  await expect(page.getByText('غرفه تست')).toBeVisible();
+  await expect(page.getByLabel('نام محصول')).toHaveValue('محصول تستی');
+  await expect(page.locator('.product-extra-fields input').nth(0)).toHaveValue('۵');
+  await expect(page.locator('.product-extra-fields input').nth(4)).toHaveValue('۱');
+  expect(await page.evaluate(() => window.localStorage.getItem('bulkadd_basalam_active_batch_id'))).toBe('7');
   expect(oauthSellerId).toBe('1');
   expect(lastUpdateBody).toMatchObject({
     stock: 5,
@@ -492,6 +503,141 @@ test('Basalam booth can be connected after reviewing the generated list', async 
     package_weight_grams: 500,
     unit_quantity: 1,
   });
+});
+
+test('a temporary OAuth restore failure never replaces the active list with an empty batch', async ({ page }) => {
+  let createdBatchCount = 0;
+  let restoreAvailable = false;
+  const workflowEvents: Array<Record<string, unknown>> = [];
+
+  await page.addInitScript(() => {
+    window.localStorage.setItem('bulkadd_seller_id', '1');
+    window.localStorage.setItem('bulkadd_workspace_id', 'test-workspace');
+    window.localStorage.setItem('bulkadd_basalam_active_batch_id', '7');
+    window.localStorage.setItem(
+      'bulkadd_basalam_oauth_snapshot',
+      JSON.stringify({ batchId: 7, assetCount: 2, itemCount: 1 }),
+    );
+  });
+  await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
+  await page.route('**/observability/workflow-events', async (route) => {
+    workflowEvents.push(JSON.parse(route.request().postData() ?? '{}'));
+    return route.fulfill({ status: 204 });
+  });
+  await page.route('**/sellers/1/platform-connections?**', async (route) =>
+    route.fulfill({ json: [basalamConnection] }),
+  );
+  await page.route('**/batches/7', async (route) => restoreAvailable
+    ? route.fulfill({ json: batch })
+    : route.fulfill({ status: 503, json: { detail: 'temporary restore failure' } }));
+  await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: assets.slice(0, 2) }));
+  await page.route('**/batches/7/items', async (route) => route.fulfill({ json: [{ ...item, basalam_category: basalamCategory }] }));
+  await page.route('**/batches', async (route) => {
+    if (route.request().method() === 'POST') createdBatchCount += 1;
+    return route.fulfill({ status: 201, json: { ...batch, id: 8 } });
+  });
+
+  await page.goto('/?basalam_status=success&seller_id=1');
+
+  await expect(page.getByText('فهرست محصولاتت موقتاً بازیابی نشد و فهرست خالی جای آن ساخته نشد. صفحه را دوباره باز کن.')).toBeVisible();
+  expect(createdBatchCount).toBe(0);
+  expect(await page.evaluate(() => window.localStorage.getItem('bulkadd_basalam_active_batch_id'))).toBe('7');
+  expect(workflowEvents).toContainEqual({
+    event: 'basalam_oauth_restore_failed',
+    stage: 'batch',
+    reason: 'request_failed',
+    expected_asset_count: 2,
+    expected_item_count: 1,
+  });
+  restoreAvailable = true;
+  await page.reload();
+  await expect(page.getByLabel('نام محصول')).toHaveValue('محصول تستی');
+  expect(createdBatchCount).toBe(0);
+  expect(await page.evaluate(() => window.localStorage.getItem('bulkadd_basalam_oauth_snapshot'))).toBeNull();
+});
+
+test('an incomplete OAuth restore cannot prune locally backed up product drafts', async ({ page }) => {
+  const secondDraft = {
+    title: 'محصول دوم',
+    description: 'توضیح دوم',
+    price_toman: '200000',
+    stock: '2',
+    preparation_days: '1',
+    weight_grams: '200',
+    package_weight_grams: '300',
+    unit_quantity: '1',
+  };
+  await page.addInitScript(({ draft }) => {
+    window.localStorage.setItem('bulkadd_seller_id', '1');
+    window.localStorage.setItem('bulkadd_workspace_id', 'test-workspace');
+    window.localStorage.setItem('bulkadd_basalam_active_batch_id', '7');
+    window.localStorage.setItem(
+      'bulkadd_basalam_oauth_snapshot',
+      JSON.stringify({ batchId: 7, assetCount: 2, itemCount: 2 }),
+    );
+    window.localStorage.setItem(
+      'bulkadd_product_drafts:basalam:7',
+      JSON.stringify({ drafts: { 102: draft }, touched: { 102: { title: true } } }),
+    );
+  }, { draft: secondDraft });
+  await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) =>
+    route.fulfill({ json: [basalamConnection] }),
+  );
+  await page.route('**/batches/7', async (route) => route.fulfill({ json: batch }));
+  await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: assets.slice(0, 2) }));
+  await page.route('**/batches/7/items', async (route) => route.fulfill({ json: [{ ...item, basalam_category: basalamCategory }] }));
+  await page.route('**/observability/workflow-events', async (route) => route.fulfill({ status: 204 }));
+
+  await page.goto('/?basalam_status=success&seller_id=1');
+
+  await expect(page.getByText('بخشی از فهرست قبلی بازیابی نشد. چیزی را دوباره ثبت نکن و صفحه را تازه‌سازی کن.')).toBeVisible();
+  const stored = await page.evaluate(() =>
+    JSON.parse(window.localStorage.getItem('bulkadd_product_drafts:basalam:7') ?? '{}'),
+  );
+  expect(stored.drafts['102']).toEqual(secondDraft);
+  await expect(page.getByLabel('نام محصول')).toHaveCount(0);
+});
+
+test('OAuth integrity keeps exact counts above one hundred', async ({ page }) => {
+  const missingDraft = {
+    title: 'محصول صد و یکم', description: '', price_toman: '1', stock: '1', preparation_days: '1',
+    weight_grams: '1', package_weight_grams: '1', unit_quantity: '1',
+  };
+  const oneHundredItems = Array.from({ length: 100 }, (_, index) => ({
+    ...item,
+    id: 1000 + index,
+    photos: [],
+    basalam_category: basalamCategory,
+  }));
+  await page.addInitScript(({ draft }) => {
+    window.localStorage.setItem('bulkadd_seller_id', '1');
+    window.localStorage.setItem('bulkadd_workspace_id', 'test-workspace');
+    window.localStorage.setItem('bulkadd_basalam_active_batch_id', '7');
+    window.localStorage.setItem(
+      'bulkadd_basalam_oauth_snapshot',
+      JSON.stringify({ batchId: 7, assetCount: 2, itemCount: 101 }),
+    );
+    window.localStorage.setItem(
+      'bulkadd_product_drafts:basalam:7',
+      JSON.stringify({ drafts: { 9999: draft }, touched: { 9999: { title: true } } }),
+    );
+  }, { draft: missingDraft });
+  await page.route('**/sellers/1', async (route) => route.fulfill({ json: seller }));
+  await page.route('**/sellers/1/platform-connections?**', async (route) => route.fulfill({ json: [basalamConnection] }));
+  await page.route('**/batches/7', async (route) => route.fulfill({ json: batch }));
+  await page.route('**/batches/7/assets', async (route) => route.fulfill({ json: assets.slice(0, 2) }));
+  await page.route('**/batches/7/items', async (route) => route.fulfill({ json: oneHundredItems }));
+  await page.route('**/observability/workflow-events', async (route) => route.fulfill({ status: 204 }));
+
+  await page.goto('/?basalam_status=success&seller_id=1');
+
+  await expect(page.getByText('بخشی از فهرست قبلی بازیابی نشد. چیزی را دوباره ثبت نکن و صفحه را تازه‌سازی کن.')).toBeVisible();
+  const stored = await page.evaluate(() =>
+    JSON.parse(window.localStorage.getItem('bulkadd_product_drafts:basalam:7') ?? '{}'),
+  );
+  expect(stored.drafts['9999']).toEqual(missingDraft);
+  await expect(page.getByLabel('نام محصول')).toHaveCount(0);
 });
 
 test('Basalam reviewed product grid stays readable and multi-photo items use a carousel', async ({ page }) => {

@@ -106,6 +106,15 @@ export const api = {
     code: 'script_error' | 'unhandled_rejection';
     surface: 'catalog' | 'admin';
   }) => request<void>('/observability/runtime-events', { method: 'POST', body: JSON.stringify(payload) }),
+  reportWorkflowEvent: (payload: {
+    event: 'basalam_oauth_restore_started' | 'basalam_oauth_restore_succeeded' | 'basalam_oauth_restore_failed';
+    stage: 'redirect' | 'batch' | 'assets' | 'items' | 'complete';
+    reason?: 'request_failed' | 'seller_mismatch' | 'count_mismatch';
+    expected_asset_count: number;
+    expected_item_count: number;
+    restored_asset_count?: number;
+    restored_item_count?: number;
+  }) => request<void>('/observability/workflow-events', { method: 'POST', body: JSON.stringify(payload) }),
   listSellers: () => request<Seller[]>('/sellers'),
   getSeller: (sellerId: number) => request<Seller>(`/sellers/${sellerId}`),
   createSeller: (payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) =>

@@ -47,6 +47,7 @@ SOURCES = {
 
 EVENTS = {
     "image_upload_rejected": "رد شدن تصویر هنگام بارگذاری",
+    "basalam_oauth_restore_failed": "بازیابی‌نشدن فهرست پس از اتصال غرفه باسلام",
     "image_picker_blocked": "کلیک روی آپلود در زمانی که افزودن عکس قفل بود",
     "image_picker_unresponsive": "بازشدن آپلود بدون انتخاب یا لغو قابل‌تشخیص",
     "ui_rage_click": "کلیک عصبی روی یک کنترل مشخص محصول",

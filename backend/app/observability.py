@@ -47,6 +47,9 @@ PERSISTED_EVENTS = {
     "frontend_runtime_failed",
     "processing_job_failed",
     "basalam_oauth_failed",
+    "basalam_oauth_restore_started",
+    "basalam_oauth_restore_succeeded",
+    "basalam_oauth_restore_failed",
     "basalam_publish_validation_failed",
     "basalam_product_failed",
     "basalam_publish_failed",
@@ -61,6 +64,7 @@ PERSISTED_FIELDS = {
     "session_key",
     "batch_item_id", "connection_id", "http_status", "category_id", "unit_type", "request_status", "photo_count",
     "click_count", "image_number", "outcome", "failure_field", "surface",
+    "expected_asset_count", "expected_item_count", "restored_asset_count", "restored_item_count",
 }
 
 

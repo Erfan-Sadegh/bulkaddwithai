@@ -61,6 +61,7 @@ from .schemas import (
     TorobSubmissionStartResponse,
     UxEventCreate,
     RuntimeEventCreate,
+    WorkflowIntegrityEventCreate,
 )
 from .services import (
     create_batch,
@@ -315,6 +316,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload.event,
             payload.code,
             payload.surface,
+        )
+        return Response(status_code=204)
+
+    @app.post("/observability/workflow-events", status_code=204)
+    def post_workflow_integrity_event(payload: WorkflowIntegrityEventCreate, request: Request):
+        # Counts and allowlisted enums only: no seller, batch, product text, URL, or OAuth material.
+        session_key = hashlib.sha256(request.state.request_id.encode("utf-8")).hexdigest()[:16]
+        log = ux_logger.warning if payload.event == "basalam_oauth_restore_failed" else ux_logger.info
+        log(
+            "%s session_key=%s stage=%s reason=%s expected_asset_count=%s expected_item_count=%s restored_asset_count=%s restored_item_count=%s",
+            payload.event,
+            session_key,
+            payload.stage,
+            payload.reason or "none",
+            payload.expected_asset_count,
+            payload.expected_item_count,
+            payload.restored_asset_count if payload.restored_asset_count is not None else "none",
+            payload.restored_item_count if payload.restored_item_count is not None else "none",
         )
         return Response(status_code=204)
 
