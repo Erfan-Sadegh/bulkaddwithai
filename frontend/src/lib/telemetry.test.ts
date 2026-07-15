@@ -9,7 +9,7 @@ vi.mock('@sentry/react', () => ({
 }));
 
 import * as Sentry from '@sentry/react';
-import { captureApiFailure, getRequestId, installInteractionObserver, trackEvent } from './telemetry';
+import { beginObservedAction, captureApiFailure, getRequestId, installInteractionObserver, trackEvent } from './telemetry';
 
 describe('telemetry', () => {
   beforeEach(() => {
@@ -75,5 +75,24 @@ describe('telemetry', () => {
 
     expect(report).not.toHaveBeenCalled();
     stop();
+  });
+
+  it('correlates a product action start and terminal outcome without user text', () => {
+    const report = vi.fn();
+    const action = beginObservedAction('publish_basalam', report);
+
+    action.failed('server');
+    action.accepted();
+
+    expect(report).toHaveBeenCalledTimes(2);
+    const started = report.mock.calls[0][0];
+    const failed = report.mock.calls[1][0];
+    expect(started).toMatchObject({ event: 'ui_action_started', control: 'publish_basalam' });
+    expect(failed).toEqual({
+      event: 'ui_action_failed',
+      control: 'publish_basalam',
+      attempt_id: started.attempt_id,
+      outcome: 'server',
+    });
   });
 });

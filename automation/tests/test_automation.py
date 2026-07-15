@@ -295,6 +295,67 @@ class AutomationTests(unittest.TestCase):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
         self.assertEqual(query["since"], ["2026-07-14T00:00:00+00:00"])
 
+    def test_product_event_collector_finds_repeated_actions_with_no_terminal_outcome(self):
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+        payload = [
+            {
+                "event": "ui_action_started",
+                "control": "publish_basalam",
+                "attempt_id": attempt_id,
+                "last_seen_at": "2026-07-15T11:50:00+00:00",
+            }
+            for attempt_id in (
+                "11111111-1111-4111-8111-111111111111",
+                "22222222-2222-4222-8222-222222222222",
+            )
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                },
+                now=now,
+            )
+
+        stalled = next(signal for signal in signals if signal.event == "ui_action_unresponsive")
+        self.assertEqual(stalled.count, 2)
+        self.assertEqual(stalled.evidence["control"], "publish_basalam")
+
+    def test_product_event_collector_does_not_call_completed_actions_unresponsive(self):
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+        payload = []
+        for attempt_id in (
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ):
+            payload.extend(
+                [
+                    {
+                        "event": "ui_action_started",
+                        "control": "publish_basalam",
+                        "attempt_id": attempt_id,
+                        "last_seen_at": "2026-07-15T11:50:00+00:00",
+                    },
+                    {
+                        "event": "ui_action_accepted",
+                        "control": "publish_basalam",
+                        "attempt_id": attempt_id,
+                        "last_seen_at": "2026-07-15T11:50:01+00:00",
+                    },
+                ]
+            )
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                },
+                now=now,
+            )
+
+        self.assertNotIn("ui_action_unresponsive", {signal.event for signal in signals})
+
     def test_full_self_improvement_cycle_in_an_isolated_repository(self):
         with tempfile.TemporaryDirectory() as temporary:
             result = run_self_improvement_simulation(Path(temporary))

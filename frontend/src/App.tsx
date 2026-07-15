@@ -18,7 +18,8 @@ import type { ChangeEvent, MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { API_BASE, api } from './lib/api';
-import { installInteractionObserver, trackEvent } from './lib/telemetry';
+import { beginObservedAction, installInteractionObserver, trackEvent } from './lib/telemetry';
+import type { ObservedControl } from './lib/telemetry';
 import type {
   Asset,
   BasalamCategory,
@@ -31,6 +32,10 @@ import type {
   Seller,
   TorobSubmission,
 } from './lib/types';
+
+function beginProductAction(control: ObservedControl) {
+  return beginObservedAction(control, (event) => void api.reportUxEvent(event).catch(() => undefined));
+}
 
 type Platform = 'basalam' | 'torob';
 type ProductDraft = Pick<ProductItem, 'title' | 'description'> & {
@@ -404,10 +409,12 @@ function MainApp() {
     }
   }
 
-  async function upload(files: File[]) {
+  async function upload(files: File[], sourceControl?: ObservedControl) {
     if (!batch || files.length === 0 || uploading || uploadRequestRef.current) return;
     const hasImage = files.some((file) => file.type.startsWith('image/'));
+    const action = beginProductAction(sourceControl ?? (hasImage ? 'photo_drop_zone' : 'record_voice'));
     if (items.length > 0 && hasImage) {
+      action.blocked('state');
       setError('برای عکس‌های جدید، اول روی «افزودن محصولات جدید» بزن.');
       return;
     }
@@ -423,7 +430,9 @@ function MainApp() {
         const base = hasNewAudio ? current.filter((asset) => asset.type !== 'audio') : current;
         return [...base, ...uploaded].sort((a, b) => a.type.localeCompare(b.type) || a.upload_order - b.upload_order);
       });
+      action.accepted();
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'فایل‌ها اضافه نشدند. دوباره امتحان کن.');
     } finally {
       uploadRequestRef.current = false;
@@ -449,6 +458,7 @@ function MainApp() {
 
   async function processBatch() {
     if (!batch || !platform || imageAssets.length === 0 || processing || processingRequestRef.current) return;
+    const action = beginProductAction('build_product_list');
     processingRequestRef.current = true;
     setProcessing(true);
     setError(null);
@@ -457,6 +467,7 @@ function MainApp() {
       const result = await api.processBatch(batch.id);
       const firstJob = await api.getJob(result.job_id);
       setJob(firstJob);
+      action.accepted();
       if (firstJob.status === 'succeeded') {
         await loadItemsForPlatform(batch.id, platform);
         setShowPublishValidation(false);
@@ -468,6 +479,7 @@ function MainApp() {
         setProcessing(false);
       }
     } catch (err) {
+      action.failed('unknown');
       processingRequestRef.current = false;
       setProcessing(false);
       setError(err instanceof Error ? err.message : 'پردازش انجام نشد. فایل‌ها باقی مانده‌اند و می‌توانی دوباره تلاش کنی.');
@@ -543,6 +555,7 @@ function MainApp() {
 
   async function connectBasalam(options: { saveCurrentList?: boolean } = {}) {
     if (!seller) return;
+    const action = beginProductAction('connect_basalam');
     setConnectingBasalam(true);
     setError(null);
     try {
@@ -550,14 +563,17 @@ function MainApp() {
       if (options.saveCurrentList && items.length > 0) {
         const saved = await persistDrafts();
         if (!saved) {
+          action.failed('unknown');
           setConnectingBasalam(false);
           return;
         }
       }
       const result = await api.getBasalamOAuthUrl(seller.id, workspaceId);
       if (!result.url) throw new Error(result.error || 'اتصال باسلام هنوز تنظیم نشده است.');
+      action.accepted();
       window.location.href = result.url;
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'لینک اتصال باسلام ساخته نشد.');
       setConnectingBasalam(false);
     }
@@ -565,14 +581,17 @@ function MainApp() {
 
   async function publishToBasalam() {
     if (!batch || publishingBasalam || basalamPublishingRef.current) return;
+    const action = beginProductAction('publish_basalam');
     dismissVoiceNudge();
     setShowPublishValidation(true);
     setPublishJob(null);
     setPublishedProducts([]);
     if (publishValidationIssues.length > 0) {
+      action.blocked('validation');
       return;
     }
     if (!basalamConnection) {
+      action.blocked('state');
       await connectBasalam({ saveCurrentList: true });
       return;
     }
@@ -582,6 +601,7 @@ function MainApp() {
     try {
       const saved = await persistDrafts();
       if (!saved) {
+        action.failed('unknown');
         basalamPublishingRef.current = false;
         setPublishingBasalam(false);
         return;
@@ -589,6 +609,7 @@ function MainApp() {
       const started = await api.publishToBasalam(batch.id, workspaceId);
       const firstJob = await api.getPublishJob(started.job_id);
       setPublishJob(firstJob);
+      action.accepted();
       if (['succeeded', 'partial_failed', 'failed'].includes(firstJob.status)) {
         basalamPublishingRef.current = false;
         setPublishingBasalam(false);
@@ -596,6 +617,7 @@ function MainApp() {
         if (firstJob.status === 'succeeded') setBasalamSuccessOpen(true);
       }
     } catch (err) {
+      action.failed('unknown');
       basalamPublishingRef.current = false;
       setPublishingBasalam(false);
       setError(err instanceof Error ? err.message : 'ثبت محصول‌ها در باسلام انجام نشد.');
@@ -604,12 +626,14 @@ function MainApp() {
 
   async function submitToTorob() {
     if (!batch || submittingTorob || torobSubmittingRef.current) return;
+    const action = beginProductAction('submit_torob');
     setTorobInfoTouched(true);
     setPublishJob(null);
     setPublishedProducts([]);
     const shopName = torobShopName.trim();
     const contactMobile = torobContactMobile.trim();
     if (!shopName || !contactMobile) {
+      action.blocked('validation');
       setError('برای ترب، اسم فروشگاه و شماره تماس را وارد کن.');
       document.querySelector('.torob-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -620,6 +644,7 @@ function MainApp() {
     try {
       const saved = await persistDrafts();
       if (!saved) {
+        action.failed('unknown');
         setSubmittingTorob(false);
         return;
       }
@@ -627,9 +652,11 @@ function MainApp() {
         shop_name: shopName,
         contact_mobile: contactMobile,
       });
+      action.accepted();
       setTorobSuccessMessage(humanizeTorobSubmissionMessage(created.message));
       showToast('درخواست ترب ثبت شد.');
     } catch (err) {
+      action.failed('unknown');
       setError(err instanceof Error ? err.message : 'درخواست ترب ثبت نشد. دوباره تلاش کن.');
     } finally {
       torobSubmittingRef.current = false;
@@ -1377,7 +1404,7 @@ function UploadPanel({
   uploadDisabled: boolean;
   uploadDisabledReason: 'list_exists' | 'processing' | null;
   voiceDisabled: boolean;
-  onUpload: (files: File[]) => void;
+  onUpload: (files: File[], control?: ObservedControl) => void;
   onDeleteAsset: (assetId: number) => void;
 }) {
   const pickerAttemptRef = useRef<string | null>(null);
@@ -1397,7 +1424,7 @@ function UploadPanel({
     }
     pickerAttemptRef.current = null;
     event.target.value = '';
-    if (files.length > 0) onUpload(files);
+    if (files.length > 0) onUpload(files, control);
   }
 
   function reportBlocked(control: 'photo_drop_zone' | 'add_photo_button') {

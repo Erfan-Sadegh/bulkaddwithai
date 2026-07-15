@@ -402,9 +402,17 @@ describe('App', () => {
       new File(['aaa'], 'private-name.jpg', { type: 'image/jpeg' }),
     );
 
-    await waitFor(() => expect(uxEvents.map((event) => event.event)).toEqual(['image_picker_opened', 'image_files_selected']));
-    expect(uxEvents[0].attempt_id).toBe(uxEvents[1].attempt_id);
-    expect(uxEvents[1].file_count).toBe(1);
+    await waitFor(() => expect(uxEvents.some((event) => event.event === 'ui_action_accepted')).toBe(true));
+    const pickerEvents = uxEvents.filter((event) => String(event.event).startsWith('image_'));
+    expect(pickerEvents.map((event) => event.event)).toEqual(['image_picker_opened', 'image_files_selected']);
+    expect(pickerEvents[0].attempt_id).toBe(pickerEvents[1].attempt_id);
+    expect(pickerEvents[1].file_count).toBe(1);
+    expect(uxEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'ui_action_started', control: 'photo_drop_zone' }),
+        expect.objectContaining({ event: 'ui_action_accepted', control: 'photo_drop_zone' }),
+      ]),
+    );
     expect(JSON.stringify(uxEvents)).not.toContain('private-name.jpg');
   });
 
@@ -700,8 +708,10 @@ describe('App', () => {
   it('blocks Basalam publish until required product info is complete', async () => {
     const user = userEvent.setup();
     let publishCalled = false;
+    const uxEvents: Array<Record<string, unknown>> = [];
     const { container } = renderWithApi({
       platformConnections: [basalamConnection],
+      uxEvents,
       onPublish: () => {
         publishCalled = true;
       },
@@ -721,6 +731,11 @@ describe('App', () => {
     expect(await screen.findByText('اطلاعات لازم کامل نیست.')).toBeInTheDocument();
     expect(screen.getByText(/محصول نیاز به تکمیل دارد؛ اول موجودی/)).toBeInTheDocument();
     expect(container.querySelector('.product-card.needs-info')).toBeInTheDocument();
+    expect(uxEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'ui_action_blocked', control: 'publish_basalam', outcome: 'validation' }),
+      ]),
+    );
   });
 
   it('lets the seller connect Basalam from the reviewed list', async () => {

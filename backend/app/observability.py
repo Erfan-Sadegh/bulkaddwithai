@@ -38,6 +38,10 @@ PERSISTED_EVENTS = {
     "image_files_selected",
     "image_picker_cancelled",
     "ui_rage_click",
+    "ui_action_started",
+    "ui_action_accepted",
+    "ui_action_blocked",
+    "ui_action_failed",
     "processing_job_failed",
     "basalam_oauth_failed",
     "basalam_publish_validation_failed",
@@ -52,7 +56,7 @@ PERSISTED_FIELDS = {
     # unsupported file from a product regression without storing the image/name.
     "suffix", "declared_mime", "input_bytes", "error_type", "control", "reason", "attempt_id", "file_count",
     "batch_item_id", "connection_id", "http_status", "category_id", "unit_type", "request_status", "photo_count",
-    "click_count", "image_number",
+    "click_count", "image_number", "outcome",
 }
 
 

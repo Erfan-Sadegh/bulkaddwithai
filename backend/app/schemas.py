@@ -5,7 +5,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class UxEventCreate(BaseModel):
-    event: Literal["image_picker_blocked", "image_picker_opened", "image_files_selected", "image_picker_cancelled", "ui_rage_click"]
+    event: Literal[
+        "image_picker_blocked", "image_picker_opened", "image_files_selected", "image_picker_cancelled",
+        "ui_rage_click", "ui_action_started", "ui_action_accepted", "ui_action_blocked", "ui_action_failed",
+    ]
     control: Literal[
         "photo_drop_zone", "add_photo_button", "build_product_list", "publish_basalam",
         "submit_torob", "connect_basalam", "record_voice", "change_platform",
@@ -15,14 +18,27 @@ class UxEventCreate(BaseModel):
     attempt_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
     file_count: int | None = Field(default=None, ge=1, le=100)
     click_count: int | None = Field(default=None, ge=3, le=12)
+    outcome: Literal["validation", "state", "network", "server", "unknown"] | None = None
 
     @model_validator(mode="after")
     def validate_event_shape(self):
+        if self.event.startswith("ui_action_"):
+            if self.attempt_id is None or any(value is not None for value in (self.reason, self.file_count, self.click_count)):
+                raise ValueError("action event shape is invalid")
+            if self.event in {"ui_action_started", "ui_action_accepted"}:
+                if self.outcome is not None:
+                    raise ValueError("action start/accept must not include outcome")
+            elif self.event == "ui_action_blocked":
+                if self.outcome not in {"validation", "state"}:
+                    raise ValueError("blocked action outcome is invalid")
+            elif self.outcome not in {"network", "server", "unknown"}:
+                raise ValueError("failed action outcome is invalid")
+            return self
         if self.event == "ui_rage_click":
-            if self.click_count is None or any(value is not None for value in (self.reason, self.attempt_id, self.file_count)):
+            if self.click_count is None or any(value is not None for value in (self.reason, self.attempt_id, self.file_count, self.outcome)):
                 raise ValueError("rage click event shape is invalid")
             return self
-        if self.control not in {"photo_drop_zone", "add_photo_button"} or self.click_count is not None:
+        if self.control not in {"photo_drop_zone", "add_photo_button"} or self.click_count is not None or self.outcome is not None:
             raise ValueError("image picker control shape is invalid")
         if self.event == "image_picker_blocked":
             if self.reason is None or self.attempt_id is not None or self.file_count is not None:

@@ -239,6 +239,32 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
             "/observability/ux-events",
             json={"event": "ui_rage_click", "control": "private_user_text", "click_count": 4},
         )
+        action_started = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_started",
+                "control": "publish_basalam",
+                "attempt_id": "22222222-2222-4222-8222-222222222222",
+            },
+        )
+        action_failed = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_failed",
+                "control": "publish_basalam",
+                "attempt_id": "22222222-2222-4222-8222-222222222222",
+                "outcome": "server",
+            },
+        )
+        invalid_action = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "ui_action_failed",
+                "control": "publish_basalam",
+                "attempt_id": "22222222-2222-4222-8222-222222222222",
+                "outcome": "private provider message",
+            },
+        )
         feed = test_client.get(
             "/observability/events",
             headers={"Authorization": "Bearer collector-only-token"},
@@ -251,6 +277,9 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
     assert invalid_selected.status_code == 422
     assert rage.status_code == 204
     assert invalid_rage.status_code == 422
+    assert action_started.status_code == 204
+    assert action_failed.status_code == 204
+    assert invalid_action.status_code == 422
     events = {item["event"]: item for item in feed.json()}
     assert events["image_picker_blocked"]["control"] == "add_photo_button"
     assert events["image_picker_blocked"]["reason"] == "list_exists"
@@ -258,6 +287,9 @@ def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_p
     assert events["image_files_selected"]["file_count"] == 2
     assert events["ui_rage_click"]["control"] == "build_product_list"
     assert events["ui_rage_click"]["click_count"] == 4
+    assert events["ui_action_started"]["attempt_id"] == "22222222-2222-4222-8222-222222222222"
+    assert events["ui_action_failed"]["control"] == "publish_basalam"
+    assert events["ui_action_failed"]["outcome"] == "server"
 
 
 def test_failed_published_product_is_exported_safely_even_without_transient_log_event(tmp_path):

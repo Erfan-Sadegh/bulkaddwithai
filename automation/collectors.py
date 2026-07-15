@@ -28,6 +28,9 @@ EVENT_PRIORITY = {
     "image_picker_blocked": "ux",
     "image_picker_unresponsive": "ux",
     "ui_rage_click": "ux",
+    "ui_action_blocked": "ux",
+    "ui_action_failed": "high",
+    "ui_action_unresponsive": "ux",
     "http_response_failed": "high",
 }
 EVENT_PATTERN = re.compile(r"\b(" + "|".join(map(re.escape, EVENT_PRIORITY)) + r")\b")
@@ -194,6 +197,13 @@ def collect_product_events(
         and item.get("event") in {"image_files_selected", "image_picker_cancelled"}
         and item.get("attempt_id")
     }
+    terminal_actions = {
+        str(item.get("attempt_id"))
+        for item in payload
+        if isinstance(item, dict)
+        and item.get("event") in {"ui_action_accepted", "ui_action_blocked", "ui_action_failed"}
+        and item.get("attempt_id")
+    }
     orphaned_by_control: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in payload:
         if not isinstance(item, dict) or item.get("event") != "image_picker_opened":
@@ -213,6 +223,27 @@ def collect_product_events(
                 count=len(orphaned),
                 occurred_at=str(orphaned[-1].get("last_seen_at") or datetime.now(timezone.utc).isoformat()),
                 evidence={"control": control, "orphaned_attempts": len(orphaned)},
+            )
+        )
+    stalled_actions_by_control: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in payload:
+        if not isinstance(item, dict) or item.get("event") != "ui_action_started":
+            continue
+        attempt_id = str(item.get("attempt_id") or "")
+        if attempt_id and attempt_id not in terminal_actions and _event_is_older_than(item, current_time, minutes=5):
+            stalled_actions_by_control[str(item.get("control") or "unknown")].append(item)
+    for control, stalled in stalled_actions_by_control.items():
+        if len(stalled) < 2:
+            continue
+        results.append(
+            Signal(
+                source="product_events",
+                event="ui_action_unresponsive",
+                priority=EVENT_PRIORITY["ui_action_unresponsive"],
+                summary_fa=f"کنترل {control} در {len(stalled)} تلاش شروع شد اما هیچ نتیجه‌ای ثبت نشد.",
+                count=len(stalled),
+                occurred_at=str(stalled[-1].get("last_seen_at") or datetime.now(timezone.utc).isoformat()),
+                evidence={"control": control, "orphaned_attempts": len(stalled)},
             )
         )
     for item in payload:

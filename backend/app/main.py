@@ -244,6 +244,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The schema accepts no user text, URL, identifier, or arbitrary event.
         if payload.event == "ui_rage_click":
             ux_logger.warning("%s control=%s click_count=%s", payload.event, payload.control, payload.click_count)
+        elif payload.event.startswith("ui_action_"):
+            log = ux_logger.warning if payload.event in {"ui_action_blocked", "ui_action_failed"} else ux_logger.info
+            log(
+                "%s control=%s attempt_id=%s outcome=%s",
+                payload.event,
+                payload.control,
+                payload.attempt_id,
+                payload.outcome or "none",
+            )
         elif payload.event == "image_picker_blocked":
             ux_logger.info("%s control=%s reason=%s", payload.event, payload.control, payload.reason)
         elif payload.event == "image_files_selected":

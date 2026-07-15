@@ -26,6 +26,12 @@ export type ObservedControl =
   | 'start_new_products';
 
 type RageClickEvent = { event: 'ui_rage_click'; control: ObservedControl; click_count: number };
+export type ObservedActionEvent = {
+  event: 'ui_action_started' | 'ui_action_accepted' | 'ui_action_blocked' | 'ui_action_failed';
+  control: ObservedControl;
+  attempt_id: string;
+  outcome?: 'validation' | 'state' | 'network' | 'server' | 'unknown';
+};
 
 export function initializeTelemetry(): void {
   const dsn = import.meta.env.VITE_SENTRY_DSN;
@@ -98,6 +104,42 @@ export function installInteractionObserver(report: (event: RageClickEvent) => vo
   };
   document.addEventListener('click', handler, true);
   return () => document.removeEventListener('click', handler, true);
+}
+
+export function beginObservedAction(
+  control: ObservedControl,
+  report: (event: ObservedActionEvent) => void,
+): {
+  accepted: () => void;
+  blocked: (outcome: 'validation' | 'state') => void;
+  failed: (outcome: 'network' | 'server' | 'unknown') => void;
+} {
+  const attemptId = createUuid();
+  let terminal = false;
+  const emit = (event: ObservedActionEvent) => {
+    trackEvent(event.event, { control: event.control, attempt_id: event.attempt_id, outcome: event.outcome });
+    report(event);
+  };
+  const finish = (event: ObservedActionEvent) => {
+    if (terminal) return;
+    terminal = true;
+    emit(event);
+  };
+  emit({ event: 'ui_action_started', control, attempt_id: attemptId });
+  return {
+    accepted: () => finish({ event: 'ui_action_accepted', control, attempt_id: attemptId }),
+    blocked: (outcome) => finish({ event: 'ui_action_blocked', control, attempt_id: attemptId, outcome }),
+    failed: (outcome) => finish({ event: 'ui_action_failed', control, attempt_id: attemptId, outcome }),
+  };
+}
+
+function createUuid(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = character === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
 }
 
 function sanitizeTags(tags: Record<string, SafeTagValue>): Record<string, string> {
