@@ -51,9 +51,12 @@ EVENT_PRIORITY = {
     "browser_file_picker_missing": "urgent",
     "browser_file_picker_failed": "high",
     "browser_upload_render_failed": "high",
+    "browser_image_rejection_guidance_missing": "high",
     "browser_build_action_missing": "urgent",
     "browser_list_build_failed": "high",
     "browser_product_review_missing": "high",
+    "browser_validation_guidance_missing": "high",
+    "browser_publish_failure_guidance_missing": "high",
     "browser_control_occluded": "high",
     "http_response_failed": "high",
 }

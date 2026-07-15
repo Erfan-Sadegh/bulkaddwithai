@@ -774,7 +774,13 @@ class AutomationTests(unittest.TestCase):
                                 {
                                     "name": "mobile",
                                     "screenshot": "production-mobile.png",
-                                    "issues": ["horizontal_overflow", "page_error", "file_picker_failed"],
+                                    "issues": [
+                                        "horizontal_overflow",
+                                        "page_error",
+                                        "file_picker_failed",
+                                        "image_rejection_guidance_missing",
+                                        "validation_guidance_missing",
+                                    ],
                                     "occluded_controls": [
                                         {
                                             "control": "build_product_list",
@@ -802,6 +808,8 @@ class AutomationTests(unittest.TestCase):
                 "browser_horizontal_overflow",
                 "browser_page_error",
                 "browser_file_picker_failed",
+                "browser_image_rejection_guidance_missing",
+                "browser_validation_guidance_missing",
                 "browser_control_occluded",
             },
         )
@@ -827,6 +835,23 @@ class AutomationTests(unittest.TestCase):
             2,
         )
         self.assertIn("await recordOcclusionEvidence(page, control", probe)
+        self.assertIn("scrollIntoView({ block: 'center'", probe)
+
+    def test_production_probe_exercises_real_rejection_and_weight_guidance(self):
+        root = Path(__file__).resolve().parents[2]
+        probe = (root / "frontend" / "scripts" / "production-probe.mjs").read_text(encoding="utf-8")
+
+        self.assertIn("image_rejection_guidance_missing", probe)
+        self.assertIn("validation_guidance_missing", probe)
+        self.assertIn("publish_failure_guidance_missing", probe)
+        self.assertIn("package_weight_grams: 400", probe)
+        self.assertIn("status: 422", probe)
+        self.assertIn("/publish-jobs/3000", probe)
+        self.assertIn("waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false)", probe)
+        self.assertLess(
+            probe.index("issues.add('image_rejection_guidance_missing')"),
+            probe.index("await imageInput.setInputFiles"),
+        )
 
     def test_full_self_improvement_cycle_in_an_isolated_repository(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1017,6 +1042,176 @@ class AutomationTests(unittest.TestCase):
             {item["event"] for item in candidates[0].evidence},
             {"ui_control_friction"},
         )
+
+    def test_semantic_triage_cannot_hide_exact_product_failures_or_rage_clicks(self):
+        product_failure = Signal(
+            source="product_events",
+            event="basalam_product_failed",
+            priority="high",
+            summary_fa="ثبت محصول به‌خاطر وزن بسته‌بندی رد شده است.",
+            evidence={"stage": "publish", "failure_field": "package_weight_grams"},
+        )
+        rage = Signal(
+            source="product_events",
+            event="ui_rage_click",
+            priority="ux",
+            summary_fa="کاربر روی باکس عکس چند بار پشت سر هم کلیک کرده است.",
+            evidence={"control": "photo_drop_zone", "click_count": 4},
+        )
+        clarity = Signal(
+            source="clarity",
+            event="dead_click_count",
+            priority="ux",
+            summary_fa="Clarity کلیک بی‌نتیجه گزارش کرده است.",
+            count=40,
+            evidence={"metric": "DeadClickCount"},
+        )
+        policy = {"limits": {"max_candidate_signals": 20}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "triage.json"
+
+            def model_only_returns_aggregate_clarity(*_args, **_kwargs):
+                output.write_text(
+                    json.dumps(
+                        {
+                            "candidates": [
+                                {
+                                    "fingerprint": clarity.fingerprint,
+                                    "title_fa": "کلیک بی‌نتیجه",
+                                    "problem_fa": clarity.summary_fa,
+                                    "priority": "ux",
+                                    "confidence": 0.9,
+                                    "signal_fingerprints": [clarity.fingerprint],
+                                    "reproducible_hint": "بررسی شود.",
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess([], 0, "", "")
+
+            with (
+                patch.object(runner, "_find_command", return_value="codex"),
+                patch.object(runner, "_run", side_effect=model_only_returns_aggregate_clarity),
+            ):
+                candidates = runner.triage(root, root, [clarity, rage, product_failure], policy, False)
+
+        self.assertEqual(
+            [candidate.fingerprint for candidate in candidates[:2]],
+            [product_failure.fingerprint, rage.fingerprint],
+        )
+        self.assertIn(clarity.fingerprint, {candidate.fingerprint for candidate in candidates})
+
+    def test_fallback_builds_every_anchor_before_final_ranking(self):
+        generic = [
+            Signal(
+                source="product_events",
+                event=f"generic_signal_{index}",
+                priority="high",
+                summary_fa=f"سیگنال عمومی {index}",
+            )
+            for index in range(3)
+        ]
+        exact_failure = Signal(
+            source="product_events",
+            event="basalam_product_failed",
+            priority="high",
+            summary_fa="ثبت محصول دقیقاً روی وزن بسته‌بندی شکست خورد.",
+            evidence={"failure_field": "package_weight_grams"},
+        )
+
+        candidates = runner._fallback_candidates([*generic, exact_failure])
+
+        self.assertEqual(len(candidates), 4)
+        self.assertIn(exact_failure.fingerprint, {candidate.fingerprint for candidate in candidates})
+
+    def test_semantic_context_survives_a_fallback_fingerprint_collision(self):
+        failure = Signal(
+            source="product_events",
+            event="basalam_product_failed",
+            priority="high",
+            summary_fa="ثبت محصول روی وزن بسته‌بندی شکست خورد.",
+            evidence={"failure_field": "package_weight_grams"},
+        )
+        policy = {"limits": {"max_candidate_signals": 20}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "triage.json"
+
+            def semantic_result(*_args, **_kwargs):
+                output.write_text(
+                    json.dumps(
+                        {
+                            "candidates": [
+                                {
+                                    "fingerprint": failure.fingerprint,
+                                    "title_fa": "وزن بسته‌بندی قابل اصلاح نیست",
+                                    "problem_fa": "کاربر علت ردشدن وزن بسته‌بندی را پیش از ثبت نمی‌بیند.",
+                                    "priority": "high",
+                                    "confidence": 0.91,
+                                    "signal_fingerprints": [failure.fingerprint],
+                                    "reproducible_hint": "پیام قابل‌اقدام را با داده ساختگی بازسازی کن.",
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess([], 0, "", "")
+
+            with (
+                patch.object(runner, "_find_command", return_value="codex"),
+                patch.object(runner, "_run", side_effect=semantic_result),
+            ):
+                candidates = runner.triage(root, root, [failure], policy, False)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].problem_fa, "کاربر علت ردشدن وزن بسته‌بندی را پیش از ثبت نمی‌بیند.")
+        self.assertEqual(candidates[0].confidence, 0.91)
+
+    def test_concrete_product_evidence_outranks_urgent_aggregate_clarity(self):
+        concrete = Candidate(
+            fingerprint="concrete",
+            title_fa="شکست دقیق محصول",
+            problem_fa="ثبت محصول روی وزن بسته‌بندی شکست خورد.",
+            priority="high",
+            confidence=0.8,
+            evidence=[
+                Signal(
+                    source="product_events",
+                    event="basalam_product_failed",
+                    priority="high",
+                    summary_fa="شکست دقیق",
+                    evidence={"failure_field": "package_weight_grams"},
+                ).to_dict()
+            ],
+            reproducible_hint="بازسازی شود.",
+        )
+        aggregate = Candidate(
+            fingerprint="aggregate",
+            title_fa="آمار کلی Clarity",
+            problem_fa="آمار کلی کلیک‌ها زیاد شده است.",
+            priority="urgent",
+            confidence=0.95,
+            evidence=[
+                Signal(
+                    source="clarity",
+                    event="dead_click_count",
+                    priority="urgent",
+                    summary_fa="آمار کلی",
+                    evidence={"metric": "DeadClickCount"},
+                ).to_dict()
+            ],
+            reproducible_hint="بررسی شود.",
+        )
+
+        ranked = sorted([aggregate, concrete], key=runner._candidate_rank)
+
+        self.assertEqual(ranked[0].fingerprint, concrete.fingerprint)
 
     def test_backend_gate_uses_a_creatable_single_level_pytest_temp_directory(self):
         policy = json.loads((Path(__file__).parents[1] / "policy.json").read_text(encoding="utf-8"))

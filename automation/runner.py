@@ -256,7 +256,56 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
                 reproducible_hint=reproducible_hint, source_urls=[signal.source_url for signal in linked if signal.source_url],
             )
         )
-    return candidates[:3] or _fallback_candidates(selected)
+    # Semantic triage adds context, but it is not allowed to hide a concrete
+    # first-party failure or an exact-control UX signal.  Merge both views and
+    # rank deterministic evidence ahead of aggregate analytics.
+    merged = {candidate.fingerprint: candidate for candidate in _fallback_candidates(selected)}
+    for candidate in candidates:
+        existing = merged.get(candidate.fingerprint)
+        merged[candidate.fingerprint] = _merge_candidate_context(existing, candidate) if existing else candidate
+    return sorted(merged.values(), key=_candidate_rank)[:3]
+
+
+def _merge_candidate_context(deterministic: Candidate, semantic: Candidate) -> Candidate:
+    evidence: dict[str, dict[str, Any]] = {}
+    for item in [*deterministic.evidence, *semantic.evidence]:
+        key = str(item.get("fingerprint") or json.dumps(item, ensure_ascii=False, sort_keys=True))
+        evidence[key] = item
+    priority = min(
+        (deterministic.priority, semantic.priority),
+        key=lambda value: PRIORITY_ORDER.get(value, 99),
+    )
+    return Candidate(
+        fingerprint=deterministic.fingerprint,
+        title_fa=semantic.title_fa,
+        problem_fa=semantic.problem_fa,
+        priority=priority,
+        confidence=max(deterministic.confidence, semantic.confidence),
+        evidence=list(evidence.values()),
+        reproducible_hint=semantic.reproducible_hint,
+        source_urls=list(dict.fromkeys([*deterministic.source_urls, *semantic.source_urls])),
+    )
+
+
+def _candidate_rank(candidate: Candidate) -> tuple[int, int, float]:
+    events = {str(item.get("event") or "") for item in candidate.evidence}
+    sources = {str(item.get("source") or "") for item in candidate.evidence}
+    has_exact_control = any(bool(item.get("evidence", {}).get("control")) for item in candidate.evidence)
+    aggregate_clarity_only = bool(sources) and sources == {"clarity"}
+    if "ui_control_friction" in events:
+        evidence_rank = 0
+    elif events & {
+        "basalam_product_failed", "basalam_publish_failed", "upload_batch_failed",
+        "processing_job_failed", "frontend_runtime_failed", "ui_action_failed",
+    }:
+        evidence_rank = 1
+    elif has_exact_control:
+        evidence_rank = 2
+    elif aggregate_clarity_only:
+        evidence_rank = 9
+    else:
+        evidence_rank = 4
+    return (evidence_rank, PRIORITY_ORDER.get(candidate.priority, 99), -candidate.confidence)
 
 
 def _fallback_candidates(signals: list[Signal]) -> list[Candidate]:
@@ -285,7 +334,7 @@ def _fallback_candidates(signals: list[Signal]) -> list[Candidate]:
         )
     ]
     candidates: list[Candidate] = []
-    for anchor in anchors[:3]:
+    for anchor in anchors:
         supporting_clarity = [] if anchor.event == "ui_control_friction" else clarity_leads
         related = {
             signal.fingerprint: signal

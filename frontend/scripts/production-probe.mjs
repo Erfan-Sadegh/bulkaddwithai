@@ -22,8 +22,8 @@ const fakeAsset = {
 };
 const fakeItem = {
   id: 1002, batch_id: 1000, title: 'محصول آزمایشی', description: 'داده ساختگی browser probe',
-  price_toman: 100000, stock: 1, preparation_days: 1, weight_grams: 100,
-  package_weight_grams: 100, unit_quantity: 1, confidence: 0.95, edited_by_user: false,
+  price_toman: 100000, stock: 1, preparation_days: 1, weight_grams: 120,
+  package_weight_grams: 400, unit_quantity: 1, confidence: 0.95, edited_by_user: false,
   photos: [{ asset_id: 1001, upload_order: 1, url: '/probe-image.png', role: 'product_photo', sort_order: 1 }],
   basalam_category: {
     category_id: 20, title: 'دسته آزمایشی', path: 'دسته آزمایشی', confidence: 1, source: 'auto',
@@ -32,16 +32,25 @@ const fakeItem = {
   created_at: now, updated_at: now,
 };
 const fakeAsset2 = { ...fakeAsset, id: 1003, upload_order: 2 };
+const fakeConnection = {
+  id: 1004, seller_id: 999, platform: 'basalam', status: 'connected',
+  external_user_id: 'synthetic-user', external_shop_id: 'synthetic-shop',
+  external_shop_slug: 'synthetic-shop', external_shop_name: 'غرفه آزمایشی',
+  scopes: 'vendor.product.write', created_at: now, updated_at: now,
+};
 
 async function controlIsOccluded(locator) {
   try {
     await locator.scrollIntoViewIfNeeded();
-    return await locator.evaluate((element) => {
+    const hitTest = (element) => {
       const rect = element.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return false;
       const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
       return Boolean(top && top !== element && !element.contains(top));
-    });
+    };
+    if (!(await locator.evaluate(hitTest))) return false;
+    await locator.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'center' }));
+    return await locator.evaluate(hitTest);
   } catch {
     return false;
   }
@@ -77,10 +86,12 @@ for (const view of [
   const issues = new Set();
   const occludedControls = new Map();
   let processAttempts = 0;
+  let uploadAttempts = 0;
 
   page.on('pageerror', () => issues.add('page_error'));
   page.on('console', (message) => {
-    if (message.type() === 'error') issues.add('console_error');
+    const expectedSyntheticRejection = message.text().includes('422') && message.text().includes('Failed to load resource');
+    if (message.type() === 'error' && !expectedSyntheticRejection) issues.add('console_error');
   });
   page.on('requestfailed', (request) => {
     if (new URL(request.url()).origin !== origin) return;
@@ -116,7 +127,7 @@ for (const view of [
       return;
     }
     if (target.pathname === '/sellers/999/platform-connections' && method === 'GET') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([fakeConnection]) });
       return;
     }
     if (target.pathname === '/batches' && method === 'POST') {
@@ -124,6 +135,15 @@ for (const view of [
       return;
     }
     if (target.pathname === '/batches/1000/assets' && method === 'POST') {
+      uploadAttempts += 1;
+      if (uploadAttempts === 1) {
+        await route.fulfill({
+          status: 422,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'این عکس خوانده نشد. یک عکس سالم انتخاب کن و دوباره تلاش کن.' }),
+        });
+        return;
+      }
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify([fakeAsset, fakeAsset2]) });
       return;
     }
@@ -150,6 +170,42 @@ for (const view of [
     }
     if (target.pathname === '/batches/1000/categories/basalam/suggest' && method === 'POST') {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([fakeItem]) });
+      return;
+    }
+    if (target.pathname === '/batch-items/1002' && method === 'PATCH') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...fakeItem, weight_grams: 200 }),
+      });
+      return;
+    }
+    if (target.pathname === '/batches/1000/publish/basalam' && method === 'POST') {
+      await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ job_id: 3000 }) });
+      return;
+    }
+    if (target.pathname === '/publish-jobs/3000' && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 3000, batch_id: 1000, connection_id: 1004, platform: 'basalam',
+          status: 'failed', step: 'failed', error: '1 product(s) failed',
+        }),
+      });
+      return;
+    }
+    if (target.pathname === '/batches/1000/published-products' && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{
+          id: 3001, batch_item_id: 1002, publish_job_id: 3000, connection_id: 1004,
+          platform: 'basalam', external_product_id: null, external_url: null,
+          status: 'failed', error: 'Basalam product create failed: package_weight',
+          response_metadata: {}, created_at: now, updated_at: now,
+        }]),
+      });
       return;
     }
     if (target.pathname.startsWith('/observability/') && method === 'POST') {
@@ -191,6 +247,16 @@ for (const view of [
         await imageInput.click({ force: true });
         const chooser = await chooserPromise;
         await chooser.setFiles([
+          { name: 'synthetic-rejected.png', mimeType: 'image/png', buffer: probePng },
+        ]);
+        const rejection = page.locator('[role="alert"]').first();
+        const rejectionVisible = await rejection
+          .waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
+        const rejectionText = rejectionVisible ? await rejection.innerText().catch(() => '') : '';
+        if (!rejectionVisible || !rejectionText.includes('عکس سالم') || !rejectionText.includes('دوباره تلاش کن')) {
+          issues.add('image_rejection_guidance_missing');
+        }
+        await imageInput.setInputFiles([
           { name: 'synthetic-probe-a.png', mimeType: 'image/png', buffer: probePng },
           { name: 'synthetic-probe-b.png', mimeType: 'image/png', buffer: probePng },
         ]);
@@ -222,6 +288,33 @@ for (const view of [
       }
     }
     if ((await page.locator('.product-card:visible').count()) < 1) issues.add('product_review_missing');
+    const publishButton = page.locator('[data-observe-control="publish_basalam"]:visible').first();
+    if ((await publishButton.count()) > 0) {
+      await publishButton.click();
+      const validation = page.locator('.dock-message.needs-info[role="alert"]').first();
+      const validationVisible = await validation.isVisible().catch(() => false);
+      const validationText = validationVisible ? await validation.innerText() : '';
+      const hasRepairAction = validationVisible
+        && (await validation.locator('[data-observe-control="fill_missing_fields"]').count()) > 0;
+      if (!validationText.includes('وزن با بسته‌بندی') || !hasRepairAction) {
+        issues.add('validation_guidance_missing');
+      }
+      const weightInput = page.getByLabel('وزن محصول').first();
+      if ((await weightInput.count()) > 0) {
+        await weightInput.fill('200');
+        await publishButton.click();
+        const publishFailure = page.locator('.dock-message.failed[role="alert"]').first();
+        await publishFailure.waitFor({ state: 'visible', timeout: 8000 }).catch(() => undefined);
+        const failureText = await publishFailure.innerText().catch(() => '');
+        if (!failureText.includes('وزن با بسته‌بندی') || !failureText.includes('ثبت کامل انجام نشد')) {
+          issues.add('publish_failure_guidance_missing');
+        }
+      } else {
+        issues.add('publish_failure_guidance_missing');
+      }
+    } else {
+      issues.add('validation_guidance_missing');
+    }
     await auditVisibleControls(page, occludedControls, `production-${view.name}-journey.png`);
   } catch {
     issues.add('navigation_failed');
