@@ -1,6 +1,13 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class UxEventCreate(BaseModel):
+    event: Literal["image_picker_blocked"]
+    control: Literal["photo_drop_zone", "add_photo_button"]
+    reason: Literal["list_exists", "processing"]
 
 
 class SellerCreate(BaseModel):

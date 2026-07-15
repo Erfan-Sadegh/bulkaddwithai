@@ -151,7 +151,10 @@ test('photo first flow with mocked API', async ({ page }) => {
   await expect(page.getByText('انتخاب فروشنده')).toHaveCount(0);
   await expect(page.getByText('یکی کردن')).toHaveCount(0);
 
-  await page.locator('input[accept="image/*"]').first().setInputFiles([
+  const fileChooserPromise = page.waitForEvent('filechooser');
+  await page.locator('.drop-zone').click();
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.setFiles([
     { name: 'a.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('aaa') },
     { name: 'b.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('bbb') },
   ]);

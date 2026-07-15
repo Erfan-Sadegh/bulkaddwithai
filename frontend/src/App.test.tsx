@@ -413,6 +413,11 @@ describe('App', () => {
 
     const uploadInputs = Array.from(container.querySelectorAll('input[accept="image/*"]')) as HTMLInputElement[];
     expect(uploadInputs.every((input) => input.disabled)).toBe(true);
+    expect(screen.getByText('برای افزودن عکس‌های جدید، اول روی «افزودن محصولات جدید» بزن.')).toBeInTheDocument();
+    window.clarity = vi.fn();
+    await user.click(screen.getByText('افزودن عکس'));
+    expect(window.clarity).toHaveBeenCalledWith('event', 'image_picker_blocked');
+    expect(window.clarity).toHaveBeenCalledWith('set', 'reason', 'list_exists');
 
     fireEvent.change(screen.getByDisplayValue('۱۲۳٬۰۰۰'), { target: { value: '۱۲۳۴۵۶۷' } });
     expect(screen.getByDisplayValue('۱٬۲۳۴٬۵۶۷')).toBeInTheDocument();

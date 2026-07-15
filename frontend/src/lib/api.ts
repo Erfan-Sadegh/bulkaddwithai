@@ -80,6 +80,11 @@ function extractDetail(text: string): string {
 }
 
 export const api = {
+  reportUxEvent: (payload: {
+    event: 'image_picker_blocked';
+    control: 'photo_drop_zone' | 'add_photo_button';
+    reason: 'list_exists' | 'processing';
+  }) => request<void>('/observability/ux-events', { method: 'POST', body: JSON.stringify(payload) }),
   listSellers: () => request<Seller[]>('/sellers'),
   getSeller: (sellerId: number) => request<Seller>(`/sellers/${sellerId}`),
   createSeller: (payload: Partial<Pick<Seller, 'name' | 'mobile' | 'shop_name'>>) =>

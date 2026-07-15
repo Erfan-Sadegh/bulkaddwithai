@@ -18,6 +18,7 @@ import type { ChangeEvent, MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { API_BASE, api } from './lib/api';
+import { trackEvent } from './lib/telemetry';
 import type {
   Asset,
   BasalamCategory,
@@ -813,6 +814,7 @@ function MainApp() {
                 uploadingImages={uploadingKind === 'image'}
                 uploadingAudio={uploadingKind === 'audio'}
                 uploadDisabled={items.length > 0 || processing}
+                uploadDisabledReason={items.length > 0 ? 'list_exists' : processing ? 'processing' : null}
                 voiceDisabled={items.length > 0 || uploading || processing}
                 onUpload={upload}
                 onDeleteAsset={deleteUploadedAsset}
@@ -1357,6 +1359,7 @@ function UploadPanel({
   uploadingImages,
   uploadingAudio,
   uploadDisabled,
+  uploadDisabledReason,
   voiceDisabled,
   onUpload,
   onDeleteAsset,
@@ -1367,14 +1370,31 @@ function UploadPanel({
   uploadingImages: boolean;
   uploadingAudio: boolean;
   uploadDisabled: boolean;
+  uploadDisabledReason: 'list_exists' | 'processing' | null;
   voiceDisabled: boolean;
   onUpload: (files: File[]) => void;
   onDeleteAsset: (assetId: number) => void;
 }) {
   function handleFileInput(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
+    const control = event.target.dataset.control ?? 'unknown';
+    trackEvent('image_files_selected', { control, file_count: files.length });
     event.target.value = '';
     onUpload(files);
+  }
+
+  function reportBlocked(control: 'photo_drop_zone' | 'add_photo_button') {
+    if (!uploadDisabledReason) return;
+    trackEvent('image_picker_blocked', { control, reason: uploadDisabledReason });
+    void api.reportUxEvent({
+      event: 'image_picker_blocked',
+      control,
+      reason: uploadDisabledReason,
+    }).catch(() => undefined);
+  }
+
+  function reportPickerOpened(control: 'photo_drop_zone' | 'add_photo_button') {
+    trackEvent('image_picker_opened', { control, state: 'ready' });
   }
 
   return (
@@ -1385,17 +1405,41 @@ function UploadPanel({
           <p>هرچی محصول داری می‌تونی عکسش رو بذاری.</p>
         </div>
         {images.length > 0 && (
-          <label className={`button primary file-button ${uploading || uploadDisabled ? 'disabled' : ''}`} aria-disabled={uploading || uploadDisabled}>
+          <label
+            className={`button primary file-button ${uploading || uploadDisabled ? 'disabled' : ''}`}
+            aria-disabled={uploading || uploadDisabled}
+            onClick={() => uploadDisabled && reportBlocked('add_photo_button')}
+          >
             {uploadingImages ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
             افزودن عکس
-            <input type="file" accept="image/*" multiple disabled={uploading || uploadDisabled} onChange={handleFileInput} />
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              data-control="add_photo_button"
+              disabled={uploading || uploadDisabled}
+              onClick={() => reportPickerOpened('add_photo_button')}
+              onChange={handleFileInput}
+            />
           </label>
         )}
       </div>
 
       {images.length === 0 ? (
-        <label className={`drop-zone ${uploading || uploadDisabled ? 'disabled' : ''}`}>
-          <input type="file" accept="image/*" multiple disabled={uploading || uploadDisabled} onChange={handleFileInput} />
+        <label
+          className={`drop-zone ${uploading || uploadDisabled ? 'disabled' : ''}`}
+          aria-disabled={uploading || uploadDisabled}
+          onClick={() => uploadDisabled && reportBlocked('photo_drop_zone')}
+        >
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            data-control="photo_drop_zone"
+            disabled={uploading || uploadDisabled}
+            onClick={() => reportPickerOpened('photo_drop_zone')}
+            onChange={handleFileInput}
+          />
           <span className="camera-mark">
             {uploadingImages ? <Loader2 className="spin" size={30} /> : <Upload size={30} />}
           </span>
@@ -1422,6 +1466,14 @@ function UploadPanel({
             </div>
           )}
         </div>
+      )}
+
+      {uploadDisabledReason && (
+        <p className="upload-lock-note" role="status">
+          {uploadDisabledReason === 'list_exists'
+            ? 'برای افزودن عکس‌های جدید، اول روی «افزودن محصولات جدید» بزن.'
+            : 'ساخت لیست در حال انجام است؛ بعد از تمام شدن پردازش دوباره تلاش کن.'}
+        </p>
       )}
 
       {images.length > 0 && (

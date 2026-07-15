@@ -187,6 +187,41 @@ def test_rejected_image_feed_keeps_safe_diagnostic_fields(tmp_path):
     assert event["error_type"] == "InvalidProductImageError"
 
 
+def test_public_ux_event_accepts_only_an_allowlisted_blocked_upload_signal(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+
+    with TestClient(app) as test_client:
+        accepted = test_client.post(
+            "/observability/ux-events",
+            json={
+                "event": "image_picker_blocked",
+                "control": "add_photo_button",
+                "reason": "list_exists",
+            },
+        )
+        rejected = test_client.post(
+            "/observability/ux-events",
+            json={"event": "arbitrary_event", "control": "secret", "reason": "anything"},
+        )
+        feed = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    assert accepted.status_code == 204
+    assert rejected.status_code == 422
+    assert feed.json()[0]["event"] == "image_picker_blocked"
+    assert feed.json()[0]["control"] == "add_photo_button"
+    assert feed.json()[0]["reason"] == "list_exists"
+
+
 def test_operational_event_store_removes_expired_records(tmp_path):
     app = create_app(
         Settings(

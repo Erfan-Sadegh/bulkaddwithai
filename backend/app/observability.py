@@ -33,6 +33,7 @@ PERSISTED_EVENTS = {
     "http_response_failed",
     "upload_batch_failed",
     "image_upload_rejected",
+    "image_picker_blocked",
     "processing_job_failed",
     "basalam_oauth_failed",
     "basalam_publish_validation_failed",
@@ -45,7 +46,7 @@ PERSISTED_FIELDS = {
     "method", "path", "duration_ms", "attempts", "item_id", "submission_id", "platform",
     # Safe image diagnostics let the read-only agent distinguish a corrupt or
     # unsupported file from a product regression without storing the image/name.
-    "suffix", "declared_mime", "input_bytes", "error_type",
+    "suffix", "declared_mime", "input_bytes", "error_type", "control", "reason",
 }
 
 

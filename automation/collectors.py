@@ -25,6 +25,7 @@ EVENT_PRIORITY = {
     "basalam_oauth_failed": "medium",
     "basalam_publish_validation_failed": "ux",
     "image_upload_rejected": "ux",
+    "image_picker_blocked": "ux",
     "http_response_failed": "high",
 }
 EVENT_PATTERN = re.compile(r"\b(" + "|".join(map(re.escape, EVENT_PRIORITY)) + r")\b")

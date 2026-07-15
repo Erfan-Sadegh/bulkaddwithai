@@ -1,6 +1,7 @@
 from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
+import logging
 import secrets
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Response, UploadFile
@@ -56,6 +57,7 @@ from .schemas import (
     TorobSubmissionPatch,
     TorobSubmissionRead,
     TorobSubmissionStartResponse,
+    UxEventCreate,
 )
 from .services import (
     create_batch,
@@ -90,6 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     session_factory = make_session_factory(engine)
     create_tables(engine)
     configure_event_store(session_factory, settings)
+    ux_logger = logging.getLogger("app.ux")
 
     app = FastAPI(title="Bulk Add With AI", version="0.1.0")
     app.state.settings = settings
@@ -169,6 +172,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
             for item in events
         ]
+
+    @app.post("/observability/ux-events", status_code=204)
+    def post_ux_event(payload: UxEventCreate):
+        # The schema accepts no user text, URL, identifier, or arbitrary event.
+        ux_logger.info(
+            "%s control=%s reason=%s",
+            payload.event,
+            payload.control,
+            payload.reason,
+        )
+        return Response(status_code=204)
 
     @app.post("/admin/login", response_model=AdminLoginResponse)
     def post_admin_login(payload: AdminLoginRequest):

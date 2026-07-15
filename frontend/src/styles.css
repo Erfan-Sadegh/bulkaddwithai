@@ -375,6 +375,16 @@ a {
   cursor: not-allowed;
 }
 
+.upload-lock-note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #ead8a0;
+  border-radius: 8px;
+  background: #fff8df;
+  color: #6d5510;
+  text-align: center;
+}
+
 .camera-mark {
   width: 64px;
   height: 64px;
