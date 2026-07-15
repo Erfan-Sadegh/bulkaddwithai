@@ -3,7 +3,7 @@
   "properties": {
     "candidates": {
       "type": "array",
-      "maxItems": 3,
+      "maxItems": 5,
       "items": {
         "type": "object",
         "properties": {

@@ -99,7 +99,7 @@ def run_once(repo: Path, state_root: Path, policy: dict[str, Any], force_report_
         write_run_report(run_dir, report.to_dict())
 
         if not force_report_only and not no_agent:
-            max_diagnoses = int(policy.get("limits", {}).get("max_diagnoses_per_run", 3))
+            max_diagnoses = int(policy.get("limits", {}).get("max_diagnoses_per_run", 5))
             for candidate in candidates[:max_diagnoses]:
                 previous = state.setdefault("fingerprints", {}).get(candidate.fingerprint)
                 if _diagnosis_is_recent(previous, now, int(policy.get("limits", {}).get("diagnosis_cooldown_hours", 24))):
@@ -183,6 +183,7 @@ def collect_all(repo: Path, policy: dict[str, Any], health: dict[str, str], run_
 
 
 def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, Any], no_agent: bool) -> list[Candidate]:
+    portfolio_limit = int(policy.get("limits", {}).get("max_diagnoses_per_run", 5))
     proven_controls = {
         str(signal.evidence.get("control"))
         for signal in signals
@@ -213,7 +214,7 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
             )
             for signal in selected
         ]
-        return _select_candidate_portfolio(deterministic, limit=3)
+        return _select_candidate_portfolio(deterministic, limit=portfolio_limit)
 
     output = run_dir / "triage.json"
     prompt = (
@@ -230,7 +231,7 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
         timeout=1800,
     )
     if result.returncode != 0 or not output.exists():
-        return _select_candidate_portfolio(_fallback_candidates(selected), limit=3)
+        return _select_candidate_portfolio(_fallback_candidates(selected), limit=portfolio_limit)
     data = json.loads(output.read_text(encoding="utf-8"))
     by_fingerprint = {signal.fingerprint: signal for signal in selected}
     candidates: list[Candidate] = []
@@ -264,7 +265,7 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
     for candidate in candidates:
         existing = merged.get(candidate.fingerprint)
         merged[candidate.fingerprint] = _merge_candidate_context(existing, candidate) if existing else candidate
-    return _select_candidate_portfolio(list(merged.values()), limit=3)
+    return _select_candidate_portfolio(list(merged.values()), limit=portfolio_limit)
 
 
 def _merge_candidate_context(deterministic: Candidate, semantic: Candidate) -> Candidate:
