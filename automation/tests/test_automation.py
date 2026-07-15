@@ -405,7 +405,7 @@ class AutomationTests(unittest.TestCase):
                                 {
                                     "name": "mobile",
                                     "screenshot": "production-mobile.png",
-                                    "issues": ["horizontal_overflow", "page_error"],
+                                    "issues": ["horizontal_overflow", "page_error", "file_picker_failed"],
                                 }
                             ]
                         }
@@ -421,7 +421,10 @@ class AutomationTests(unittest.TestCase):
                     {"PRODUCTION_HEALTH_URL": "https://app.example/health"},
                 )
 
-        self.assertEqual({signal.event for signal in signals}, {"browser_horizontal_overflow", "browser_page_error"})
+        self.assertEqual(
+            {signal.event for signal in signals},
+            {"browser_horizontal_overflow", "browser_page_error", "browser_file_picker_failed"},
+        )
         self.assertTrue(all(signal.evidence["view"] == "mobile" for signal in signals))
         self.assertTrue(all(signal.evidence["screenshot"] == "production-mobile.png" for signal in signals))
 
@@ -662,6 +665,7 @@ class AutomationTests(unittest.TestCase):
             run_dir = Path(temporary) / "run"
             run_dir.mkdir()
             (run_dir / "production-mobile.png").write_bytes(b"safe synthetic screenshot")
+            (run_dir / "production-mobile-journey.png").write_bytes(b"safe synthetic journey screenshot")
             report = {
                 "run_id": "probe",
                 "started_at": "2026-07-15T12:00:00+00:00",
@@ -693,6 +697,7 @@ class AutomationTests(unittest.TestCase):
             page = write_run_report(run_dir, report).read_text(encoding="utf-8")
 
         self.assertIn("production-mobile.png", page)
+        self.assertIn("production-mobile-journey.png", page)
         self.assertIn("<img", page)
 
 

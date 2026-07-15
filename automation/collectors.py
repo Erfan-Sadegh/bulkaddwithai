@@ -44,6 +44,13 @@ EVENT_PRIORITY = {
     "browser_primary_actions_missing": "urgent",
     "browser_horizontal_overflow": "ux",
     "browser_mutation_attempt": "urgent",
+    "browser_platform_open_failed": "high",
+    "browser_file_picker_missing": "urgent",
+    "browser_file_picker_failed": "high",
+    "browser_upload_render_failed": "high",
+    "browser_build_action_missing": "urgent",
+    "browser_list_build_failed": "high",
+    "browser_product_review_missing": "high",
     "http_response_failed": "high",
 }
 EVENT_PATTERN = re.compile(r"\b(" + "|".join(map(re.escape, EVENT_PRIORITY)) + r")\b")

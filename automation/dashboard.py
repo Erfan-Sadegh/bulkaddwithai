@@ -64,6 +64,13 @@ EVENTS = {
     "browser_primary_actions_missing": "دکمه‌های اصلی شروع در production دیده نشدند",
     "browser_horizontal_overflow": "بیرون‌زدگی افقی صفحه production",
     "browser_mutation_attempt": "تلاش غیرمنتظره صفحه اولیه برای تغییر داده production",
+    "browser_platform_open_failed": "بازنشدن مسیر فروشگاه در browser probe",
+    "browser_file_picker_missing": "نبودن یا غیرفعال‌بودن انتخاب‌گر تصویر",
+    "browser_file_picker_failed": "بازنشدن انتخاب‌گر فایل یا انتخاب‌نشدن تصویر ساختگی",
+    "browser_upload_render_failed": "نمایش‌داده‌نشدن تصویر بعد از آپلود ساختگی",
+    "browser_build_action_missing": "نبودن یا غیرفعال‌بودن ساخت لیست",
+    "browser_list_build_failed": "شکست ساخت لیست با backend ساختگی",
+    "browser_product_review_missing": "نمایش‌داده‌نشدن کارت محصول ساختگی",
     "dead_click_count": "کلیک بی‌نتیجه گزارش‌شده در Clarity",
     "rage_click_count": "کلیک عصبی گزارش‌شده در Clarity",
     "error_click_count": "کلیک منجر به خطا در Clarity",
@@ -405,6 +412,8 @@ def _run_probe_media(run_dir: Path) -> str:
     for name, caption in (
         ("production-mobile.png", "نمای موبایل production"),
         ("production-desktop.png", "نمای دسکتاپ production"),
+        ("production-mobile-journey.png", "نتیجه مسیر ساختگی موبایل تا بازبینی محصول"),
+        ("production-desktop-journey.png", "نتیجه مسیر ساختگی دسکتاپ تا بازبینی محصول"),
     ):
         path = run_dir / name
         if path.is_file():
