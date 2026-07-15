@@ -56,6 +56,7 @@ class RunReport:
     run_id: str
     started_at: str
     phase: str
+    run_kind: str = "manual"
     status: str = "running"
     signals: list[dict[str, Any]] = field(default_factory=list)
     candidates: list[dict[str, Any]] = field(default_factory=list)

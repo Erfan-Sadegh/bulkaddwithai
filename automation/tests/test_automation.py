@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -151,6 +152,21 @@ class AutomationTests(unittest.TestCase):
         with self.assertRaises(CollectorError):
             collect_product_events({})
 
+    def test_product_event_collector_only_requests_the_last_24_hours(self):
+        now = datetime(2026, 7, 15, 0, 0, tzinfo=timezone.utc)
+        with patch("automation.collectors._get_json", return_value=[]) as request:
+            collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                },
+                now=now,
+            )
+
+        url = request.call_args.args[0]
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        self.assertEqual(query["since"], ["2026-07-14T00:00:00+00:00"])
+
     def test_full_self_improvement_cycle_in_an_isolated_repository(self):
         with tempfile.TemporaryDirectory() as temporary:
             result = run_self_improvement_simulation(Path(temporary))
@@ -184,6 +200,100 @@ class AutomationTests(unittest.TestCase):
             apply_retention(root, 30)
             self.assertFalse(removable.exists())
             self.assertTrue(protected.exists())
+
+    def test_run_report_explains_time_outcome_uncertainty_and_next_action_in_plain_persian(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "runs" / "20260714T234702Z"
+            report = {
+                "run_id": "20260714T234702Z",
+                "started_at": "2026-07-14T23:47:02+00:00",
+                "finished_at": "2026-07-14T23:47:31+00:00",
+                "status": "completed",
+                "phase": "report_only",
+                "source_health": {
+                    "local_logs": "ok (0)",
+                    "product_events": "ok (4)",
+                    "sentry": "ok (0)",
+                    "clarity": "ok (1)",
+                    "production_health": "ok (0)",
+                },
+                "signals": [
+                    {
+                        "source": "product_events",
+                        "event": "image_upload_rejected",
+                        "count": 4,
+                        "occurred_at": "2026-07-14T23:00:57+00:00",
+                        "evidence": {"batch_id": 5},
+                    },
+                    {
+                        "source": "clarity",
+                        "event": "clarity_traffic",
+                        "count": 40,
+                        "evidence": {"observation_count": 40},
+                    },
+                ],
+                "candidates": [
+                    {
+                        "fingerprint": "upload",
+                        "title_fa": "رد شدن بارگذاری تصویر",
+                        "problem_fa": "چهار تصویر در یک batch رد شده‌اند.",
+                        "confidence": 0.68,
+                        "status": "detected",
+                        "evidence": [],
+                    }
+                ],
+                "fixes": [],
+            }
+
+            page = write_run_report(run_dir, report).read_text(encoding="utf-8")
+
+            self.assertIn("۱۵ ژوئیه ۲۰۲۶، ساعت ۰۳:۱۷", page)
+            self.assertIn("مدت اجرا: ۲۹ ثانیه", page)
+            self.assertIn("هر ۵ منبع با موفقیت بررسی شدند", page)
+            self.assertIn("۴ بار", page)
+            self.assertIn("۴۰ نشست کاربری", page)
+            self.assertIn("هنوز باگ اثبات‌شده نیست", page)
+            self.assertIn("فعلاً کاری از شما لازم نیست", page)
+            self.assertIn("عامل در این مرحله اجازه تغییر کد نداشت", page)
+            self.assertIn("اطمینان تحلیل: ۶۸٪", page)
+
+    def test_dashboard_uses_human_time_and_rebuilds_existing_run_pages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "runs" / "opaque-id"
+            run_dir.mkdir(parents=True)
+            (run_dir / "report.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "opaque-id",
+                        "started_at": "2026-07-14T23:47:02+00:00",
+                        "finished_at": "2026-07-14T23:47:31+00:00",
+                        "status": "completed",
+                        "phase": "report_only",
+                        "source_health": {"sentry": "ok (0)"},
+                        "signals": [],
+                        "candidates": [],
+                        "fixes": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "report.html").write_text("OLD DESIGN", encoding="utf-8")
+            (root / "state.json").write_text(
+                json.dumps({"runs": [{"run_id": "opaque-id", "kind": "scheduled"}]}),
+                encoding="utf-8",
+            )
+
+            dashboard = rebuild_dashboard(root)
+            index = dashboard.read_text(encoding="utf-8")
+            rebuilt_report = (run_dir / "report.html").read_text(encoding="utf-8")
+
+            self.assertIn("آخرین اجرا", index)
+            self.assertIn("۱۵ ژوئیه ۲۰۲۶، ساعت ۰۳:۱۷", index)
+            self.assertIn("شبانهٔ خودکار", index)
+            self.assertIn("مشکل قابل اقدامی پیدا نشد", index)
+            self.assertNotIn("OLD DESIGN", rebuilt_report)
 
 
 if __name__ == "__main__":

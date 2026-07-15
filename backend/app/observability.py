@@ -43,6 +43,9 @@ PERSISTED_EVENTS = {
 PERSISTED_FIELDS = {
     "request_id", "job_id", "batch_id", "stage", "code", "status_code",
     "method", "path", "duration_ms", "attempts", "item_id", "submission_id", "platform",
+    # Safe image diagnostics let the read-only agent distinguish a corrupt or
+    # unsupported file from a product regression without storing the image/name.
+    "suffix", "declared_mime", "input_bytes", "error_type",
 }
 
 

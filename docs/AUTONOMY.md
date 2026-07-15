@@ -10,6 +10,7 @@
 - correlation با `X-Request-ID` مشترک بین مرورگر و backend
 - collector فقط‌خواندنی برای فید امن خود محصول، Sentry، Clarity Data Export، health و فایل‌های log محلی
 - داشبورد فارسی و شواهد خارج از Git در `%LOCALAPPDATA%\BulkAddWithAi-agent`
+- زمان هر اجرا به وقت تهران، مدت اجرا، روایت مرحله‌به‌مرحله، میزان قطعیت و «اقدام بعدی» به زبان ساده در داشبورد
 - rollout هفت اجرای report-only، چهارده اجرای حداکثر یک fix و سپس سقف سه fix
 - worktree جدا، baseline سبز، تست قرمز روی base، تست سبز روی fix، guardrail و reviewer مستقل
 - ساخت branch/PR در صورت وجود `gh`؛ بدون merge یا deploy
@@ -63,7 +64,7 @@ SENTRY_TRACES_SAMPLE_RATE=0
 
 `SENTRY_PROJECTS` می‌تواند چند project slug جداشده با ویرگول باشد. `PRODUCTION_HEALTH_URL` باید به `/health` دامنه production اشاره کند. خالی‌گذاشتن هر مقدار همان collector را غیرفعال می‌کند و عامل اجازه ندارد به‌جای مدرک حدس بزند.
 
-برای تشخیص خطا بدون پنل همروش، یک مقدار تصادفی و قوی را با نام `OBSERVABILITY_READ_TOKEN` در متغیرهای backend همروش قرار بده. همان مقدار را در `PRODUCTION_OBSERVABILITY_TOKEN` و آدرس کامل `https://<domain>/observability/events` را در `PRODUCTION_OBSERVABILITY_URL` وارد کن. این endpoint فقط eventهای مهم و فیلدهای allowlist‌شده را می‌دهد؛ متن لاگ، traceback، موبایل، token و payload را برنمی‌گرداند و داده‌های قدیمی‌تر از ۳۰ روز حذف می‌شوند.
+برای تشخیص خطا بدون پنل همروش، یک مقدار تصادفی و قوی را با نام `OBSERVABILITY_READ_TOKEN` در متغیرهای backend همروش قرار بده. همان مقدار را در `PRODUCTION_OBSERVABILITY_TOKEN` و آدرس کامل `https://<domain>/observability/events` را در `PRODUCTION_OBSERVABILITY_URL` وارد کن. این endpoint فقط eventهای مهم و فیلدهای allowlist‌شده را می‌دهد؛ متن لاگ، traceback، موبایل، token و payload را برنمی‌گرداند و داده‌های قدیمی‌تر از ۳۰ روز حذف می‌شوند. عامل شبانه فقط رخدادهای ۲۴ ساعت اخیر را درخواست می‌کند تا یک خطای قدیمی را هر شب دوباره تازه حساب نکند.
 
 برای ساخت PR یا `gh auth login` را انجام بده، یا یک fine-grained GitHub token محدود به همین repository با دسترسی `Pull requests: write` و در صورت نیاز برچسب `Issues: write` وارد کن. `GITHUB_REPOSITORY` به شکل `Erfan-Sadegh/bulkaddwithai` است. push خود branch همچنان با Git/SSH انجام می‌شود.
 
@@ -113,7 +114,7 @@ New-Item "$env:LOCALAPPDATA\BulkAddWithAi-agent\PAUSED"
 
 ## معنی وضعیت‌ها
 
-- مشکل دیده شده: فقط signal داریم.
+- سیگنال نیازمند بررسی: فقط یک نشانه داریم و هنوز معلوم نیست باگ، ورودی نامعتبر یا رفتار عادی محصول بوده است.
 - مشکل بازسازی شده: تست روی base شکست خورده است.
 - در تست رفع شده: gateها و reviewer سبز هستند، ولی هنوز deploy نشده است.
 - آماده بررسی شما: PR ساخته شده است.
@@ -130,6 +131,10 @@ New-Item "$env:LOCALAPPDATA\BulkAddWithAi-agent\PAUSED"
 6. پس از deploy دستی، کارت تا سه روز یا ۱۰۰ مشاهده در حالت پایش می‌ماند. «رفع‌شده در تست» را با «تأیید production» یکی ندان.
 
 در هفت اجرای شبانه‌ی نخست هیچ PR ساخته نمی‌شود و فقط گزارش جمع می‌شود. اجرای دستی و smoke test در شمارنده‌ی rollout حساب نمی‌شود.
+
+## ماندگاری دادهٔ کاربران
+
+عامل و Sentry مانع کار کاربران نیستند. با تنظیم فعلی، داده‌ها و فایل‌های آپلودشده تا وقتی همان کانتینر فعال است در SQLite و `/data/uploads` در دسترس‌اند و عملیات کاربر انجام می‌شود. اما بدون persistent volume، restart، جایگزینی پاد یا deploy می‌تواند draftها، سابقهٔ batchها و فایل‌های داخل کانتینر را پاک کند. محصولی که قبلاً در باسلام یا ترب منتشر شده روی همان پلتفرم باقی می‌ماند. این محدودیت با داشبورد عامل حل نمی‌شود و برای ماندگاری واقعی باید storage پایدار یا سرویس بیرونی انتخاب شود.
 
 ## لاگ همروش
 

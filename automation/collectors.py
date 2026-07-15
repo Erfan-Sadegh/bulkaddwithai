@@ -7,7 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -166,14 +166,20 @@ def collect_health(env: dict[str, str] | None = None) -> list[Signal]:
     return [Signal(source="health", event="production_health_failed", priority="urgent", summary_fa=f"health production پاسخ {status} داد.", evidence={"status": status})]
 
 
-def collect_product_events(env: dict[str, str] | None = None) -> list[Signal]:
+def collect_product_events(
+    env: dict[str, str] | None = None,
+    *,
+    now: datetime | None = None,
+) -> list[Signal]:
     env = env or os.environ
     url = env.get("PRODUCTION_OBSERVABILITY_URL")
     token = env.get("PRODUCTION_OBSERVABILITY_TOKEN")
     if not url or not token:
         raise CollectorError("فید رویدادهای production تنظیم نشده است.")
     separator = "&" if "?" in url else "?"
-    payload = _get_json(f"{url}{separator}limit=500", token)
+    since = (now or datetime.now(timezone.utc)) - timedelta(hours=24)
+    query = urllib.parse.urlencode({"limit": "500", "since": since.isoformat()})
+    payload = _get_json(f"{url}{separator}{query}", token)
     if not isinstance(payload, list):
         raise CollectorError("پاسخ فید رویدادهای production معتبر نیست.")
     results: list[Signal] = []

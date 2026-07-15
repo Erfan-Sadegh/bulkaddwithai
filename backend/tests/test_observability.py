@@ -160,6 +160,33 @@ def test_important_events_are_persisted_and_exported_without_sensitive_text(tmp_
     assert "message" not in serialized
 
 
+def test_rejected_image_feed_keeps_safe_diagnostic_fields(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+
+    with TestClient(app) as test_client:
+        logging.getLogger("app.uploads").warning(
+            "image_upload_rejected batch_id=5 suffix=.heic declared_mime=image/heic "
+            "input_bytes=2048 error_type=InvalidProductImageError"
+        )
+        response = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    event = response.json()[0]
+    assert event["suffix"] == ".heic"
+    assert event["declared_mime"] == "image/heic"
+    assert event["input_bytes"] == 2048
+    assert event["error_type"] == "InvalidProductImageError"
+
+
 def test_operational_event_store_removes_expired_records(tmp_path):
     app = create_app(
         Settings(

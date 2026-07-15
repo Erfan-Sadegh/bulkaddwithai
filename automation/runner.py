@@ -69,7 +69,12 @@ def run_once(repo: Path, state_root: Path, policy: dict[str, Any], force_report_
         phase, max_fixes = "report_only", 0
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = state_root / "runs" / run_id
-    report = RunReport(run_id=run_id, started_at=datetime.now(timezone.utc).isoformat(), phase=phase)
+    report = RunReport(
+        run_id=run_id,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        phase=phase,
+        run_kind="scheduled" if scheduled else "manual",
+    )
     run_dir.mkdir(parents=True, exist_ok=True)
 
     try:
