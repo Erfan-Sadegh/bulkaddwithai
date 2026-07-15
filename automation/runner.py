@@ -200,7 +200,7 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
         return []
     codex = _find_command("codex")
     if no_agent or not codex:
-        return [
+        deterministic = [
             Candidate(
                 fingerprint=signal.fingerprint,
                 title_fa=f"بررسی {signal.event}",
@@ -211,8 +211,9 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
                 reproducible_hint="برای اقدام خودکار هنوز تحلیل عامل انجام نشده است.",
                 source_urls=[signal.source_url] if signal.source_url else [],
             )
-            for signal in selected[:3]
+            for signal in selected
         ]
+        return _select_candidate_portfolio(deterministic, limit=3)
 
     output = run_dir / "triage.json"
     prompt = (
@@ -229,7 +230,7 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
         timeout=1800,
     )
     if result.returncode != 0 or not output.exists():
-        return _fallback_candidates(selected)
+        return _select_candidate_portfolio(_fallback_candidates(selected), limit=3)
     data = json.loads(output.read_text(encoding="utf-8"))
     by_fingerprint = {signal.fingerprint: signal for signal in selected}
     candidates: list[Candidate] = []
@@ -263,7 +264,7 @@ def triage(repo: Path, run_dir: Path, signals: list[Signal], policy: dict[str, A
     for candidate in candidates:
         existing = merged.get(candidate.fingerprint)
         merged[candidate.fingerprint] = _merge_candidate_context(existing, candidate) if existing else candidate
-    return sorted(merged.values(), key=_candidate_rank)[:3]
+    return _select_candidate_portfolio(list(merged.values()), limit=3)
 
 
 def _merge_candidate_context(deterministic: Candidate, semantic: Candidate) -> Candidate:
@@ -306,6 +307,36 @@ def _candidate_rank(candidate: Candidate) -> tuple[int, int, float]:
     else:
         evidence_rank = 4
     return (evidence_rank, PRIORITY_ORDER.get(candidate.priority, 99), -candidate.confidence)
+
+
+def _candidate_primary_event(candidate: Candidate) -> str:
+    for item in candidate.evidence:
+        if item.get("source") != "clarity" and item.get("event"):
+            return str(item["event"])
+    return str(candidate.evidence[0].get("event") or candidate.fingerprint) if candidate.evidence else candidate.fingerprint
+
+
+def _select_candidate_portfolio(candidates: list[Candidate], limit: int) -> list[Candidate]:
+    """Keep one repeated event family from consuming every diagnosis slot."""
+    ranked = sorted(candidates, key=_candidate_rank)
+    selected: list[Candidate] = []
+    seen_events: set[str] = set()
+    for candidate in ranked:
+        event = _candidate_primary_event(candidate)
+        if event in seen_events:
+            continue
+        selected.append(candidate)
+        seen_events.add(event)
+        if len(selected) == limit:
+            return selected
+    selected_fingerprints = {candidate.fingerprint for candidate in selected}
+    for candidate in ranked:
+        if candidate.fingerprint in selected_fingerprints:
+            continue
+        selected.append(candidate)
+        if len(selected) == limit:
+            break
+    return selected
 
 
 def _fallback_candidates(signals: list[Signal]) -> list[Candidate]:

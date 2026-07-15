@@ -1213,6 +1213,52 @@ class AutomationTests(unittest.TestCase):
 
         self.assertEqual(ranked[0].fingerprint, concrete.fingerprint)
 
+    def test_one_repeated_http_event_cannot_fill_every_diagnosis_slot(self):
+        http_candidates = [
+            Candidate(
+                fingerprint=f"http-{index}",
+                title_fa="شکست درخواست",
+                problem_fa="یک درخواست production شکست خورد.",
+                priority="urgent",
+                confidence=0.9,
+                evidence=[
+                    Signal(
+                        source="product_events",
+                        event="http_request_failed",
+                        priority="urgent",
+                        summary_fa="شکست درخواست",
+                        evidence={"path": f"/synthetic/{index}"},
+                    ).to_dict()
+                ],
+                reproducible_hint="بازسازی شود.",
+            )
+            for index in range(3)
+        ]
+        browser_ux = Candidate(
+            fingerprint="browser-ux",
+            title_fa="راهنمای اعتبارسنجی دیده نشد",
+            problem_fa="کاربر علت خطای وزن را نمی‌بیند.",
+            priority="high",
+            confidence=0.8,
+            evidence=[
+                Signal(
+                    source="browser_probe",
+                    event="browser_validation_guidance_missing",
+                    priority="high",
+                    summary_fa="راهنمای وزن دیده نشد.",
+                ).to_dict()
+            ],
+            reproducible_hint="سناریوی وزن بازسازی شود.",
+        )
+
+        selected = runner._select_candidate_portfolio([*http_candidates, browser_ux], limit=3)
+
+        self.assertIn(browser_ux.fingerprint, {candidate.fingerprint for candidate in selected})
+        self.assertEqual(
+            sum(candidate.fingerprint.startswith("http-") for candidate in selected),
+            2,
+        )
+
     def test_backend_gate_uses_a_creatable_single_level_pytest_temp_directory(self):
         policy = json.loads((Path(__file__).parents[1] / "policy.json").read_text(encoding="utf-8"))
         backend_gate = next(gate for gate in policy["gates"] if gate["name"] == "backend tests")
