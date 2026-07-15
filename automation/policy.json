@@ -12,7 +12,7 @@
     "max_changed_lines": 500,
     "retention_days": 30,
     "max_candidate_signals": 20,
-    "max_diagnoses_per_run": 3,
+    "max_diagnoses_per_run": 5,
     "diagnosis_cooldown_hours": 24
   },
   "sources": {

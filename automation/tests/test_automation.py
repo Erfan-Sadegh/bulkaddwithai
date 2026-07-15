@@ -1156,6 +1156,23 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(len(candidates), 4)
         self.assertIn(exact_failure.fingerprint, {candidate.fingerprint for candidate in candidates})
 
+    def test_triage_honors_five_diagnoses_per_run_limit(self):
+        signals = [
+            Signal(
+                source="product_events",
+                event=f"distinct_failure_{index}",
+                priority="high",
+                summary_fa=f"failure {index}",
+            )
+            for index in range(6)
+        ]
+        policy = {"limits": {"max_candidate_signals": 20, "max_diagnoses_per_run": 5}}
+
+        candidates = runner.triage(Path("."), Path("."), signals, policy, no_agent=True)
+
+        self.assertEqual(len(candidates), 5)
+        self.assertEqual(len({runner._candidate_primary_event(item) for item in candidates}), 5)
+
     def test_semantic_context_survives_a_fallback_fingerprint_collision(self):
         failure = Signal(
             source="product_events",
