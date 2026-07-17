@@ -321,7 +321,27 @@ function MainApp() {
       setTorobSuccessMessage(null);
       return true;
     }
-    const snapshot = readBasalamOAuthSnapshot(batchId) ?? { batchId, assetCount: 0, itemCount: 0 };
+    const snapshot = readBasalamOAuthSnapshot(batchId) ?? {
+      batchId, assetCount: 0, itemCount: 0, journeyId: createPickerAttemptId(),
+    };
+    const reportJourney = (
+      stage: 'batch_restored' | 'assets_restored' | 'items_restored' | 'restore_complete',
+      outcome: 'progress' | 'succeeded' | 'failed',
+      reason?: 'request_failed' | 'count_mismatch' | 'seller_mismatch',
+      actualAssetCount?: number,
+      actualItemCount?: number,
+    ) => void api.reportJourneyEvent({
+      event: 'journey_step',
+      journey: 'basalam_connect_restore',
+      journey_id: snapshot.journeyId,
+      stage,
+      outcome,
+      ...(reason ? { reason } : {}),
+      expected_asset_count: snapshot.assetCount,
+      expected_item_count: snapshot.itemCount,
+      ...(actualAssetCount === undefined ? {} : { actual_asset_count: actualAssetCount }),
+      ...(actualItemCount === undefined ? {} : { actual_item_count: actualItemCount }),
+    }).catch(() => undefined);
     const reportFailure = (
       stage: 'batch' | 'assets' | 'items' | 'complete',
       reason: 'request_failed' | 'seller_mismatch' | 'count_mismatch',
@@ -341,12 +361,14 @@ function MainApp() {
       restoredBatch = await api.getBatch(batchId);
     } catch {
       reportFailure('batch', 'request_failed');
+      reportJourney('batch_restored', 'failed', 'request_failed');
       setPlatform('basalam');
       setError('فهرست محصولاتت موقتاً بازیابی نشد و فهرست خالی جای آن ساخته نشد. صفحه را دوباره باز کن.');
       return true;
     }
     if (restoredBatch.seller_id !== currentSeller.id) {
       reportFailure('batch', 'seller_mismatch');
+      reportJourney('batch_restored', 'failed', 'seller_mismatch');
       window.localStorage.removeItem(BASALAM_ACTIVE_BATCH_STORAGE_KEY);
       window.localStorage.removeItem(BASALAM_OAUTH_SNAPSHOT_STORAGE_KEY);
       setPlatform('basalam');
@@ -359,26 +381,32 @@ function MainApp() {
       setDrafts({});
       return true;
     }
+    reportJourney('batch_restored', 'progress');
     let restoredAssets: Asset[];
     try {
       restoredAssets = await api.listAssets(restoredBatch.id);
     } catch {
       reportFailure('assets', 'request_failed');
+      reportJourney('assets_restored', 'failed', 'request_failed');
       setPlatform('basalam');
       setError('فهرست محصولاتت موقتاً بازیابی نشد و فهرست خالی جای آن ساخته نشد. صفحه را دوباره باز کن.');
       return true;
     }
+    reportJourney('assets_restored', 'progress', undefined, restoredAssets.length);
     let restoredItems: ProductItem[];
     try {
       restoredItems = await api.listItems(restoredBatch.id);
     } catch {
       reportFailure('items', 'request_failed', restoredAssets.length);
+      reportJourney('items_restored', 'failed', 'request_failed', restoredAssets.length);
       setPlatform('basalam');
       setError('فهرست محصولاتت موقتاً بازیابی نشد و فهرست خالی جای آن ساخته نشد. صفحه را دوباره باز کن.');
       return true;
     }
+    reportJourney('items_restored', 'progress', undefined, restoredAssets.length, restoredItems.length);
     if (restoredAssets.length < snapshot.assetCount || restoredItems.length < snapshot.itemCount) {
       reportFailure('complete', 'count_mismatch', restoredAssets.length, restoredItems.length);
+      reportJourney('restore_complete', 'failed', 'count_mismatch', restoredAssets.length, restoredItems.length);
       setPlatform('basalam');
       setError('بخشی از فهرست قبلی بازیابی نشد. چیزی را دوباره ثبت نکن و صفحه را تازه‌سازی کن.');
       return true;
@@ -401,6 +429,7 @@ function MainApp() {
       restored_asset_count: restoredAssets.length,
       restored_item_count: restoredItems.length,
     }).catch(() => undefined);
+    reportJourney('restore_complete', 'succeeded', undefined, restoredAssets.length, restoredItems.length);
     window.localStorage.removeItem(BASALAM_OAUTH_SNAPSHOT_STORAGE_KEY);
     return true;
   }
@@ -641,7 +670,17 @@ function MainApp() {
       const result = await api.getBasalamOAuthUrl(seller.id, workspaceId);
       if (!result.url) throw new Error(result.error || 'اتصال باسلام هنوز تنظیم نشده است.');
       if (batch) {
-        rememberBasalamOAuthSnapshot(batch.id, assets.length, items.length);
+        const journeyId = createPickerAttemptId();
+        rememberBasalamOAuthSnapshot(batch.id, assets.length, items.length, journeyId);
+        await api.reportJourneyEvent({
+          event: 'journey_step',
+          journey: 'basalam_connect_restore',
+          journey_id: journeyId,
+          stage: 'oauth_redirect',
+          outcome: 'started',
+          expected_asset_count: assets.length,
+          expected_item_count: items.length,
+        }).catch(() => undefined);
         await api.reportWorkflowEvent({
           event: 'basalam_oauth_restore_started',
           stage: 'redirect',
@@ -2714,20 +2753,20 @@ function rememberActiveBasalamBatchId(batchId: number) {
   window.localStorage.setItem(BASALAM_ACTIVE_BATCH_STORAGE_KEY, String(batchId));
 }
 
-function rememberBasalamOAuthSnapshot(batchId: number, assetCount: number, itemCount: number) {
+function rememberBasalamOAuthSnapshot(batchId: number, assetCount: number, itemCount: number, journeyId: string) {
   window.localStorage.setItem(
     BASALAM_OAUTH_SNAPSHOT_STORAGE_KEY,
-    JSON.stringify({ batchId, assetCount, itemCount }),
+    JSON.stringify({ batchId, assetCount, itemCount, journeyId }),
   );
 }
 
 function readBasalamOAuthSnapshot(
   expectedBatchId: number,
-): { batchId: number; assetCount: number; itemCount: number } | null {
+): { batchId: number; assetCount: number; itemCount: number; journeyId: string } | null {
   try {
     const raw = window.localStorage.getItem(BASALAM_OAUTH_SNAPSHOT_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { batchId?: unknown; assetCount?: unknown; itemCount?: unknown };
+    const parsed = JSON.parse(raw) as { batchId?: unknown; assetCount?: unknown; itemCount?: unknown; journeyId?: unknown };
     if (
       parsed.batchId !== expectedBatchId ||
       !Number.isInteger(parsed.assetCount) ||
@@ -2741,6 +2780,10 @@ function readBasalamOAuthSnapshot(
       batchId: expectedBatchId,
       assetCount: Number(parsed.assetCount),
       itemCount: Number(parsed.itemCount),
+      journeyId: typeof parsed.journeyId === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(parsed.journeyId)
+        ? parsed.journeyId
+        : createPickerAttemptId(),
     };
   } catch {
     return null;

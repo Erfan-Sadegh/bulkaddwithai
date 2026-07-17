@@ -839,8 +839,15 @@ describe('App', () => {
   });
 
   it('returns to the same Basalam list after OAuth callback', async () => {
+    const journeyEvents: Array<Record<string, unknown>> = [];
     window.localStorage.setItem('bulkadd_seller_id', '1');
     window.localStorage.setItem('bulkadd_basalam_active_batch_id', '10');
+    window.localStorage.setItem('bulkadd_basalam_oauth_snapshot', JSON.stringify({
+      batchId: 10,
+      assetCount: 2,
+      itemCount: 1,
+      journeyId: '11111111-1111-4111-8111-111111111111',
+    }));
     window.history.pushState({}, '', '/?basalam_status=success&seller_id=1');
 
     renderWithApi({
@@ -852,12 +859,24 @@ describe('App', () => {
         package_weight_grams: 500,
         unit_quantity: 1,
       },
+      journeyEvents,
     });
 
     expect(await screen.findByText('غرفه تست')).toBeInTheDocument();
     expect(await screen.findByDisplayValue(item.title)).toBeInTheDocument();
     expect(screen.getByLabelText('موجودی')).toHaveValue('۵');
     expect(screen.queryByRole('button', { name: /افزودن محصولات به باسلام/ })).not.toBeInTheDocument();
+    expect(journeyEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event: 'journey_step',
+        journey: 'basalam_connect_restore',
+        journey_id: '11111111-1111-4111-8111-111111111111',
+        stage: 'restore_complete',
+        outcome: 'succeeded',
+        expected_item_count: 1,
+        actual_item_count: 1,
+      }),
+    ]));
   });
 
   it('returns to the Basalam upload screen after OAuth when no list was active', async () => {
@@ -1811,6 +1830,7 @@ function renderWithApi({
   createdBatch = batch,
   uxEvents,
   runtimeEvents,
+  journeyEvents,
 }: {
   failProcessing?: boolean;
   uploadAssetCount?: number;
@@ -1850,6 +1870,7 @@ function renderWithApi({
   createdBatch?: typeof batch;
   uxEvents?: Array<Record<string, unknown>>;
   runtimeEvents?: Array<Record<string, unknown>>;
+  journeyEvents?: Array<Record<string, unknown>>;
 } = {}) {
   const responseItem = { ...item, ...itemOverride };
   let jobResponseIndex = 0;
@@ -1869,6 +1890,10 @@ function renderWithApi({
       }
       if (path === '/observability/runtime-events' && method === 'POST') {
         runtimeEvents?.push(JSON.parse(String(init?.body ?? '{}')));
+        return new Response(null, { status: 204 });
+      }
+      if (path === '/observability/journey-events' && method === 'POST') {
+        journeyEvents?.push(JSON.parse(String(init?.body ?? '{}')));
         return new Response(null, { status: 204 });
       }
 

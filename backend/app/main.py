@@ -62,6 +62,7 @@ from .schemas import (
     UxEventCreate,
     RuntimeEventCreate,
     WorkflowIntegrityEventCreate,
+    JourneyEventCreate,
 )
 from .services import (
     create_batch,
@@ -207,7 +208,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: int = 200,
         session: Session = Depends(get_session),
     ):
-        safe_limit = min(max(limit, 1), 500)
+        safe_limit = min(max(limit, 1), 5_000)
         statement = select(OperationalEvent).order_by(OperationalEvent.created_at.desc()).limit(safe_limit)
         if since is not None:
             statement = statement.where(OperationalEvent.created_at >= since)
@@ -335,6 +336,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload.restored_asset_count if payload.restored_asset_count is not None else "none",
             payload.restored_item_count if payload.restored_item_count is not None else "none",
         )
+        return Response(status_code=204)
+
+    @app.post("/observability/journey-events", status_code=204)
+    def post_journey_event(payload: JourneyEventCreate, request: Request):
+        # Only contract enums, anonymous UUIDs, bounded counts and durations reach the recorder.
+        session_key = hashlib.sha256(request.state.request_id.encode("utf-8")).hexdigest()[:16]
+        fields = [
+            f"journey={payload.journey}",
+            f"journey_id={payload.journey_id}",
+            f"session_key={session_key}",
+            f"stage={payload.stage}",
+            f"outcome={payload.outcome}",
+            f"reason={payload.reason or 'none'}",
+        ]
+        for name in (
+            "expected_asset_count", "actual_asset_count", "expected_item_count",
+            "actual_item_count", "duration_ms",
+        ):
+            value = getattr(payload, name)
+            if value is not None:
+                fields.append(f"{name}={value}")
+        log = ux_logger.warning if payload.outcome in {"failed", "blocked"} else ux_logger.info
+        log("journey_step %s", " ".join(fields))
         return Response(status_code=204)
 
     @app.post("/admin/login", response_model=AdminLoginResponse)

@@ -60,6 +60,10 @@ EVENT_PRIORITY = {
     "browser_publish_failure_guidance_missing": "high",
     "browser_control_occluded": "high",
     "http_response_failed": "high",
+    "journey_observability_gap": "high",
+    "journey_invariant_failed": "urgent",
+    "journey_stalled": "high",
+    "journey_step_failed": "high",
 }
 CONTROL_LABELS_FA = {
     "photo_drop_zone": "باکس افزودن عکس",
@@ -247,6 +251,96 @@ def collect_ux_contract(repo: Path) -> list[Signal]:
                 priority=EVENT_PRIORITY["ux_observability_gap"],
                 summary_fa=f"کنترل {control} بدون پوشش کامل lifecycle و outcome است.",
                 evidence={"control": control, "missing_markers": missing},
+            )
+        )
+    return signals
+
+
+def collect_journey_contract(repo: Path) -> list[Signal]:
+    """Make every missing Black Box stage a first-class, actionable product signal."""
+    contract_path = repo / "automation" / "journey_contracts.json"
+    try:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectorError(f"journey contract is unreadable: {type(exc).__name__}") from exc
+    if contract.get("version") != 1 or not isinstance(contract.get("journeys"), list):
+        raise CollectorError("journey contract format is invalid")
+    source_cache: dict[str, str] = {}
+    signals: list[Signal] = []
+    missing_infrastructure: list[str] = []
+    for marker in contract.get("global_markers", []):
+        if not isinstance(marker, dict):
+            continue
+        relative, expected = str(marker.get("path") or ""), str(marker.get("text") or "")
+        if relative not in source_cache:
+            path = repo / relative
+            source_cache[relative] = path.read_text(encoding="utf-8") if path.is_file() else ""
+        if not expected or expected not in source_cache[relative]:
+            missing_infrastructure.append(f"{relative}:{expected}")
+    if missing_infrastructure:
+        signals.append(
+            Signal(
+                source="journey_contract",
+                event="journey_observability_gap",
+                priority="urgent",
+                summary_fa="زیرساخت مشترک Black Box ناقص است و بعضی مسیرها قابل اعتماد نیستند.",
+                evidence={
+                    "journey": "black_box_infrastructure",
+                    "missing_stages": ["infrastructure"],
+                    "missing_markers": missing_infrastructure,
+                    "coverage": "incomplete",
+                },
+            )
+        )
+    schema_relative = str(contract.get("schema_path") or "")
+    schema_source = ""
+    if schema_relative:
+        schema_path = repo / schema_relative
+        schema_source = schema_path.read_text(encoding="utf-8") if schema_path.is_file() else ""
+    for item in contract["journeys"]:
+        if not isinstance(item, dict) or not item.get("journey"):
+            continue
+        missing_stages: list[str] = []
+        missing_markers: list[str] = []
+        for stage in item.get("stages", []):
+            if not isinstance(stage, dict) or not stage.get("stage"):
+                continue
+            stage_missing = False
+            markers = [marker for marker in stage.get("markers", []) if isinstance(marker, dict)]
+            if not markers:
+                stage_missing = True
+            for marker in markers:
+                relative, expected = str(marker.get("path") or ""), str(marker.get("text") or "")
+                if relative not in source_cache:
+                    path = repo / relative
+                    source_cache[relative] = path.read_text(encoding="utf-8") if path.is_file() else ""
+                if not expected or expected not in source_cache[relative]:
+                    stage_missing = True
+                    missing_markers.append(f"{relative}:{expected}")
+            if schema_relative:
+                stage_name = str(stage["stage"])
+                journey_name = str(item["journey"])
+                if f'"{stage_name}"' not in schema_source or f'"{journey_name}"' not in schema_source:
+                    stage_missing = True
+                    missing_markers.append(f"{schema_relative}:{journey_name}/{stage_name}")
+            if stage_missing:
+                missing_stages.append(str(stage["stage"]))
+        if not missing_stages:
+            continue
+        journey = str(item["journey"])
+        title = str(item.get("title_fa") or journey)
+        signals.append(
+            Signal(
+                source="journey_contract",
+                event="journey_observability_gap",
+                priority=str(item.get("priority") or "high"),
+                summary_fa=f"در مسیر «{title}» مراحل {', '.join(missing_stages)} هنوز Black Box کامل ندارند.",
+                evidence={
+                    "journey": journey,
+                    "missing_stages": missing_stages,
+                    "missing_markers": missing_markers,
+                    "coverage": f"{len(item.get('stages', [])) - len(missing_stages)}/{len(item.get('stages', []))}",
+                },
             )
         )
     return signals
@@ -530,11 +624,11 @@ def collect_product_events(
     separator = "&" if "?" in url else "?"
     current_time = now or datetime.now(timezone.utc)
     since = current_time - timedelta(hours=24)
-    query = urllib.parse.urlencode({"limit": "500", "since": since.isoformat()})
+    query = urllib.parse.urlencode({"limit": "5000", "since": since.isoformat()})
     payload = _get_json(f"{url}{separator}{query}", token)
     if not isinstance(payload, list):
         raise CollectorError("پاسخ فید رویدادهای production معتبر نیست.")
-    results: list[Signal] = []
+    results: list[Signal] = _analyze_journey_steps(payload, current_time)
     terminal_attempts = {
         _attempt_key(item)
         for item in payload
@@ -683,6 +777,74 @@ def collect_product_events(
             )
         )
     return results
+
+
+def _analyze_journey_steps(payload: list[Any], now: datetime) -> list[Signal]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for item in payload:
+        if not isinstance(item, dict) or item.get("event") != "journey_step":
+            continue
+        journey, journey_id = str(item.get("journey") or ""), str(item.get("journey_id") or "")
+        if journey and journey_id:
+            grouped[(journey, journey_id)].append(item)
+    signals: list[Signal] = []
+    for (journey, _journey_id), steps in grouped.items():
+        steps.sort(key=lambda item: str(item.get("last_seen_at") or ""))
+        last = steps[-1]
+        for step in steps:
+            if step.get("outcome") != "failed":
+                continue
+            stage = str(step.get("stage") or "unknown")
+            reason = str(step.get("reason") or "unknown")
+            signals.append(
+                Signal(
+                    source="product_events",
+                    event="journey_step_failed",
+                    priority="high",
+                    summary_fa=f"Black Box شکست قطعی مسیر {journey} را در مرحله {stage} ثبت کرده است.",
+                    occurred_at=str(step.get("last_seen_at") or now.isoformat()),
+                    evidence={"journey": journey, "stage": stage, "reason": reason},
+                )
+            )
+        if journey == "basalam_connect_restore" and last.get("stage") == "restore_complete":
+            for kind in ("asset", "item"):
+                expected = last.get(f"expected_{kind}_count")
+                actual = last.get(f"actual_{kind}_count")
+                if isinstance(expected, int) and isinstance(actual, int) and actual < expected:
+                    signals.append(
+                        Signal(
+                            source="product_events",
+                            event="journey_invariant_failed",
+                            priority="urgent",
+                            summary_fa=f"Black Box مسیر اتصال باسلام ثابت کرد تعداد {kind} پس از بازگشت کم شده است.",
+                            occurred_at=str(last.get("last_seen_at") or now.isoformat()),
+                            evidence={
+                                "journey": journey,
+                                "stage": "restore_complete",
+                                "invariant": f"{kind}_count_preserved",
+                                "expected_count": expected,
+                                "actual_count": actual,
+                            },
+                        )
+                    )
+        terminal = any(
+            step.get("outcome") in {"failed", "blocked"}
+            or (step.get("stage") == "restore_complete" and step.get("outcome") == "succeeded")
+            for step in steps
+        )
+        first = steps[0]
+        if not terminal and first.get("outcome") == "started" and _event_is_older_than(first, now, minutes=10):
+            signals.append(
+                Signal(
+                    source="product_events",
+                    event="journey_stalled",
+                    priority="high",
+                    summary_fa="Black Box مسیر اتصال باسلام را شروع‌شده اما بدون نتیجه نهایی ثبت کرده است.",
+                    occurred_at=str(last.get("last_seen_at") or now.isoformat()),
+                    evidence={"journey": journey, "last_stage": str(last.get("stage") or "unknown")},
+                )
+            )
+    return signals
 
 
 def _parse_log_line(line: str) -> dict[str, Any] | None:

@@ -27,6 +27,11 @@ class Signal:
                 str(self.evidence.get(key) or "")
                 for key in ("control", "outcome", "failure_field")
             )
+        elif self.event.startswith("journey_"):
+            discriminator = ":".join(
+                str(self.evidence.get(key) or "")
+                for key in ("journey", "invariant", "last_stage")
+            )
         else:
             discriminator = (
                 self.evidence.get("issue_id")

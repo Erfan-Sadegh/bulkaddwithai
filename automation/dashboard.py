@@ -45,6 +45,8 @@ SOURCES = {
     "browser_probe": "مرورگر مصنوعی فقط‌خواندنی روی production",
 }
 
+SOURCES["journey_contract"] = "ممیزی خودکار نقاط کور مسیرهای محصول"
+
 EVENTS = {
     "image_upload_rejected": "رد شدن تصویر هنگام بارگذاری",
     "basalam_oauth_restore_failed": "بازیابی‌نشدن فهرست پس از اتصال غرفه باسلام",
@@ -91,6 +93,14 @@ EVENTS = {
     "basalam_publish_validation_failed": "رد شدن اعتبارسنجی انتشار باسلام",
     "torob_publish_failed": "ناموفق بودن انتشار در ترب",
 }
+
+
+EVENTS.update({
+    "journey_observability_gap": "مسیر محصول دارای مرحلهٔ غیرقابل‌مشاهده",
+    "journey_invariant_failed": "Black Box نقض قطعی قرارداد مسیر را ثبت کرد",
+    "journey_stalled": "مسیر کاربر شروع شد اما نتیجهٔ نهایی ثبت نشد",
+    "journey_step_failed": "یک مرحلهٔ مشخص از مسیر کاربر با خطا پایان یافت",
+})
 
 
 def write_run_report(run_dir: Path, report: dict) -> Path:

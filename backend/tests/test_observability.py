@@ -394,6 +394,71 @@ def test_workflow_integrity_event_reports_oauth_restore_loss_without_private_dat
     assert "private" not in str(event)
 
 
+def test_black_box_journey_event_accepts_only_contract_data(tmp_path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'events.db'}",
+            upload_dir=tmp_path / "uploads",
+            AI_PROVIDER="fake",
+            OBSERVABILITY_READ_TOKEN="collector-only-token",
+        )
+    )
+    journey_id = "11111111-1111-4111-8111-111111111111"
+
+    with TestClient(app) as test_client:
+        accepted = test_client.post(
+            "/observability/journey-events",
+            json={
+                "event": "journey_step",
+                "journey": "basalam_connect_restore",
+                "journey_id": journey_id,
+                "stage": "restore_complete",
+                "outcome": "succeeded",
+                "expected_asset_count": 2,
+                "actual_asset_count": 2,
+                "expected_item_count": 3,
+                "actual_item_count": 3,
+                "duration_ms": 420,
+            },
+        )
+        rejected_private = test_client.post(
+            "/observability/journey-events",
+            json={
+                "event": "journey_step",
+                "journey": "basalam_connect_restore",
+                "journey_id": journey_id,
+                "stage": "restore_complete",
+                "outcome": "failed",
+                "product_title": "private title",
+            },
+        )
+        rejected_stage = test_client.post(
+            "/observability/journey-events",
+            json={
+                "event": "journey_step",
+                "journey": "basalam_connect_restore",
+                "journey_id": journey_id,
+                "stage": "publish_complete",
+                "outcome": "succeeded",
+            },
+        )
+        feed = test_client.get(
+            "/observability/events",
+            headers={"Authorization": "Bearer collector-only-token"},
+        )
+
+    assert accepted.status_code == 204
+    assert rejected_private.status_code == 422
+    assert rejected_stage.status_code == 422
+    event = next(item for item in feed.json() if item["event"] == "journey_step")
+    assert event["journey"] == "basalam_connect_restore"
+    assert event["stage"] == "restore_complete"
+    assert event["outcome"] == "succeeded"
+    assert event["expected_item_count"] == 3
+    assert event["actual_item_count"] == 3
+    assert "private" not in str(event)
+
+
 def test_public_runtime_event_accepts_only_safe_enums(tmp_path):
     app = create_app(
         Settings(

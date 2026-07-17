@@ -99,6 +99,17 @@ SENTRY_TRACES_SAMPLE_RATE=0
 
 این command task را با فاصلهٔ سه‌ساعته و نقطهٔ شروع 03:17 و shortcut داشبورد روی Desktop می‌سازد. هر اجرا می‌تواند سیگنال‌ها را تحلیل و حداکثر پنج مشکل را با تست قرمز در worktree جدا اثبات کند، اما اجازهٔ تغییر کد محصول، ساخت branch یا PR ندارد. برای اصلاح باید انسان همان مورد را صریحاً تأیید کند. کامپیوتر باید به برق متصل باشد و wake timer در Windows فعال باشد.
 
+## Black Box و قرارداد مسیرها
+
+فایل `automation/journey_contracts.json` فهرست ماشینی مسیرهای مهم محصول است. هر مسیر از stageهای مورد انتظار، markerهای کدی، timeout و invariantهای امن تشکیل می‌شود. collector با هر اجرا دو نوع ممیزی انجام می‌دهد:
+
+- ممیزی پوشش: اگر stage لازم marker اجرایی نداشته باشد، `journey_observability_gap` با نام دقیق مسیر و stageهای گمشده تولید می‌شود. بنابراین «نمی‌دانیم در این قسمت چه شد» خودش یک finding قابل‌اقدام است.
+- ممیزی runtime: eventهای `journey_step` را با `journey_id` تصادفی کنار هم می‌گذارد، journey بدون terminal step را `journey_stalled` و اختلاف expected/actual را `journey_invariant_failed` اعلام می‌کند.
+
+مرورگر فقط enumهای قرارداد، UUID تصادفی، شمارنده‌های محدود، outcome، reason امن و duration را به `/observability/journey-events` می‌فرستد. schema هر فیلد اضافه را رد می‌کند؛ متن محصول، تصویر، موبایل، seller، token، OAuth state/code، URL و payload پذیرفته نمی‌شوند. backend همین transition کوچک را در event store سی‌روزه و stdout ساختاریافته ثبت می‌کند. collector شناسهٔ journey و session را برای correlation داخل حافظه استفاده می‌کند اما آن‌ها را وارد Signal، dashboard یا prompt عامل نمی‌کند.
+
+vertical slice نخست `basalam_connect_restore` است: از خروج به OAuth تا بازیابی batch، asset، item و تأیید نهایی تعدادها. مسیرهای asset management، ساخت فهرست، ویرایش محصول، انتشار باسلام و ارسال ترب نیز در catalog هستند؛ هر stage پوشش‌نداده‌شده تا زمان تکمیل به‌عنوان نقطهٔ کور گزارش می‌شود.
+
 ## توقف فوری و حذف
 
 با ساخت این فایل اجرای عامل متوقف می‌شود:

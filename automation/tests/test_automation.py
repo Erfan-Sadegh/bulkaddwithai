@@ -21,6 +21,7 @@ from automation.collectors import (
     collect_clarity,
     collect_local_logs,
     collect_product_events,
+    collect_journey_contract,
     collect_ux_contract,
 )
 from automation.dashboard import rebuild_dashboard, write_run_report
@@ -201,6 +202,128 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(signals[0].evidence["expected_item_count"], 3)
         self.assertEqual(signals[0].evidence["restored_item_count"], 0)
         self.assertIn("OAuth", signals[0].summary_fa)
+
+    def test_product_event_collector_detects_black_box_invariant_without_leaking_journey_id(self):
+        payload = [
+            {
+                "event": "journey_step",
+                "journey": "basalam_connect_restore",
+                "journey_id": "11111111-1111-4111-8111-111111111111",
+                "stage": "restore_complete",
+                "outcome": "succeeded",
+                "expected_asset_count": 4,
+                "actual_asset_count": 4,
+                "expected_item_count": 3,
+                "actual_item_count": 0,
+                "last_seen_at": "2026-07-15T00:00:00Z",
+            }
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        violation = next(signal for signal in signals if signal.event == "journey_invariant_failed")
+        self.assertEqual(violation.priority, "urgent")
+        self.assertEqual(violation.evidence["journey"], "basalam_connect_restore")
+        self.assertEqual(violation.evidence["invariant"], "item_count_preserved")
+        self.assertEqual(violation.evidence["expected_count"], 3)
+        self.assertEqual(violation.evidence["actual_count"], 0)
+        self.assertNotIn("11111111", json.dumps(violation.to_dict()))
+
+    def test_product_event_collector_detects_a_started_journey_without_terminal_step(self):
+        payload = [
+            {
+                "event": "journey_step",
+                "journey": "basalam_connect_restore",
+                "journey_id": "11111111-1111-4111-8111-111111111111",
+                "stage": "oauth_redirect",
+                "outcome": "started",
+                "last_seen_at": "2026-07-15T11:40:00+00:00",
+            }
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                },
+                now=datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc),
+            )
+
+        stalled = next(signal for signal in signals if signal.event == "journey_stalled")
+        self.assertEqual(stalled.evidence["journey"], "basalam_connect_restore")
+        self.assertEqual(stalled.evidence["last_stage"], "oauth_redirect")
+        self.assertNotIn("11111111", json.dumps(stalled.to_dict()))
+
+    def test_product_event_collector_promotes_a_failed_journey_step(self):
+        payload = [
+            {
+                "event": "journey_step",
+                "journey": "product_edit",
+                "journey_id": "11111111-1111-4111-8111-111111111111",
+                "stage": "save_complete",
+                "outcome": "failed",
+                "reason": "request_failed",
+                "last_seen_at": "2026-07-15T11:55:00+00:00",
+            }
+        ]
+        with patch("automation.collectors._get_json", return_value=payload):
+            signals = collect_product_events(
+                {
+                    "PRODUCTION_OBSERVABILITY_URL": "https://app.example/observability/events",
+                    "PRODUCTION_OBSERVABILITY_TOKEN": "read-only-token",
+                }
+            )
+
+        failed = next(signal for signal in signals if signal.event == "journey_step_failed")
+        self.assertEqual(failed.evidence["journey"], "product_edit")
+        self.assertEqual(failed.evidence["stage"], "save_complete")
+        self.assertEqual(failed.evidence["reason"], "request_failed")
+        self.assertNotIn("11111111", json.dumps(failed.to_dict()))
+
+    def test_journey_contract_turns_missing_instrumentation_into_actionable_signals(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            contract_dir = repo / "automation"
+            contract_dir.mkdir()
+            (repo / "frontend.tsx").write_text("record('start')", encoding="utf-8")
+            (contract_dir / "journey_contracts.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "journeys": [
+                            {
+                                "journey": "edit_product",
+                                "title_fa": "ویرایش محصول",
+                                "priority": "high",
+                                "stages": [
+                                    {
+                                        "stage": "edit_started",
+                                        "markers": [{"path": "frontend.tsx", "text": "record('start')"}],
+                                    },
+                                    {
+                                        "stage": "edit_saved",
+                                        "markers": [{"path": "frontend.tsx", "text": "record('saved')"}],
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            signals = collect_journey_contract(repo)
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].event, "journey_observability_gap")
+        self.assertEqual(signals[0].evidence["journey"], "edit_product")
+        self.assertEqual(signals[0].evidence["missing_stages"], ["edit_saved"])
 
     def test_product_event_collector_keeps_exact_control_for_product_rage_click(self):
         payload = [
